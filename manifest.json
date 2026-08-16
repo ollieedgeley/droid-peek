@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "ollie.android",
+  "name": "Omarchy Android",
+  "version": "0.1.0",
+  "author": "Ollie",
+  "description": "One Android phone in an Omarchy bar panel",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Android",
+    "description": "Pair and control one Android phone",
+    "category": "Connectivity",
+    "allowMultiple": false
+  }
+}

@@ -1,0 +1,20 @@
+[package]
+name = "omarchy-android-helper"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+zeroize = "1"
+
+[lib]
+name = "omarchy_android_helper"
+path = "src/lib.rs"
+
+[[bin]]
+name = "omarchy-android-helper"
+path = "src/main.rs"

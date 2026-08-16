@@ -1,0 +1,28 @@
+# Rust build output
+/helper/target/
+
+# Local agent and indexing state
+/.agents/
+/.claude/
+/.codegraph/
+/.codex/
+/.cursor/
+/.omp/
+/AGENTS.md
+/CLAUDE.md
+/.cursorrules
+/.mcp.json
+
+# Local planning documents
+/PLAN.md
+/SPEC.md
+
+# Editor, OS, and local runtime artifacts
+/.idea/
+/.vscode/
+.DS_Store
+Session.vim
+*.swp
+*.swo
+*.log
+*.tmp

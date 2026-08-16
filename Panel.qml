@@ -3,6 +3,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "qml/state"
+import "qml/components"
 
 Panel {
     id: root
@@ -53,14 +54,16 @@ Panel {
         } else {
             manualCode.text = ""
             pairingState.automaticPairingEnabled = false
-            if (helperProcess.running && pairingState.pairingStage !== "paired") {
+            if (helperProcess.running) {
                 helperShutdownPending = true
-                pairingState.cancelPairing()
+                if (pairingState.sessionState === "ready"
+                        || pairingState.pairingStage === "connected"
+                        || pairingState.pairingStage === "session-starting") {
+                    pairingState.stopSession()
+                } else {
+                    pairingState.cancelPairing()
+                }
                 helperStopTimer.restart()
-            } else {
-                helperProcess.running = false
-                if (pairingState.sessionState !== "ready")
-                    pairingState.reset()
             }
         }
     }
@@ -81,6 +84,10 @@ Panel {
                        && pairingState.sessionState === "unpaired") {
                 pairingState.startQrPairing()
             }
+        }
+        onSessionStopConfirmed: {
+            if (root.helperShutdownPending)
+                root.finishHelperShutdown()
         }
     }
 
@@ -129,7 +136,7 @@ Panel {
         PanelKeyCatcher {
             id: keyCatcher
             anchors.fill: parent
-            blocked: manualCode.activeFocus
+            blocked: manualCode.activeFocus || phonePreview.inputFocused
             onActivateRequested: root.activatePrimary()
             onCloseRequested: root.close()
             onTextKey: function(text) {
@@ -158,6 +165,38 @@ Panel {
                     font.pixelSize: Style.fontBaseSize
                     wrapMode: Text.Wrap
                 }
+                Rectangle {
+                    visible: pairingState.sessionState === "ready"
+                    width: parent.width
+                    height: Math.min(width * 16 / 9, Style.space(340))
+                    color: Qt.darker(root.contentForeground, 2.4)
+                    radius: Style.cornerRadius
+                    clip: true
+
+                    PhonePreview {
+                        id: phonePreview
+                        anchors.fill: parent
+                        captureRequested: parent.visible && root.opened
+                        inputEnabled: pairingState.sessionState === "ready"
+                        foreground: root.contentForeground
+                        background: parent.color
+                        onTapRequested: function(x, y, displayWidth, displayHeight) {
+                            pairingState.sendPointerTap(x, y, displayWidth, displayHeight)
+                        }
+                        onSwipeRequested: function(startX, startY, endX, endY,
+                                                   displayWidth, displayHeight, durationMs) {
+                            pairingState.sendPointerSwipe(startX, startY, endX, endY,
+                                                          displayWidth, displayHeight, durationMs)
+                        }
+                        onKeyRequested: function(key) {
+                            pairingState.sendKeyInput(key)
+                        }
+                        onTextRequested: function(text) {
+                            pairingState.sendTextInput(text)
+                        }
+                    }
+                }
+
 
                 Rectangle {
                     visible: pairingState.pairingStage === "qr-waiting"
@@ -216,6 +255,12 @@ Panel {
                         visible: pairingState.pairingStage === "manual-code"
                         text: "Pair"
                         onClicked: root.activatePrimary()
+                    }
+
+                    Button {
+                        visible: pairingState.sessionState === "disconnected"
+                        text: "Reconnect"
+                        onClicked: pairingState.reconnectTrustedDevice()
                     }
 
                 }

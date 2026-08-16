@@ -8,7 +8,8 @@ use std::{
 };
 
 use omarchy_android_helper::{
-    protocol::{Event, ProtocolEngine},
+    persistence::default_state_directory,
+    protocol::{Event, PairingBackend, ProtocolEngine},
     runtime::{
         AcceptanceEventWriter, ProtocolSink, RuntimePairingBackend, WriterProtocolSink,
         default_runtime_directory,
@@ -18,6 +19,12 @@ use omarchy_android_helper::{
 fn main() -> io::Result<()> {
     let stdin = io::stdin();
     let runtime_directory = default_runtime_directory();
+    let state_directory = default_state_directory().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "XDG_STATE_HOME and HOME are unavailable",
+        )
+    })?;
     let log = if acceptance_logging_enabled()? {
         Some(open_acceptance_log(&runtime_directory)?)
     } else {
@@ -28,11 +35,16 @@ fn main() -> io::Result<()> {
         None => AcceptanceEventWriter::<_, File>::without_log(io::stdout()),
     };
     let sink = WriterProtocolSink::new(writer);
-    let backend =
-        RuntimePairingBackend::new(&runtime_directory, Duration::from_secs(120), sink.clone())?;
+    let backend = RuntimePairingBackend::new(
+        &runtime_directory,
+        &state_directory,
+        Duration::from_secs(120),
+        sink.clone(),
+    )?;
+    let has_trusted_device = backend.has_trusted_device();
     let mut engine = ProtocolEngine::new(backend);
 
-    sink.emit_event(&Event::Ready)?;
+    sink.emit_event(&Event::Ready { has_trusted_device })?;
     for line in stdin.lock().lines() {
         for event in engine.handle_line(&line?) {
             sink.emit_line(&event)?;

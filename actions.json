@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "actions": [
+    {
+      "id": "toggle-android-panel",
+      "label": "Toggle Android panel",
+      "classification": "direct-equivalent",
+      "scope": "global",
+      "result": { "kind": "panel-toggle" },
+      "verification": { "status": "automated-contract", "androidVersions": [] }
+    },
+    {
+      "id": "open-universal-search",
+      "label": "Open universal search",
+      "classification": "explicit-non-equivalent",
+      "scope": "focused-phone",
+      "result": {
+        "kind": "unsupported",
+        "reason": "Android exposes no launcher-independent universal-search action."
+      },
+      "verification": { "status": "not-applicable", "androidVersions": [] }
+    },
+    {
+      "id": "android-back",
+      "label": "Android back",
+      "classification": "android-native-extension",
+      "scope": "focused-phone",
+      "result": { "kind": "key-input", "key": "back" },
+      "verification": { "status": "device-verified", "androidVersions": [16] }
+    },
+    {
+      "id": "android-home",
+      "label": "Android home",
+      "classification": "android-native-extension",
+      "scope": "focused-phone",
+      "result": { "kind": "key-input", "key": "home" },
+      "verification": { "status": "device-verified", "androidVersions": [16] }
+    },
+    {
+      "id": "android-recent-apps",
+      "label": "Android recent apps",
+      "classification": "android-native-extension",
+      "scope": "focused-phone",
+      "result": { "kind": "key-input", "key": "app-switch" },
+      "verification": { "status": "device-verified", "androidVersions": [16] }
+    },
+    {
+      "id": "pointer-control",
+      "label": "Control Android pointer",
+      "classification": "direct-equivalent",
+      "scope": "focused-phone",
+      "result": { "kind": "pointer-input" },
+      "verification": { "status": "device-verified", "androidVersions": [16] }
+    },
+    {
+      "id": "typed-input",
+      "label": "Type into Android",
+      "classification": "direct-equivalent",
+      "scope": "focused-phone",
+      "result": { "kind": "text-input" },
+      "verification": { "status": "device-verified", "androidVersions": [16] }
+    }
+  ]
+}

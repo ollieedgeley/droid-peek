@@ -13,9 +13,12 @@ use std::{
 use zeroize::Zeroizing;
 
 use crate::{
+    input::{AdbInputAdapter, AndroidKey, DisplayGeometry, InputFailure, NormalizedPoint},
+    persistence::{FileTrustedDeviceStore, TrustedDevice},
     process::{AdbCommandRunner, CancellationToken, CommandRunner},
     protocol::{Event, FailureReason, PairingBackend, PairingMethod, QrPresentation},
     qr::{QrCeremony, RuntimeQrRenderer, SystemClock, SystemEntropy},
+    session::{ScrcpySessionRunner, SessionExit, SessionFailure, SessionRunner},
     wireless::{AvahiDiscovery, PairingFlow, WirelessDiscovery},
 };
 
@@ -128,14 +131,26 @@ struct PendingPairing {
     secret: Zeroizing<String>,
 }
 
+struct PendingReconnect {
+    generation: u64,
+    device: TrustedDevice,
+}
+
 pub struct RuntimePairingBackend<S> {
     ceremony: Arc<Mutex<RuntimeCeremony>>,
     flow: Arc<Mutex<RuntimeFlow>>,
+    session: Arc<Mutex<Option<Box<dyn SessionRunner + Send>>>>,
+    active_target: Arc<Mutex<Option<String>>>,
     lifetime: Duration,
     sink: S,
     generation: Arc<AtomicU64>,
     cancellation: CancellationToken,
+    session_generation: Arc<AtomicU64>,
+    session_cancellation: CancellationToken,
     pending: Option<PendingPairing>,
+    store: FileTrustedDeviceStore,
+    trusted_device: Arc<Mutex<Option<TrustedDevice>>>,
+    pending_reconnect: Option<PendingReconnect>,
 }
 
 impl<S> RuntimePairingBackend<S>
@@ -144,15 +159,26 @@ where
 {
     pub fn new(
         runtime_directory: impl AsRef<Path>,
+        state_directory: impl AsRef<Path>,
         lifetime: Duration,
         sink: S,
     ) -> io::Result<Self> {
-        Self::with_adapters(
+        let v4l2_sink = env::var_os("OMARCHY_ANDROID_V4L2_SINK")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/dev/video42"));
+        let session: Box<dyn SessionRunner + Send> = Box::new(ScrcpySessionRunner::new(
+            "scrcpy",
+            v4l2_sink,
+            Duration::from_millis(25),
+        ));
+        Self::with_components(
             runtime_directory,
+            state_directory,
             lifetime,
             sink,
             AvahiDiscovery::new("avahi-browse", lifetime, Duration::from_millis(25)),
             AdbCommandRunner::new("adb", Duration::from_millis(25)),
+            Some(session),
         )
     }
 
@@ -167,24 +193,207 @@ where
         D: WirelessDiscovery + Send + 'static,
         R: CommandRunner + Send + 'static,
     {
+        let runtime_directory = runtime_directory.as_ref().to_owned();
+        let state_directory = runtime_directory.join("state");
+        Self::with_components(
+            runtime_directory,
+            state_directory,
+            lifetime,
+            sink,
+            discovery,
+            runner,
+            None,
+        )
+    }
+
+    pub fn with_adapters_and_store<D, R>(
+        runtime_directory: impl AsRef<Path>,
+        state_directory: impl AsRef<Path>,
+        lifetime: Duration,
+        sink: S,
+        discovery: D,
+        runner: R,
+    ) -> io::Result<Self>
+    where
+        D: WirelessDiscovery + Send + 'static,
+        R: CommandRunner + Send + 'static,
+    {
+        Self::with_components(
+            runtime_directory,
+            state_directory,
+            lifetime,
+            sink,
+            discovery,
+            runner,
+            None,
+        )
+    }
+
+    pub fn with_adapters_store_and_session<D, R, T>(
+        runtime_directory: impl AsRef<Path>,
+        state_directory: impl AsRef<Path>,
+        lifetime: Duration,
+        sink: S,
+        discovery: D,
+        runner: R,
+        session: T,
+    ) -> io::Result<Self>
+    where
+        D: WirelessDiscovery + Send + 'static,
+        R: CommandRunner + Send + 'static,
+        T: SessionRunner + Send + 'static,
+    {
+        Self::with_components(
+            runtime_directory,
+            state_directory,
+            lifetime,
+            sink,
+            discovery,
+            runner,
+            Some(Box::new(session)),
+        )
+    }
+
+    fn with_components<D, R>(
+        runtime_directory: impl AsRef<Path>,
+        state_directory: impl AsRef<Path>,
+        lifetime: Duration,
+        sink: S,
+        discovery: D,
+        runner: R,
+        session: Option<Box<dyn SessionRunner + Send>>,
+    ) -> io::Result<Self>
+    where
+        D: WirelessDiscovery + Send + 'static,
+        R: CommandRunner + Send + 'static,
+    {
         let ceremony = QrCeremony::new(
             SystemEntropy::new()?,
             SystemClock::new(),
             RuntimeQrRenderer::new(runtime_directory.as_ref()),
             lifetime,
         );
+        let store = FileTrustedDeviceStore::new(state_directory);
+        let trusted_device = store.load()?;
         Ok(Self {
             ceremony: Arc::new(Mutex::new(ceremony)),
             flow: Arc::new(Mutex::new(PairingFlow::new(
                 Box::new(discovery),
                 Box::new(runner),
             ))),
+            session: Arc::new(Mutex::new(session)),
+            active_target: Arc::new(Mutex::new(None)),
             lifetime,
             sink,
             generation: Arc::new(AtomicU64::new(0)),
             cancellation: CancellationToken::new(),
+            session_generation: Arc::new(AtomicU64::new(0)),
+            session_cancellation: CancellationToken::new(),
             pending: None,
+            store,
+            trusted_device: Arc::new(Mutex::new(trusted_device)),
+            pending_reconnect: None,
         })
+    }
+
+    fn reset_session(&mut self) {
+        self.session_cancellation.cancel();
+        self.session_generation.fetch_add(1, Ordering::AcqRel);
+        if let Ok(session) = self.session.lock() {
+            drop(session);
+        }
+        if let Ok(mut target) = self.active_target.lock() {
+            *target = None;
+        }
+        self.session_cancellation = CancellationToken::new();
+    }
+
+    fn run_input(
+        &mut self,
+        operation: impl FnOnce(&mut AdbInputAdapter<'_>, &str) -> Result<(), InputFailure>,
+    ) -> Result<(), FailureReason> {
+        let target = self
+            .active_target
+            .lock()
+            .map_err(|_| FailureReason::DependencyUnavailable)?
+            .clone()
+            .ok_or(FailureReason::Disconnected)?;
+        let mut flow = self
+            .flow
+            .lock()
+            .map_err(|_| FailureReason::DependencyUnavailable)?;
+        let mut adapter =
+            AdbInputAdapter::new(flow.runner_mut().as_mut(), &self.session_cancellation);
+        operation(&mut adapter, &target).map_err(|failure| match failure {
+            InputFailure::DependencyUnavailable => FailureReason::DependencyUnavailable,
+            InputFailure::Disconnected | InputFailure::Cancelled => FailureReason::Disconnected,
+        })
+    }
+
+    fn spawn_session(
+        session: Arc<Mutex<Option<Box<dyn SessionRunner + Send>>>>,
+        generation: Arc<AtomicU64>,
+        expected_generation: u64,
+        cancellation: CancellationToken,
+        sink: S,
+        active_target: Arc<Mutex<Option<String>>>,
+        target: String,
+    ) {
+        thread::spawn(move || {
+            if cancellation.is_cancelled()
+                || generation.load(Ordering::Acquire) != expected_generation
+            {
+                return;
+            }
+            let result = match session.lock() {
+                Ok(mut session) => match session.as_mut() {
+                    Some(runner) => {
+                        if let Ok(mut active) = active_target.lock() {
+                            *active = Some(target.clone());
+                        } else {
+                            return;
+                        }
+                        let _ = sink.emit_event(&Event::SessionStarting);
+                        runner.run(&target, &cancellation, &mut || {
+                            if !cancellation.is_cancelled()
+                                && generation.load(Ordering::Acquire) == expected_generation
+                            {
+                                let _ = sink.emit_event(&Event::SessionStarted);
+                            }
+                        })
+                    }
+                    None => return,
+                },
+                Err(_) => Err(SessionFailure::DependencyUnavailable),
+            };
+            if generation
+                .compare_exchange(
+                    expected_generation,
+                    expected_generation + 1,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+            {
+                return;
+            }
+            let event = match result {
+                Ok(SessionExit::Ended) => Some(Event::SessionEnded),
+                Ok(SessionExit::Stopped) => None,
+                Err(SessionFailure::DependencyUnavailable) => Some(Event::Failure {
+                    reason: FailureReason::DependencyUnavailable,
+                }),
+                Err(SessionFailure::Disconnected) => Some(Event::Failure {
+                    reason: FailureReason::Disconnected,
+                }),
+            };
+            if let Ok(mut active) = active_target.lock() {
+                *active = None;
+            }
+            if let Some(event) = event {
+                let _ = sink.emit_event(&event);
+            }
+        });
     }
 
     fn launch_pending(&mut self) {
@@ -199,9 +408,19 @@ where
         let generation = Arc::clone(&self.generation);
         let cancellation = self.cancellation.clone();
         let sink = self.sink.clone();
+        let store = self.store.clone();
+        let trusted_device = Arc::clone(&self.trusted_device);
+        let session = Arc::clone(&self.session);
+        let active_target = Arc::clone(&self.active_target);
+        let session_generation = Arc::clone(&self.session_generation);
+        let expected_session_generation =
+            self.session_generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let session_cancellation = self.session_cancellation.clone();
         let worker_cancellation = cancellation.clone();
         thread::spawn(move || {
             let mut terminal_event = None;
+            let mut paired_device = None;
+            let mut connected_target = None;
             match flow.lock() {
                 Ok(mut flow) => {
                     let mut capture = |event| match event {
@@ -227,6 +446,8 @@ where
                             &mut capture,
                         );
                     }
+                    paired_device = flow.take_paired_device();
+                    connected_target = flow.take_connected_target();
                 }
                 Err(_) => {
                     terminal_event = Some(Event::Failure {
@@ -248,8 +469,34 @@ where
                 if let Ok(mut ceremony) = ceremony.lock() {
                     ceremony.cancel();
                 }
+                if matches!(terminal_event, Some(Event::Paired))
+                    && let Some(device) = paired_device
+                {
+                    if store.save(&device).is_ok() {
+                        if let Ok(mut remembered) = trusted_device.lock() {
+                            *remembered = Some(device);
+                        }
+                    } else {
+                        terminal_event = Some(Event::Failure {
+                            reason: FailureReason::DependencyUnavailable,
+                        });
+                    }
+                }
+                let starts_session =
+                    matches!(terminal_event, Some(Event::Paired)) && connected_target.is_some();
                 if let Some(event) = terminal_event {
                     let _ = sink.emit_event(&event);
+                }
+                if starts_session {
+                    Self::spawn_session(
+                        session,
+                        session_generation,
+                        expected_session_generation,
+                        session_cancellation,
+                        sink,
+                        active_target,
+                        connected_target.expect("paired flow has a connection target"),
+                    );
                 }
             }
         });
@@ -284,6 +531,67 @@ where
             }
         });
     }
+
+    fn launch_reconnect(&mut self) {
+        let Some(pending) = self.pending_reconnect.take() else {
+            return;
+        };
+        let flow = Arc::clone(&self.flow);
+        let generation = Arc::clone(&self.generation);
+        let cancellation = self.cancellation.clone();
+        let worker_cancellation = cancellation.clone();
+        let sink = self.sink.clone();
+        let session = Arc::clone(&self.session);
+        let active_target = Arc::clone(&self.active_target);
+        let session_generation = Arc::clone(&self.session_generation);
+        let expected_session_generation =
+            self.session_generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let session_cancellation = self.session_cancellation.clone();
+        thread::spawn(move || {
+            let mut terminal_event = None;
+            let mut connected_target = None;
+            match flow.lock() {
+                Ok(mut flow) => {
+                    flow.reconnect_with(&pending.device, &worker_cancellation, |event| {
+                        terminal_event = Some(event);
+                    });
+                    connected_target = flow.take_connected_target();
+                }
+                Err(_) => {
+                    terminal_event = Some(Event::Failure {
+                        reason: FailureReason::DependencyUnavailable,
+                    });
+                }
+            }
+            if generation
+                .compare_exchange(
+                    pending.generation,
+                    pending.generation + 1,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                worker_cancellation.cancel();
+                let starts_session =
+                    matches!(terminal_event, Some(Event::Connected)) && connected_target.is_some();
+                if let Some(event) = terminal_event {
+                    let _ = sink.emit_event(&event);
+                }
+                if starts_session {
+                    Self::spawn_session(
+                        session,
+                        session_generation,
+                        expected_session_generation,
+                        session_cancellation,
+                        sink,
+                        active_target,
+                        connected_target.expect("reconnect has a connection target"),
+                    );
+                }
+            }
+        });
+    }
 }
 
 impl<S> PairingBackend for RuntimePairingBackend<S>
@@ -291,8 +599,10 @@ where
     S: ProtocolSink,
 {
     fn start_qr_pairing(&mut self) -> Result<QrPresentation, FailureReason> {
+        self.reset_session();
         self.cancellation.cancel();
         self.pending = None;
+        self.pending_reconnect = None;
         let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
         self.cancellation = CancellationToken::new();
 
@@ -328,7 +638,9 @@ where
     }
 
     fn cancel_pairing(&mut self) {
+        self.reset_session();
         self.pending = None;
+        self.pending_reconnect = None;
         self.cancellation.cancel();
         self.generation.fetch_add(1, Ordering::AcqRel);
         // Pairing workers hold the flow lock until every child process has
@@ -343,8 +655,10 @@ where
     }
 
     fn submit_manual_code(&mut self, code: &str) -> Result<(), FailureReason> {
+        self.reset_session();
         self.cancellation.cancel();
         self.pending = None;
+        self.pending_reconnect = None;
         let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
         self.cancellation = CancellationToken::new();
         self.pending = Some(PendingPairing {
@@ -356,7 +670,67 @@ where
         Ok(())
     }
 
+    fn has_trusted_device(&self) -> bool {
+        self.trusted_device
+            .lock()
+            .is_ok_and(|device| device.is_some())
+    }
+
+    fn reconnect_trusted_device(&mut self) -> Result<(), FailureReason> {
+        let device = self
+            .trusted_device
+            .lock()
+            .map_err(|_| FailureReason::DependencyUnavailable)?
+            .clone()
+            .ok_or(FailureReason::Disconnected)?;
+        self.reset_session();
+        self.cancellation.cancel();
+        self.pending = None;
+        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        self.cancellation = CancellationToken::new();
+        self.pending_reconnect = Some(PendingReconnect { generation, device });
+        Ok(())
+    }
+
+    fn stop_session(&mut self) {
+        self.session_cancellation.cancel();
+        self.session_generation.fetch_add(1, Ordering::AcqRel);
+        if let Ok(session) = self.session.lock() {
+            drop(session);
+        }
+        if let Ok(mut target) = self.active_target.lock() {
+            *target = None;
+        }
+    }
+
+    fn pointer_tap(
+        &mut self,
+        geometry: DisplayGeometry,
+        point: NormalizedPoint,
+    ) -> Result<(), FailureReason> {
+        self.run_input(|adapter, target| adapter.tap(target, geometry, point))
+    }
+
+    fn pointer_swipe(
+        &mut self,
+        geometry: DisplayGeometry,
+        start: NormalizedPoint,
+        end: NormalizedPoint,
+        duration_ms: u32,
+    ) -> Result<(), FailureReason> {
+        self.run_input(|adapter, target| adapter.swipe(target, geometry, start, end, duration_ms))
+    }
+
+    fn key_input(&mut self, key: AndroidKey) -> Result<(), FailureReason> {
+        self.run_input(|adapter, target| adapter.key(target, key))
+    }
+
+    fn text_input(&mut self, text: &str) -> Result<(), FailureReason> {
+        self.run_input(|adapter, target| adapter.text(target, text))
+    }
+
     fn response_emitted(&mut self) {
+        self.launch_reconnect();
         self.launch_pending();
     }
 }

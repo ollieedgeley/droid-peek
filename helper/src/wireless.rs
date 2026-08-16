@@ -12,6 +12,7 @@ use std::{
 pub use crate::process::CancellationToken;
 
 use crate::{
+    persistence::TrustedDevice,
     process::{CommandFailure, CommandRequest, CommandRunner},
     protocol::{Event, FailureReason, PairingMethod},
     qr::{Clock, EntropySource, QrCeremony, QrRenderer},
@@ -84,6 +85,18 @@ pub trait WirelessDiscovery {
         pairing_endpoint: &PairingEndpoint,
         cancellation: &CancellationToken,
     ) -> Result<PairingEndpoint, DiscoveryFailure>;
+
+    fn find_trusted_connection(
+        &mut self,
+        _device: &TrustedDevice,
+        _cancellation: &CancellationToken,
+    ) -> Result<PairingEndpoint, DiscoveryFailure> {
+        Err(DiscoveryFailure::DependencyUnavailable)
+    }
+
+    fn take_paired_device(&mut self) -> Option<TrustedDevice> {
+        None
+    }
 }
 
 impl<T> WirelessDiscovery for Box<T>
@@ -112,6 +125,18 @@ where
     ) -> Result<PairingEndpoint, DiscoveryFailure> {
         (**self).find_connection_endpoint(pairing_endpoint, cancellation)
     }
+
+    fn find_trusted_connection(
+        &mut self,
+        device: &TrustedDevice,
+        cancellation: &CancellationToken,
+    ) -> Result<PairingEndpoint, DiscoveryFailure> {
+        (**self).find_trusted_connection(device, cancellation)
+    }
+
+    fn take_paired_device(&mut self) -> Option<TrustedDevice> {
+        (**self).take_paired_device()
+    }
 }
 
 const PAIRING_SERVICE_TYPE: &str = "_adb-tls-pairing._tcp";
@@ -124,6 +149,7 @@ pub struct AvahiDiscovery {
     executable: PathBuf,
     timeout: Duration,
     poll_interval: Duration,
+    paired_device: Option<TrustedDevice>,
 }
 
 impl AvahiDiscovery {
@@ -133,6 +159,7 @@ impl AvahiDiscovery {
             executable: executable.as_ref().to_owned(),
             timeout,
             poll_interval,
+            paired_device: None,
         }
     }
 
@@ -142,7 +169,7 @@ impl AvahiDiscovery {
         cancellation: &CancellationToken,
         require_unique_match: bool,
         matches: F,
-    ) -> Result<PairingEndpoint, DiscoveryFailure>
+    ) -> Result<ResolvedService, DiscoveryFailure>
     where
         F: Fn(&ResolvedService) -> bool,
     {
@@ -198,20 +225,19 @@ impl AvahiDiscovery {
                         && service.service_type == service_type
                         && matches(&service)
                     {
-                        let endpoint = PairingEndpoint::new(service.address, service.port)
+                        PairingEndpoint::new(&service.address, service.port)
                             .map_err(|_| DiscoveryFailure::NetworkUnavailable)?;
                         if !require_unique_match {
                             stop_child(&mut child);
-                            return Ok(endpoint);
+                            return Ok(service);
                         }
-                        if candidate
-                            .as_ref()
-                            .is_some_and(|current| current != &endpoint)
-                        {
+                        if candidate.as_ref().is_some_and(|current: &ResolvedService| {
+                            current.address != service.address || current.port != service.port
+                        }) {
                             stop_child(&mut child);
                             return Err(DiscoveryFailure::NetworkUnavailable);
                         }
-                        candidate = Some(endpoint);
+                        candidate = Some(service);
                         settle_deadline = Some(Instant::now() + MANUAL_DISCOVERY_SETTLE_TIME);
                     }
                 }
@@ -246,6 +272,7 @@ impl WirelessDiscovery for AvahiDiscovery {
         self.browse(PAIRING_SERVICE_TYPE, cancellation, false, |service| {
             service.name == requested_service
         })
+        .and_then(service_endpoint)
     }
 
     fn find_manual_pairing_endpoint(
@@ -253,6 +280,7 @@ impl WirelessDiscovery for AvahiDiscovery {
         cancellation: &CancellationToken,
     ) -> Result<PairingEndpoint, DiscoveryFailure> {
         self.browse(PAIRING_SERVICE_TYPE, cancellation, true, |_| true)
+            .and_then(service_endpoint)
     }
 
     fn find_connection_endpoint(
@@ -260,9 +288,29 @@ impl WirelessDiscovery for AvahiDiscovery {
         pairing_endpoint: &PairingEndpoint,
         cancellation: &CancellationToken,
     ) -> Result<PairingEndpoint, DiscoveryFailure> {
-        self.browse(CONNECTION_SERVICE_TYPE, cancellation, false, |service| {
+        let service = self.browse(CONNECTION_SERVICE_TYPE, cancellation, false, |service| {
             service.address == pairing_endpoint.host
+        })?;
+        let device =
+            TrustedDevice::new(&service.name).map_err(|_| DiscoveryFailure::NetworkUnavailable)?;
+        let endpoint = service_endpoint(service)?;
+        self.paired_device = Some(device);
+        Ok(endpoint)
+    }
+
+    fn find_trusted_connection(
+        &mut self,
+        device: &TrustedDevice,
+        cancellation: &CancellationToken,
+    ) -> Result<PairingEndpoint, DiscoveryFailure> {
+        self.browse(CONNECTION_SERVICE_TYPE, cancellation, false, |service| {
+            service.name == device.service_name()
         })
+        .and_then(service_endpoint)
+    }
+
+    fn take_paired_device(&mut self) -> Option<TrustedDevice> {
+        self.paired_device.take()
     }
 }
 
@@ -286,6 +334,11 @@ impl ResolvedService {
             port: fields[8].parse().ok()?,
         })
     }
+}
+
+fn service_endpoint(service: ResolvedService) -> Result<PairingEndpoint, DiscoveryFailure> {
+    PairingEndpoint::new(service.address, service.port)
+        .map_err(|_| DiscoveryFailure::NetworkUnavailable)
 }
 
 fn unescape_avahi(value: &str) -> Option<String> {
@@ -323,12 +376,19 @@ fn stop_child(child: &mut std::process::Child) {
 pub struct PairingFlow<D, R> {
     discovery: D,
     runner: R,
+    paired_device: Option<TrustedDevice>,
+    connected_target: Option<String>,
 }
 
 impl<D, R> PairingFlow<D, R> {
     #[must_use]
     pub fn new(discovery: D, runner: R) -> Self {
-        Self { discovery, runner }
+        Self {
+            discovery,
+            runner,
+            paired_device: None,
+            connected_target: None,
+        }
     }
 
     #[must_use]
@@ -342,6 +402,14 @@ impl<D, R> PairingFlow<D, R> {
 
     pub fn runner_mut(&mut self) -> &mut R {
         &mut self.runner
+    }
+
+    pub fn take_paired_device(&mut self) -> Option<TrustedDevice> {
+        self.paired_device.take()
+    }
+
+    pub fn take_connected_target(&mut self) -> Option<String> {
+        self.connected_target.take()
     }
 }
 
@@ -358,6 +426,8 @@ where
         pairing_code: &str,
         cancellation: &CancellationToken,
     ) -> Vec<String> {
+        self.paired_device = None;
+        self.connected_target = None;
         let mut events = Vec::new();
         self.pair_with(
             method,
@@ -377,6 +447,8 @@ where
         cancellation: &CancellationToken,
         mut emit: impl FnMut(Event),
     ) {
+        self.paired_device = None;
+        self.connected_target = None;
         if cancellation.is_cancelled() {
             emit(Event::PairingCancelled);
             return;
@@ -408,6 +480,7 @@ where
         cancellation: &CancellationToken,
         mut emit: impl FnMut(Event),
     ) {
+        self.connected_target = None;
         if cancellation.is_cancelled() {
             emit(Event::PairingCancelled);
             return;
@@ -431,6 +504,61 @@ where
             false,
             emit,
         );
+    }
+
+    #[must_use]
+    pub fn reconnect(
+        &mut self,
+        device: &TrustedDevice,
+        cancellation: &CancellationToken,
+    ) -> Vec<String> {
+        let mut events = Vec::new();
+        self.reconnect_with(device, cancellation, |event| events.push(event.to_line()));
+        events
+    }
+
+    pub fn reconnect_with(
+        &mut self,
+        device: &TrustedDevice,
+        cancellation: &CancellationToken,
+        mut emit: impl FnMut(Event),
+    ) {
+        self.connected_target = None;
+        if cancellation.is_cancelled() {
+            emit(Event::PairingCancelled);
+            return;
+        }
+        let endpoint = match self.discovery.find_trusted_connection(device, cancellation) {
+            Ok(endpoint) => endpoint,
+            Err(failure) => {
+                emit(connection_discovery_failure(failure));
+                return;
+            }
+        };
+        if cancellation.is_cancelled() {
+            emit(Event::PairingCancelled);
+            return;
+        }
+        let output = match self
+            .runner
+            .run(adb_connect_request(&endpoint), cancellation)
+        {
+            Ok(output) => output,
+            Err(failure) => {
+                emit(command_failure(failure));
+                return;
+            }
+        };
+        if cancellation.is_cancelled() {
+            emit(Event::PairingCancelled);
+        } else if output.succeeded {
+            self.connected_target = Some(endpoint.adb_target());
+            emit(Event::Connected);
+        } else {
+            emit(Event::Failure {
+                reason: FailureReason::Disconnected,
+            });
+        }
     }
 
     fn complete_pairing_with(
@@ -507,6 +635,8 @@ where
             return;
         }
 
+        self.connected_target = Some(connection_endpoint.adb_target());
+        self.paired_device = self.discovery.take_paired_device();
         emit(Event::Paired);
     }
 }

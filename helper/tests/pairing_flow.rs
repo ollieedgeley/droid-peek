@@ -103,6 +103,10 @@ fn pairs_and_connects_only_the_requested_qr_service() {
     );
     assert!(events.iter().all(|event| !event.contains(secret)));
     assert!(events.iter().all(|event| !event.contains("pairing.local")));
+    assert_eq!(
+        flow.take_connected_target().as_deref(),
+        Some("connect.local:38000")
+    );
 
     let (discovery, runner) = flow.into_parts();
     assert_eq!(discovery.requested_services, [requested_service]);

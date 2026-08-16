@@ -21,10 +21,17 @@ TestCase {
         signalName: "pairingCancellationConfirmed"
     }
 
+    SignalSpy {
+        id: sessionStopSpy
+        target: state
+        signalName: "sessionStopConfirmed"
+    }
+
     function init() {
         state.reset()
         commandSpy.clear()
         cancellationSpy.clear()
+        sessionStopSpy.clear()
     }
 
     function event(type, properties) {
@@ -43,13 +50,21 @@ TestCase {
     }
 
     function test_helper_ready_starts_qr_without_a_connect_action() {
-        state.receiveLine(event("ready"))
+        state.receiveLine(event("ready", { hasTrustedDevice: false }))
 
         compare(state.helperReady, true)
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
         compare(command.version, 1)
         compare(command.type, "start-qr-pairing")
+    }
+
+    function test_helper_ready_reconnects_a_remembered_device() {
+        state.receiveLine(event("ready", { hasTrustedDevice: true }))
+
+        compare(state.helperReady, true)
+        compare(commandSpy.count, 1)
+        compare(JSON.parse(commandSpy.signalArguments[0][0]).type, "reconnect-trusted-device")
     }
 
     function test_qr_waiting_and_pairing_progress() {
@@ -112,21 +127,56 @@ TestCase {
         compare(state.statusDescription.indexOf("482913"), -1)
     }
 
-    function test_successful_pairing_enters_ready_state() {
+    function test_connected_phone_becomes_ready_only_after_session_starts() {
         state.receiveLine(event("paired"))
+        compare(state.sessionState, "pairing")
+        compare(state.pairingStage, "connected")
+
+        state.receiveLine(event("session-starting"))
+        compare(state.sessionState, "pairing")
+        compare(state.pairingStage, "session-starting")
+
+        state.receiveLine(event("session-started"))
         compare(state.sessionState, "ready")
-        compare(state.pairingStage, "paired")
+        compare(state.pairingStage, "session-started")
+
+        state.receiveLine(event("session-ended"))
+        compare(state.sessionState, "disconnected")
+        compare(state.pairingStage, "session-ended")
+    }
+
+    function test_reconnect_and_session_stop_are_actionable() {
+        state.receiveLine(event("connecting"))
+        compare(state.sessionState, "pairing")
+        compare(state.pairingStage, "connecting")
+
+        state.receiveLine(event("connected"))
+        compare(state.sessionState, "pairing")
+        compare(state.pairingStage, "connected")
+
+        state.stopSession()
+        compare(JSON.parse(commandSpy.signalArguments[0][0]).type, "stop-session")
+        state.receiveLine(event("session-stopped"))
+        compare(sessionStopSpy.count, 1)
+
+        state.receiveLine(event("failure", { reason: "disconnected" }))
+        compare(state.sessionState, "disconnected")
+        state.reconnectTrustedDevice()
+        compare(commandSpy.count, 2)
+        compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "reconnect-trusted-device")
     }
 
     function test_commands_are_versioned_line_payloads() {
         state.startQrPairing()
         state.useManualCode()
         state.cancelPairing()
+        state.stopSession()
 
-        compare(commandSpy.count, 3)
+        compare(commandSpy.count, 4)
         compare(JSON.parse(commandSpy.signalArguments[0][0]).type, "start-qr-pairing")
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "use-manual-code")
         compare(JSON.parse(commandSpy.signalArguments[2][0]).type, "cancel-pairing")
+        compare(JSON.parse(commandSpy.signalArguments[3][0]).type, "stop-session")
         compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 1)
     }
 
@@ -163,5 +213,28 @@ TestCase {
         state.receiveLine(JSON.stringify({ version: 9, type: "ready", detail: rawDetail }))
         compare(state.sessionState, "dependency-unavailable")
         compare(state.statusDescription.indexOf(rawDetail), -1)
+    }
+
+    function test_input_commands_are_versioned_line_payloads() {
+        state.sendPointerTap(0.25, 0.75, 1080, 2400)
+        state.sendPointerSwipe(0.1, 0.2, 0.8, 0.9, 1080, 2400, 320)
+        state.sendKeyInput("back")
+        state.sendTextInput("a")
+
+        compare(commandSpy.count, 4)
+        compare(JSON.parse(commandSpy.signalArguments[0][0]), {
+                    version: 1,
+                    type: "pointer-tap",
+                    x: 0.25,
+                    y: 0.75,
+                    displayWidth: 1080,
+                    displayHeight: 2400
+                })
+        compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "pointer-swipe")
+        compare(JSON.parse(commandSpy.signalArguments[1][0]).durationMs, 320)
+        compare(JSON.parse(commandSpy.signalArguments[2][0]),
+                { version: 1, type: "key-input", key: "back" })
+        compare(JSON.parse(commandSpy.signalArguments[3][0]),
+                { version: 1, type: "text-input", text: "a" })
     }
 }

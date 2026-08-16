@@ -100,7 +100,7 @@ if [[ "$service" == "_adb-tls-pairing._tcp" ]]; then
 else
   printf '%s\n' \
     '=;wlan0;IPv4;unrelated-connect;_adb-tls-connect._tcp;local;other.local;192.0.2.30;38000;' \
-    '=;wlan0;IPv4;associated-connect;_adb-tls-connect._tcp;local;phone.local;192.0.2.20;38100;'
+    '=;wlan0;IPv4;adb-associated-connect;_adb-tls-connect._tcp;local;phone.local;192.0.2.20;38100;'
 fi
 exec sleep 5
 "#,
@@ -118,6 +118,14 @@ exec sleep 5
 
     assert!(pairing == PairingEndpoint::new("192.0.2.20", 37_100).expect("pairing endpoint"));
     assert!(connection == PairingEndpoint::new("192.0.2.20", 38_100).expect("connection endpoint"));
+    let remembered = discovery
+        .take_paired_device()
+        .expect("associated trusted-device identity");
+    assert_eq!(remembered.service_name(), "adb-associated-connect");
+    let rediscovered = discovery
+        .find_trusted_connection(&remembered, &cancellation)
+        .expect("remembered connection service");
+    assert!(rediscovered == PairingEndpoint::new("192.0.2.20", 38_100).expect("fresh endpoint"));
 }
 
 #[test]

@@ -27,7 +27,7 @@ run_check() {
 }
 
 run_check "validate plugin manifest" omarchy plugin validate .
-run_check "lint QML" "$qt6_bin/qmllint" -I "$lint_root" BarWidget.qml Panel.qml qml/state/PairingState.qml
+run_check "lint QML" "$qt6_bin/qmllint" -I "$lint_root" BarWidget.qml Panel.qml qml/components/PhonePreview.qml qml/state/PairingState.qml
 run_check "run QML tests" "$qt6_bin/qmltestrunner" -input tests/qml
 run_check "check Rust formatting" cargo fmt --manifest-path helper/Cargo.toml -- --check
 run_check "lint Rust" cargo clippy --manifest-path helper/Cargo.toml -- -D warnings

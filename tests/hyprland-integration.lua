@@ -164,7 +164,11 @@ assert(calls[4].dispatcher == untagged, "untagged functions must remain untouche
 assert(calls[5].keys == "SUPER + P")
 assert(calls[5].description == "Toggle Android panel")
 assert(calls[5].dispatcher == "omarchy-shell ollie.android toggle")
-assert(calls[5].options == panel_options, "panel binding options must be preserved")
+assert(calls[5].options ~= panel_options, "panel bypass must not mutate caller options")
+assert(calls[5].options.locked == true, "panel locked option must be preserved")
+assert(calls[5].options.repeatable == false, "panel repeatable option must be preserved")
+assert(calls[5].options.dont_inhibit == true, "panel toggle must bypass shortcut inhibition")
+assert(panel_options.dont_inhibit == nil, "caller options must remain unchanged")
 assert(
   calls[6].dispatcher == ambiguous_android_panel,
   "ambiguous panel declarations must remain untouched"
@@ -175,7 +179,7 @@ assert(
 )
 assert(calls[8].dispatcher == "omarchy-shell ollie.android toggle")
 assert(calls[8].description == nil, "nil panel description must be preserved")
-assert(calls[8].options == nil, "nil panel options must be preserved")
+assert(calls[8].options.dont_inhibit == true, "nil panel options must gain inhibition bypass")
 
 assert(calls[9].keys == "SUPER + SHIFT + B")
 assert(calls[9].description == "Browser / Android default browser")

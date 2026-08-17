@@ -52,13 +52,14 @@ TestCase {
         actionCompletedSpy.clear()
     }
 
-    function preferences(androidModeShortcuts) {
+    function preferences(androidModeShortcuts, commandPassthrough) {
         return {
             keepConnected: false,
             previewScale: 100,
             videoQuality: "high",
             quickActions: ["back", "home", "recent-apps"],
-            androidModeShortcuts: androidModeShortcuts
+            androidModeShortcuts: androidModeShortcuts,
+            commandPassthrough: commandPassthrough === true
         }
     }
 
@@ -73,13 +74,14 @@ TestCase {
     }
 
     function test_unpaired_is_the_safe_initial_state() {
-        compare(state.protocolVersion, 9)
+        compare(state.protocolVersion, 10)
         compare(state.sessionState, "unpaired")
         compare(state.pairingStage, "idle")
         verify(state.statusTitle.length > 0)
         compare(state.qrArtifact, "")
         compare(state.qrExpiresInSeconds, 0)
         compare(state.androidModeShortcuts, false)
+        compare(state.commandPassthrough, false)
     }
 
     function test_helper_ready_starts_qr_without_a_connect_action() {
@@ -88,18 +90,19 @@ TestCase {
         compare(state.helperReady, true)
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 9)
+        compare(command.version, 10)
         compare(command.type, "start-qr-pairing")
     }
 
     function test_helper_ready_reconnects_a_remembered_device() {
         state.receiveLine(event("ready", {
                                     hasTrustedDevice: true,
-                                    preferences: preferences(true)
+                                    preferences: preferences(true, true)
                                 }))
 
         compare(state.helperReady, true)
         compare(state.androidModeShortcuts, true)
+        compare(state.commandPassthrough, true)
         compare(commandSpy.count, 1)
         compare(JSON.parse(commandSpy.signalArguments[0][0]).type, "reconnect-trusted-device")
     }
@@ -158,7 +161,7 @@ TestCase {
         state.submitManualCode("482913")
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 9)
+        compare(command.version, 10)
         compare(command.type, "submit-manual-code")
         compare(command.code, "482913")
         compare(state.statusDescription.indexOf("482913"), -1)
@@ -260,7 +263,7 @@ TestCase {
     function test_start_over_forgets_the_device_then_requests_fresh_qr() {
         state.receiveLine(event("ready", { hasTrustedDevice: true }))
         state.setPreferences(
-                    true, 125, "medium", ["home", "back", "recent-apps"], true)
+                    true, 125, "medium", ["home", "back", "recent-apps"], true, false)
         commandSpy.clear()
 
         state.startOver()
@@ -270,7 +273,7 @@ TestCase {
         compare(state.statusTitle, "Starting over")
         compare(commandSpy.count, 1)
         compare(JSON.parse(commandSpy.signalArguments[0][0]),
-                { version: 9, type: "start-over" })
+                { version: 10, type: "start-over" })
 
         state.receiveLine(event("start-over-complete"))
 
@@ -281,6 +284,7 @@ TestCase {
         compare(state.previewScale, 125)
         compare(state.videoQuality, "medium")
         compare(state.androidModeShortcuts, true)
+        compare(state.commandPassthrough, false)
         compare(commandSpy.count, 2)
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type,
                 "start-qr-pairing")
@@ -311,28 +315,30 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "use-manual-code")
         compare(JSON.parse(commandSpy.signalArguments[2][0]).type, "cancel-pairing")
         compare(JSON.parse(commandSpy.signalArguments[3][0]).type, "stop-session")
-        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 9)
+        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 10)
     }
 
     function test_preferences_are_versioned_and_applied_immediately() {
         verify(state.setPreferences(
-                   true, 150, "low", ["home", "recent-apps", "back"], true))
+                   true, 150, "low", ["home", "recent-apps", "back"], true, true))
 
         compare(state.keepConnected, true)
         compare(state.previewScale, 150)
         compare(state.videoQuality, "low")
         compare(state.quickActions, ["home", "recent-apps", "back"])
         compare(state.androidModeShortcuts, true)
+        compare(state.commandPassthrough, true)
         compare(androidModeShortcutsAtCommand, true)
         compare(commandSpy.count, 1)
         compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 9,
+                    version: 10,
                     type: "set-preferences",
                     keepConnected: true,
                     previewScale: 150,
                     videoQuality: "low",
                     quickActions: ["home", "recent-apps", "back"],
-                    androidModeShortcuts: true
+                    androidModeShortcuts: true,
+                    commandPassthrough: true,
                 })
     }
 
@@ -344,6 +350,7 @@ TestCase {
                                     videoQuality: "medium",
                                     quickActions: ["back", "home", "recent-apps"],
                                     androidModeShortcuts: true,
+                                    commandPassthrough: true,
                                     sessionRestarted: true
                                 }))
 
@@ -351,6 +358,7 @@ TestCase {
         compare(state.keepConnected, true)
         compare(state.videoQuality, "medium")
         compare(state.androidModeShortcuts, true)
+        compare(state.commandPassthrough, true)
         compare(state.sessionState, "pairing")
         compare(state.pairingStage, "session-starting")
         state.receiveLine(event("session-started"))
@@ -379,7 +387,8 @@ TestCase {
             previewScale: 150,
             videoQuality: "low",
             quickActions: ["home", "recent-apps", "back"],
-            androidModeShortcuts: true
+            androidModeShortcuts: true,
+            commandPassthrough: true
         }
         if (data.sessionRestarted !== undefined)
             payload.sessionRestarted = data.sessionRestarted
@@ -393,6 +402,7 @@ TestCase {
         compare(state.videoQuality, "high")
         compare(state.quickActions, ["back", "home", "recent-apps"])
         compare(state.androidModeShortcuts, false)
+        compare(state.commandPassthrough, false)
 
         state.receiveLine(event("session-started"))
 
@@ -402,9 +412,9 @@ TestCase {
 
     function test_invalid_preferences_fail_closed_without_command() {
         verify(!state.setPreferences(
-                   false, 49, "high", ["back", "home", "recent-apps"], false))
+                   false, 49, "high", ["back", "home", "recent-apps"], false, false))
         verify(!state.setPreferences(
-                   false, 151, "high", ["back", "home", "recent-apps"], false))
+                   false, 151, "high", ["back", "home", "recent-apps"], false, false))
         compare(commandSpy.count, 0)
 
         state.receiveLine(event("preferences-updated", {
@@ -413,6 +423,7 @@ TestCase {
                                     videoQuality: "high",
                                     quickActions: ["back", "home", "recent-apps"],
                                     androidModeShortcuts: false,
+                                    commandPassthrough: false,
                                     sessionRestarted: false
                                 }))
         compare(state.sessionState, "dependency-unavailable")
@@ -421,9 +432,9 @@ TestCase {
 
     function test_set_preferences_requires_boolean_android_mode_shortcuts() {
         verify(!state.setPreferences(
-                   true, 125, "medium", ["home", "back", "recent-apps"]))
+                   true, 125, "medium", ["home", "back", "recent-apps"], undefined, false))
         verify(!state.setPreferences(
-                   true, 125, "medium", ["home", "back", "recent-apps"], "true"))
+                   true, 125, "medium", ["home", "back", "recent-apps"], "true", false))
 
         compare(state.keepConnected, false)
         compare(state.previewScale, 100)
@@ -433,23 +444,20 @@ TestCase {
         compare(commandSpy.count, 0)
     }
 
-    function test_ready_and_preference_updates_require_android_mode_shortcuts_data() {
+    function test_set_preferences_requires_boolean_command_passthrough() {
+        verify(!state.setPreferences(
+                   true, 125, "medium", ["home", "back", "recent-apps"], true))
+        verify(!state.setPreferences(
+                   true, 125, "medium", ["home", "back", "recent-apps"], true, "true"))
+
+        compare(state.commandPassthrough, false)
+        compare(commandSpy.count, 0)
+    }
+
+    function test_ready_and_preference_updates_require_boolean_shortcut_preferences_data() {
         return [
             {
-                tag: "ready missing",
-                type: "ready",
-                payload: {
-                    hasTrustedDevice: false,
-                    preferences: {
-                        keepConnected: false,
-                        previewScale: 100,
-                        videoQuality: "high",
-                        quickActions: ["back", "home", "recent-apps"]
-                    }
-                }
-            },
-            {
-                tag: "ready non-bool",
+                tag: "ready missing Android mode",
                 type: "ready",
                 payload: {
                     hasTrustedDevice: false,
@@ -458,23 +466,39 @@ TestCase {
                         previewScale: 100,
                         videoQuality: "high",
                         quickActions: ["back", "home", "recent-apps"],
-                        androidModeShortcuts: "false"
+                        commandPassthrough: false
                     }
                 }
             },
             {
-                tag: "preferences-updated missing",
+                tag: "ready non-boolean Android mode",
+                type: "ready",
+                payload: {
+                    hasTrustedDevice: false,
+                    preferences: {
+                        keepConnected: false,
+                        previewScale: 100,
+                        videoQuality: "high",
+                        quickActions: ["back", "home", "recent-apps"],
+                        androidModeShortcuts: "false",
+                        commandPassthrough: false
+                    }
+                }
+            },
+            {
+                tag: "preferences update missing Android mode",
                 type: "preferences-updated",
                 payload: {
                     keepConnected: false,
                     previewScale: 100,
                     videoQuality: "high",
                     quickActions: ["back", "home", "recent-apps"],
+                    commandPassthrough: false,
                     sessionRestarted: false
                 }
             },
             {
-                tag: "preferences-updated non-bool",
+                tag: "preferences update non-boolean Android mode",
                 type: "preferences-updated",
                 payload: {
                     keepConnected: false,
@@ -482,13 +506,68 @@ TestCase {
                     videoQuality: "high",
                     quickActions: ["back", "home", "recent-apps"],
                     androidModeShortcuts: 0,
+                    commandPassthrough: false,
+                    sessionRestarted: false
+                }
+            },
+            {
+                tag: "ready command passthrough missing",
+                type: "ready",
+                payload: {
+                    hasTrustedDevice: false,
+                    preferences: {
+                        keepConnected: false,
+                        previewScale: 100,
+                        videoQuality: "high",
+                        quickActions: ["back", "home", "recent-apps"],
+                        androidModeShortcuts: false
+                    }
+                }
+            },
+            {
+                tag: "ready command passthrough non-boolean",
+                type: "ready",
+                payload: {
+                    hasTrustedDevice: false,
+                    preferences: {
+                        keepConnected: false,
+                        previewScale: 100,
+                        videoQuality: "high",
+                        quickActions: ["back", "home", "recent-apps"],
+                        androidModeShortcuts: false,
+                        commandPassthrough: "false"
+                    }
+                }
+            },
+            {
+                tag: "preferences update command passthrough missing",
+                type: "preferences-updated",
+                payload: {
+                    keepConnected: false,
+                    previewScale: 100,
+                    videoQuality: "high",
+                    quickActions: ["back", "home", "recent-apps"],
+                    androidModeShortcuts: false,
+                    sessionRestarted: false
+                }
+            },
+            {
+                tag: "preferences update command passthrough non-boolean",
+                type: "preferences-updated",
+                payload: {
+                    keepConnected: false,
+                    previewScale: 100,
+                    videoQuality: "high",
+                    quickActions: ["back", "home", "recent-apps"],
+                    androidModeShortcuts: false,
+                    commandPassthrough: 0,
                     sessionRestarted: false
                 }
             }
         ]
     }
 
-    function test_ready_and_preference_updates_require_android_mode_shortcuts(data) {
+    function test_ready_and_preference_updates_require_boolean_shortcut_preferences(data) {
         state.receiveLine(event(data.type, data.payload))
 
         compare(state.helperReady, false)
@@ -528,7 +607,7 @@ TestCase {
         compare(state.pairingStage, "protocol-error")
         compare(state.statusDescription.indexOf(rawDetail), -1)
 
-        state.receiveLine(JSON.stringify({ version: 9, type: "ready", detail: rawDetail }))
+        state.receiveLine(JSON.stringify({ version: state.protocolVersion - 1, type: "ready", detail: rawDetail }))
         compare(state.sessionState, "dependency-unavailable")
         compare(state.statusDescription.indexOf(rawDetail), -1)
     }
@@ -541,7 +620,7 @@ TestCase {
 
         compare(commandSpy.count, 4)
         compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 9,
+                    version: 10,
                     type: "pointer-tap",
                     x: 0.25,
                     y: 0.75,
@@ -551,8 +630,8 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "pointer-swipe")
         compare(JSON.parse(commandSpy.signalArguments[1][0]).durationMs, 320)
         compare(JSON.parse(commandSpy.signalArguments[2][0]),
-                { version: 9, type: "key-input", key: "back" })
+                { version: 10, type: "key-input", key: "back" })
         compare(JSON.parse(commandSpy.signalArguments[3][0]),
-                { version: 9, type: "text-input", text: "a" })
+                { version: 10, type: "text-input", text: "a" })
     }
 }

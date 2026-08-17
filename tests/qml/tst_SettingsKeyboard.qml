@@ -26,6 +26,7 @@ TestCase {
         }
     }
 
+
     SignalSpy {
         id: escapeSpy
         target: scope
@@ -64,4 +65,5 @@ TestCase {
         compare(escapeSpy.count, 0);
         scope.escapeEnabled = true;
     }
+
 }

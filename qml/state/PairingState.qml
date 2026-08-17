@@ -3,7 +3,7 @@ import QtQuick
 QtObject {
     id: root
 
-    readonly property int protocolVersion: 9
+    readonly property int protocolVersion: 10
     property bool helperReady: false
     property bool automaticPairingEnabled: true
     property bool hasTrustedDevice: false
@@ -19,6 +19,7 @@ QtObject {
     property string videoQuality: "high"
     property var quickActions: ["back", "home", "recent-apps"]
     property bool androidModeShortcuts: false
+    property bool commandPassthrough: false
 
     signal commandRequested(string command)
     signal pairingCancellationConfirmed()
@@ -39,6 +40,7 @@ QtObject {
         videoQuality = "high"
         quickActions = ["back", "home", "recent-apps"]
         androidModeShortcuts = false
+        commandPassthrough = false
         clearQrPresentation()
     }
 
@@ -186,6 +188,7 @@ QtObject {
         if (!preferences
                 || typeof preferences.keepConnected !== "boolean"
                 || typeof preferences.androidModeShortcuts !== "boolean"
+                || typeof preferences.commandPassthrough !== "boolean"
                 || !validPreviewScale(preferences.previewScale)
                 || !validPreference(preferences.videoQuality, ["low", "medium", "high"])
                 || !Array.isArray(preferences.quickActions)
@@ -202,16 +205,18 @@ QtObject {
         videoQuality = preferences.videoQuality
         quickActions = preferences.quickActions.slice()
         androidModeShortcuts = preferences.androidModeShortcuts
+        commandPassthrough = preferences.commandPassthrough
         return true
     }
 
-    function setPreferences(keepConnectedValue, scale, quality, actions, androidModeShortcutsValue) {
+    function setPreferences(keepConnectedValue, scale, quality, actions, androidModeShortcutsValue, commandPassthroughValue) {
         var preferences = {
             keepConnected: keepConnectedValue,
             previewScale: scale,
             videoQuality: quality,
             quickActions: actions,
-            androidModeShortcuts: androidModeShortcutsValue
+            androidModeShortcuts: androidModeShortcutsValue,
+            commandPassthrough: commandPassthroughValue
         }
         if (!applyPreferences(preferences))
             return false
@@ -221,7 +226,8 @@ QtObject {
             previewScale: previewScale,
             videoQuality: videoQuality,
             quickActions: quickActions,
-            androidModeShortcuts: androidModeShortcuts
+            androidModeShortcuts: androidModeShortcuts,
+            commandPassthrough: commandPassthrough
         })
         return true
     }

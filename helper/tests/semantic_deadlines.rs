@@ -153,7 +153,7 @@ fn unix_time_ms() -> u64 {
 }
 
 #[test]
-fn runtime_rejects_expired_actions_and_cancels_slow_accepted_actions() {
+fn runtime_rejects_expired_actions_and_consumes_slow_accepted_actions() {
     let directory = tempfile::tempdir().expect("temporary runtime");
     let runtime_directory = directory.path().join("runtime");
     let state_directory = directory.path().join("state");
@@ -250,7 +250,7 @@ fn runtime_rejects_expired_actions_and_cancels_slow_accepted_actions() {
     assert_eq!(
         fs::read_to_string(runtime_directory.join("action-results/slow-action"))
             .expect("cancelled result"),
-        "false\n"
+        "true\n"
     );
     assert!(
         !session_stopped.load(Ordering::Acquire),

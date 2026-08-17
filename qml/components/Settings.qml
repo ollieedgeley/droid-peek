@@ -13,11 +13,12 @@ NestedEscapeScope {
     property string videoQuality: "high"
     property var quickActions: ["back", "home", "recent-apps"]
     property bool androidModeShortcuts: false
+    property bool commandPassthrough: false
     property color foreground: Color.foreground
     property real maximumHeight: Number.POSITIVE_INFINITY
 
     signal backRequested
-    signal preferencesRequested(bool keepConnected, int previewScale, string videoQuality, var quickActions, bool androidModeShortcuts)
+    signal preferencesRequested(bool keepConnected, int previewScale, string videoQuality, var quickActions, bool androidModeShortcuts, bool commandPassthrough)
     signal startOverRequested
 
     readonly property var qualityOptions: [
@@ -52,14 +53,14 @@ NestedEscapeScope {
     implicitWidth: Style.space(360)
     implicitHeight: Math.min(settingsContent.implicitHeight, maximumHeight)
 
-    function request(keepConnectedValue, scale, quality, actions, androidModeShortcutsValue) {
-        preferencesRequested(keepConnectedValue, scale, quality, actions.slice(), androidModeShortcutsValue);
+    function request(keepConnectedValue, scale, quality, actions, androidModeShortcutsValue, commandPassthroughValue) {
+        preferencesRequested(keepConnectedValue, scale, quality, actions.slice(), androidModeShortcutsValue, commandPassthroughValue);
     }
 
     function replaceAction(index, action) {
         var actions = quickActions.slice();
         actions[index] = action;
-        request(keepConnected, previewScale, videoQuality, actions, androidModeShortcuts);
+        request(keepConnected, previewScale, videoQuality, actions, androidModeShortcuts, commandPassthrough);
     }
 
     function qualityLabel(value) {
@@ -73,7 +74,7 @@ NestedEscapeScope {
     function setPreviewScale(value) {
         var next = Math.max(50, Math.min(150, Math.round(value / 5) * 5));
         if (next !== previewScale)
-            request(keepConnected, next, videoQuality, quickActions, androidModeShortcuts);
+            request(keepConnected, next, videoQuality, quickActions, androidModeShortcuts, commandPassthrough);
     }
 
     onEscapeRequested: root.backRequested()
@@ -105,7 +106,7 @@ NestedEscapeScope {
                 label: "Keep phone connected"
                 checked: root.keepConnected
                 foreground: root.foreground
-                onClicked: root.request(!root.keepConnected, root.previewScale, root.videoQuality, root.quickActions, root.androidModeShortcuts)
+                onClicked: root.request(!root.keepConnected, root.previewScale, root.videoQuality, root.quickActions, root.androidModeShortcuts, root.commandPassthrough)
 
                 property bool pointerHovered: false
                 onHovered: function (isHovered) {
@@ -125,7 +126,7 @@ NestedEscapeScope {
                 label: "Android-mode shortcuts"
                 checked: root.androidModeShortcuts
                 foreground: root.foreground
-                onClicked: root.request(root.keepConnected, root.previewScale, root.videoQuality, root.quickActions, !root.androidModeShortcuts)
+                onClicked: root.request(root.keepConnected, root.previewScale, root.videoQuality, root.quickActions, !root.androidModeShortcuts, root.commandPassthrough)
 
                 property bool pointerHovered: false
                 onHovered: function (isHovered) {
@@ -134,7 +135,27 @@ NestedEscapeScope {
 
                 PanelToolTip {
                     visible: androidModeShortcutsControl.pointerHovered || androidModeShortcutsControl.activeFocus
-                    text: "A focused phone gets first refusal; otherwise the desktop handles the shortcut."
+                    text: "Enable Android-aware routing for configured Omarchy actions."
+                }
+            }
+
+            Toggle {
+                id: commandPassthroughControl
+                objectName: "commandPassthroughControl"
+                width: parent.width
+                label: "Command passthrough"
+                checked: root.commandPassthrough
+                foreground: root.foreground
+                onClicked: root.request(root.keepConnected, root.previewScale, root.videoQuality, root.quickActions, root.androidModeShortcuts, !root.commandPassthrough)
+
+                property bool pointerHovered: false
+                onHovered: function (isHovered) {
+                    pointerHovered = isHovered;
+                }
+
+                PanelToolTip {
+                    visible: commandPassthroughControl.pointerHovered || commandPassthroughControl.activeFocus
+                    text: "Let configured Omarchy actions reach the focused phone instead of the desktop."
                 }
             }
 
@@ -280,7 +301,7 @@ NestedEscapeScope {
                             focusable: true
                             foreground: root.foreground
                             tooltipText: "Restarts mirroring; pairing stays intact."
-                            onClicked: root.request(root.keepConnected, root.previewScale, modelData.value, root.quickActions, root.androidModeShortcuts)
+                            onClicked: root.request(root.keepConnected, root.previewScale, modelData.value, root.quickActions, root.androidModeShortcuts, root.commandPassthrough)
                         }
                     }
                 }

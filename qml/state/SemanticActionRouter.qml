@@ -4,15 +4,21 @@ QtObject {
     id: root
 
     property bool semanticIntegrationEnabled: false
+    property bool commandPassthrough: false
     property bool sessionReady: false
     property bool panelOpen: false
     property bool settingsOpen: false
     property bool phoneVisible: false
     property bool phoneEnabled: false
     property bool phoneFocused: false
+    readonly property bool phoneInteractionEligible: sessionReady && panelOpen && !settingsOpen
+                                                       && phoneVisible && phoneEnabled && phoneFocused
     readonly property bool actionEligible: semanticIntegrationEnabled
-                                                && sessionReady && panelOpen && !settingsOpen
-                                                && phoneVisible && phoneEnabled && phoneFocused
+                                                && commandPassthrough
+                                                && phoneInteractionEligible
+    readonly property bool shortcutInhibitionRequested: semanticIntegrationEnabled
+                                                           && !commandPassthrough
+                                                           && phoneInteractionEligible
 
     signal keyRequested(string key)
     signal semanticActionRequested(string actionId, string requestId, real expiresAtUnixMs, string actionArgument)

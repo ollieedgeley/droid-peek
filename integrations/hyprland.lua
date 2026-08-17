@@ -188,6 +188,18 @@ local function routed_description(description, target)
   return description .. " / " .. target.label
 end
 
+local function routed_options(target, options)
+  if target.id ~= "android.panel.toggle" then
+    return options
+  end
+  local result = {}
+  for key, value in pairs(options or {}) do
+    result[key] = value
+  end
+  result.dont_inhibit = true
+  return result
+end
+
 local function close_with_android(target, fallback)
   return function()
     local runtime_directory = os.getenv("XDG_RUNTIME_DIR")
@@ -263,7 +275,7 @@ local function bind_with_android(keys, description, binding, options)
         keys,
         routed_description(description, target),
         target.direct_command,
-        options
+        routed_options(target, options)
       )
     end
     return original_bind(
@@ -292,7 +304,7 @@ local function bind_with_android(keys, description, binding, options)
       keys,
       routed_description(description, target),
       target.direct_command,
-      options
+      routed_options(target, options)
     )
   end
   return original_bind(
@@ -316,7 +328,7 @@ local function install_custom_bindings()
       binding.keys,
       binding.description or target.label,
       command,
-      binding.options
+      routed_options(target, binding.options)
     )
   end
 end

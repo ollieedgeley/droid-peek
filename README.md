@@ -31,26 +31,32 @@ Opening a ready panel, or reaching Ready after reconnection, automatically
 focuses this input surface so keyboard control works without an extra click.
 
 Focused semantic action routing uses the bundled Android 16 profile through
-protocol v9. **Close current window** maps to Android Home, and **Open browser**
-uses a package-free standard Android browser intent. An optional user-owned
-Hyprland loader recognizes the exact typed global panel-toggle declaration,
-supported typed Omarchy browser declarations, and verified opaque closures
-returned by `hl.dsp.window.close()` after the loader is installed. A typed
-intent table is eligible only when `omarchy` is its sole key; declarations with
-extra fields remain unchanged. Browser and close routing preserve their
-documented desktop fallbacks; panel toggle directly invokes the global plugin
-lifecycle without a fallback. The loader never reads or rewrites binding files.
-Unavailable, removed, and unknown semantic IDs remain unhandled; arbitrary
-functions, ambiguous overrides, desktop chords, and per-device action profiles
-are not inferred.
+protocol v10. **Close current window** maps to Android Home, and **Open
+browser** uses a package-free standard Android browser intent. An optional
+user-owned Hyprland loader recognizes the exact typed global panel-toggle
+declaration, supported typed Omarchy browser declarations, and verified opaque
+closures returned by `hl.dsp.window.close()` after the loader is installed. A
+typed intent table is eligible only when `omarchy` is its sole key;
+declarations with extra fields remain unchanged. Browser and close routing
+preserve their documented desktop fallbacks; panel toggle directly invokes the
+global plugin lifecycle without a fallback and bypasses shortcut inhibition so
+it can always close the panel. The loader never reads or rewrites binding
+files. Unavailable, removed, and unknown semantic IDs remain unhandled;
+arbitrary functions, ambiguous overrides, desktop chords, and per-device
+action profiles are not inferred.
 
-Settings exposes the global master switch **Android-mode shortcuts**. Its copy
-explains focused-phone first refusal and desktop fallback. It defaults off and
-persists privately as a global preference, not a per-device profile. Enabling
-it allows semantic first refusal only under the complete focused-phone
-predicate. Disabling it takes effect before the next dispatch and fails closed
-to each mapping's desktop fallback without disabling quick actions, pointer
-input, key input, or text input. **Start over** preserves this global value.
+Settings exposes two global controls. **Android-mode shortcuts** is the master
+switch and defaults off. With **Command passthrough** also on, configured typed
+Omarchy actions receive semantic first refusal under the complete focused-phone
+predicate. With Android mode on and command passthrough off, typed routing is
+disabled and the focused panel requests Wayland compositor shortcut inhibition
+instead. Closing the panel, opening Settings, or losing phone focus releases
+that inhibition. This raw-shortcut mode does not add arbitrary Android modifier
+transport: the current input translator does not preserve combinations such as
+Super+Enter. Turning the master switch off restores normal desktop handling.
+Both controls update before the next dispatch, persist privately as global
+preferences, survive **Start over**, and do not disable quick actions, pointer
+input, named key input, or text input.
 
 The ready view includes Back, Home, and recent-apps controls plus an inline
 Settings page. A chain-link toolbar button and the Settings toggle control the
@@ -61,8 +67,8 @@ popup gutter at 100%, and scales both dimensions uniformly while remaining
 bounded by the active output. `PreserveAspectFit` protects frame transitions
 and rotation without cropping. Video quality selects a scrcpy profile and
 restarts only the active mirroring session; trusted pairing and other
-preferences remain intact. Preferences are stored privately beside the
-remembered-device record.
+preferences remain intact. Preferences, including both shortcut controls, are
+stored privately beside the remembered-device record.
 
 Settings is keyboard navigable. Opening it focuses the Back control; Tab and
 Shift+Tab traverse its controls, while Escape closes an open selector or
@@ -81,6 +87,13 @@ accepted while enabled to rejected immediately after disabling. A browser
 backend attempt returned unhandled and correctly used desktop fallback; this
 run does not claim that every Android action was handled. QR pairing,
 six-digit fallback, and cancel/retry had already passed on the same platform.
+The Stage 8 run then proved private v4-to-v5 migration with command passthrough
+off, visible keyboard-operable Settings control, persistence without restarting
+the session, and mutually exclusive live routing modes. With passthrough on,
+Super+Enter launched Termux on the phone while the desktop Kitty count remained
+one. With passthrough off, a focused browser chord produced no semantic request
+and left the panel open, while Super+Alt+A still closed it through the global
+toggle's inhibition bypass.
 This evidence completes the current compatibility slice, not the full V1
 acceptance contract.
 
@@ -208,6 +221,10 @@ configuration with a precise error.
 Custom bindings are registered only in the second phase, after normal bindings,
 so collision handling remains Omarchy's. They have no desktop fallback because
 no pre-existing desktop action owns them.
+The routed global panel toggle automatically gains Hyprland's `dont_inhibit`
+option without mutating caller-owned binding options. Other routed actions keep
+their original options and remain suppressible while raw shortcut inhibition is
+active.
 
 The bundled semantic action matrix uses schema version 3; the version bump adds
 the structured `android-launch-app` result rather than silently extending

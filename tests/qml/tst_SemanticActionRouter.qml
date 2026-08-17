@@ -23,6 +23,7 @@ TestCase {
 
     function makeEligible() {
         router.semanticIntegrationEnabled = true
+        router.commandPassthrough = true
         router.sessionReady = true
         router.panelOpen = true
         router.settingsOpen = false
@@ -39,6 +40,7 @@ TestCase {
         router.phoneVisible = false
         router.phoneEnabled = false
         router.phoneFocused = false
+        router.commandPassthrough = false
         keySpy.clear()
         actionSpy.clear()
     }
@@ -58,6 +60,16 @@ TestCase {
         compare(router.quickActionKey("back"), "back")
         compare(router.quickActionKey("home"), "home")
         compare(router.quickActionKey("recent-apps"), "app-switch")
+    }
+
+    function test_passthrough_controls_compositor_shortcut_inhibition() {
+        makeEligible()
+        router.commandPassthrough = false
+
+        compare(router.shortcutInhibitionRequested, true)
+        router.commandPassthrough = true
+        compare(router.shortcutInhibitionRequested, false)
+        compare(router.actionEligible, true)
     }
 
     function test_disabling_preference_applies_before_the_next_trigger() {

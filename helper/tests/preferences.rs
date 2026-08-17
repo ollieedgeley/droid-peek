@@ -6,12 +6,13 @@ use omarchy_android_helper::preferences::{
 use tempfile::tempdir;
 
 #[test]
-fn defaults_disable_android_mode_shortcuts_and_keep_existing_defaults() {
+fn defaults_disable_android_mode_shortcuts_and_command_passthrough() {
     assert_eq!(
         Preferences::default(),
         Preferences {
             keep_connected: false,
             android_mode_shortcuts: false,
+            command_passthrough: false,
             preview_scale: PreviewScale::default(),
             video_quality: VideoQuality::High,
             quick_actions: [
@@ -22,6 +23,7 @@ fn defaults_disable_android_mode_shortcuts_and_keep_existing_defaults() {
         }
     );
     assert_eq!(PreviewScale::default().percent(), 100);
+    assert!(!Preferences::default().command_passthrough);
 }
 
 #[test]
@@ -31,6 +33,7 @@ fn preferences_round_trip_in_private_versioned_state() {
     let preferences = Preferences {
         keep_connected: true,
         android_mode_shortcuts: true,
+        command_passthrough: true,
         preview_scale: PreviewScale::new(150).expect("valid preview scale"),
         video_quality: VideoQuality::Low,
         quick_actions: [
@@ -46,7 +49,7 @@ fn preferences_round_trip_in_private_versioned_state() {
     let contents = fs::read_to_string(store.path()).expect("read preferences state");
     assert_eq!(
         contents,
-        "{\"version\":4,\"keepConnected\":true,\"androidModeShortcuts\":true,\"previewScale\":150,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n"
+        "{\"version\":5,\"keepConnected\":true,\"androidModeShortcuts\":true,\"commandPassthrough\":true,\"previewScale\":150,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n"
     );
     assert_eq!(
         fs::metadata(store.path())
@@ -73,9 +76,9 @@ fn malformed_or_incomplete_preferences_are_removed_and_reset_to_defaults() {
     fs::create_dir_all(store.directory()).expect("create state directory");
 
     for contents in [
-        r#"{"version":4,"keepConnected":false,"androidModeShortcuts":false,"previewScale":151,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":4,"keepConnected":false,"androidModeShortcuts":"yes","previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":4,"keepConnected":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":5,"keepConnected":false,"androidModeShortcuts":false,"commandPassthrough":false,"previewScale":151,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":5,"keepConnected":false,"androidModeShortcuts":false,"commandPassthrough":"yes","previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":5,"keepConnected":false,"androidModeShortcuts":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
     ] {
         fs::write(store.path(), contents).expect("write invalid preferences");
 
@@ -85,6 +88,38 @@ fn malformed_or_incomplete_preferences_are_removed_and_reset_to_defaults() {
         );
         assert!(!store.path().exists());
     }
+}
+
+#[test]
+fn version_four_preferences_migrate_without_enabling_command_passthrough() {
+    let directory = tempdir().expect("temporary state directory");
+    let store = FilePreferenceStore::new(directory.path().join("omarchy-android"));
+    fs::create_dir_all(store.directory()).expect("create state directory");
+    fs::write(
+        store.path(),
+        b"{\"version\":4,\"keepConnected\":true,\"androidModeShortcuts\":true,\"previewScale\":125,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n",
+    )
+    .expect("write version-four preferences");
+
+    assert_eq!(
+        store.load().expect("migrate preferences"),
+        Preferences {
+            keep_connected: true,
+            android_mode_shortcuts: true,
+            command_passthrough: false,
+            preview_scale: PreviewScale::new(125).expect("valid preview scale"),
+            video_quality: VideoQuality::Low,
+            quick_actions: [
+                QuickAction::Home,
+                QuickAction::RecentApps,
+                QuickAction::Back,
+            ],
+        }
+    );
+    assert_eq!(
+        fs::read_to_string(store.path()).expect("read migrated preferences"),
+        "{\"version\":5,\"keepConnected\":true,\"androidModeShortcuts\":true,\"commandPassthrough\":false,\"previewScale\":125,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n"
+    );
 }
 
 #[test]
@@ -103,6 +138,7 @@ fn version_three_preferences_migrate_in_place_without_enabling_android_mode_shor
         Preferences {
             keep_connected: true,
             android_mode_shortcuts: false,
+            command_passthrough: false,
             preview_scale: PreviewScale::new(125).expect("valid preview scale"),
             video_quality: VideoQuality::Low,
             quick_actions: [
@@ -114,7 +150,7 @@ fn version_three_preferences_migrate_in_place_without_enabling_android_mode_shor
     );
     assert_eq!(
         fs::read_to_string(store.path()).expect("read migrated preferences"),
-        "{\"version\":4,\"keepConnected\":true,\"androidModeShortcuts\":false,\"previewScale\":125,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n"
+        "{\"version\":5,\"keepConnected\":true,\"androidModeShortcuts\":false,\"commandPassthrough\":false,\"previewScale\":125,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n"
     );
     assert!(!store.directory().join(".preferences.json.tmp").exists());
 }
@@ -137,6 +173,7 @@ fn version_two_render_preferences_migrate_without_enabling_keep_connected() {
         Preferences {
             keep_connected: false,
             android_mode_shortcuts: false,
+            command_passthrough: false,
             preview_scale: PreviewScale::new(150).expect("valid preview scale"),
             video_quality: VideoQuality::Low,
             quick_actions: [
@@ -150,7 +187,7 @@ fn version_two_render_preferences_migrate_without_enabling_keep_connected() {
     assert!(!legacy_path.exists());
     assert_eq!(
         fs::read_to_string(store.path()).expect("read migrated preferences"),
-        "{\"version\":4,\"keepConnected\":false,\"androidModeShortcuts\":false,\"previewScale\":150,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n"
+        "{\"version\":5,\"keepConnected\":false,\"androidModeShortcuts\":false,\"commandPassthrough\":false,\"previewScale\":150,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n"
     );
 }
 

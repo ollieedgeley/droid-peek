@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Window
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "qml/state"
@@ -80,8 +81,8 @@ Panel {
         }
     }
 
-    function updatePreferences(keepConnected, scale, quality, actions, androidModeShortcuts) {
-        pairingState.setPreferences(keepConnected, scale, quality, actions, androidModeShortcuts);
+    function updatePreferences(keepConnected, scale, quality, actions, androidModeShortcuts, commandPassthrough) {
+        pairingState.setPreferences(keepConnected, scale, quality, actions, androidModeShortcuts, commandPassthrough);
     }
 
     function requestStartOver() {
@@ -164,6 +165,7 @@ Panel {
     SemanticActionRouter {
         id: semanticActionRouter
         semanticIntegrationEnabled: pairingState.androidModeShortcuts
+        commandPassthrough: pairingState.commandPassthrough
         sessionReady: pairingState.sessionState === "ready"
         panelOpen: root.opened
         settingsOpen: root.settingsOpen
@@ -176,6 +178,11 @@ Panel {
         onSemanticActionRequested: function (actionId, requestId, expiresAtUnixMs, actionArgument) {
             pairingState.sendSemanticAction(actionId, requestId, expiresAtUnixMs, actionArgument);
         }
+    }
+
+    ShortcutInhibitor {
+        window: panel
+        enabled: semanticActionRouter.shortcutInhibitionRequested
     }
 
     Timer {
@@ -266,7 +273,7 @@ Panel {
                     onSettingsRequested: root.openSettings()
                     onBackRequested: root.closeSettings()
                     onKeepConnectedRequested: function (keepConnected) {
-                        root.updatePreferences(keepConnected, pairingState.previewScale, pairingState.videoQuality, pairingState.quickActions, pairingState.androidModeShortcuts);
+                        root.updatePreferences(keepConnected, pairingState.previewScale, pairingState.videoQuality, pairingState.quickActions, pairingState.androidModeShortcuts, pairingState.commandPassthrough);
                     }
                 }
 
@@ -326,10 +333,11 @@ Panel {
                     videoQuality: pairingState.videoQuality
                     quickActions: pairingState.quickActions
                     androidModeShortcuts: pairingState.androidModeShortcuts
+                    commandPassthrough: pairingState.commandPassthrough
                     foreground: root.contentForeground
                     onBackRequested: root.closeSettings()
-                    onPreferencesRequested: function (keepConnected, scale, quality, actions, androidModeShortcuts) {
-                        root.updatePreferences(keepConnected, scale, quality, actions, androidModeShortcuts);
+                    onPreferencesRequested: function (keepConnected, scale, quality, actions, androidModeShortcuts, commandPassthrough) {
+                        root.updatePreferences(keepConnected, scale, quality, actions, androidModeShortcuts, commandPassthrough);
                     }
                     onStartOverRequested: root.requestStartOver()
                 }

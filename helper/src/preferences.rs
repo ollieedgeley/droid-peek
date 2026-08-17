@@ -8,8 +8,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-const PREFERENCES_VERSION: u8 = 4;
-const PREVIOUS_PREFERENCES_VERSION: u8 = 3;
+const PREFERENCES_VERSION: u8 = 5;
+const PREVIOUS_PREFERENCES_VERSION: u8 = 4;
+const OLDER_PREFERENCES_VERSION: u8 = 3;
 const PREFERENCES_FILE_NAME: &str = "preferences.json";
 const LEGACY_PREFERENCES_VERSION: u8 = 2;
 const LEGACY_PREFERENCES_FILE_NAME: &str = "render-preferences.json";
@@ -79,6 +80,7 @@ pub enum QuickAction {
 pub struct Preferences {
     pub keep_connected: bool,
     pub android_mode_shortcuts: bool,
+    pub command_passthrough: bool,
     pub preview_scale: PreviewScale,
     pub video_quality: VideoQuality,
     pub quick_actions: [QuickAction; 3],
@@ -89,6 +91,7 @@ impl Default for Preferences {
         Self {
             keep_connected: false,
             android_mode_shortcuts: false,
+            command_passthrough: false,
             preview_scale: PreviewScale::default(),
             video_quality: VideoQuality::High,
             quick_actions: [
@@ -140,10 +143,16 @@ impl FilePreferenceStore {
             return Ok(preferences);
         }
 
-        let migrated_preferences = serde_json::from_slice::<StoredPreferencesV3>(&contents)
+        let migrated_preferences = serde_json::from_slice::<StoredPreferencesV4>(&contents)
             .ok()
             .filter(|stored| stored.version == PREVIOUS_PREFERENCES_VERSION)
-            .map(StoredPreferencesV3::into_preferences);
+            .map(StoredPreferencesV4::into_preferences)
+            .or_else(|| {
+                serde_json::from_slice::<StoredPreferencesV3>(&contents)
+                    .ok()
+                    .filter(|stored| stored.version == OLDER_PREFERENCES_VERSION)
+                    .map(StoredPreferencesV3::into_preferences)
+            });
         let Some(preferences) = migrated_preferences else {
             remove_if_present(&path)?;
             return Ok(Preferences::default());
@@ -202,6 +211,7 @@ struct StoredPreferences {
     version: u8,
     keep_connected: bool,
     android_mode_shortcuts: bool,
+    command_passthrough: bool,
     preview_scale: PreviewScale,
     video_quality: VideoQuality,
     quick_actions: [QuickAction; 3],
@@ -213,6 +223,7 @@ impl From<Preferences> for StoredPreferences {
             version: PREFERENCES_VERSION,
             keep_connected: preferences.keep_connected,
             android_mode_shortcuts: preferences.android_mode_shortcuts,
+            command_passthrough: preferences.command_passthrough,
             preview_scale: preferences.preview_scale,
             video_quality: preferences.video_quality,
             quick_actions: preferences.quick_actions,
@@ -225,6 +236,31 @@ impl StoredPreferences {
         Preferences {
             keep_connected: self.keep_connected,
             android_mode_shortcuts: self.android_mode_shortcuts,
+            command_passthrough: self.command_passthrough,
+            preview_scale: self.preview_scale,
+            video_quality: self.video_quality,
+            quick_actions: self.quick_actions,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredPreferencesV4 {
+    version: u8,
+    keep_connected: bool,
+    android_mode_shortcuts: bool,
+    preview_scale: PreviewScale,
+    video_quality: VideoQuality,
+    quick_actions: [QuickAction; 3],
+}
+
+impl StoredPreferencesV4 {
+    fn into_preferences(self) -> Preferences {
+        Preferences {
+            keep_connected: self.keep_connected,
+            android_mode_shortcuts: self.android_mode_shortcuts,
+            command_passthrough: false,
             preview_scale: self.preview_scale,
             video_quality: self.video_quality,
             quick_actions: self.quick_actions,
@@ -250,6 +286,7 @@ impl StoredPreferencesV3 {
             video_quality: self.video_quality,
             quick_actions: self.quick_actions,
             android_mode_shortcuts: false,
+            command_passthrough: false,
         }
     }
 }
@@ -271,6 +308,7 @@ impl StoredRenderPreferences {
             video_quality: self.video_quality,
             quick_actions: self.quick_actions,
             android_mode_shortcuts: false,
+            command_passthrough: false,
         }
     }
 }

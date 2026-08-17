@@ -563,6 +563,7 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
     let preferences = Preferences {
         keep_connected: true,
         android_mode_shortcuts: false,
+        command_passthrough: false,
         preview_scale: PreviewScale::new(150).expect("valid preview scale"),
         video_quality: VideoQuality::Low,
         quick_actions: [

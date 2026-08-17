@@ -913,17 +913,15 @@ where
                 }),
             Execution::Unhandled => Ok(false),
         };
-        let result = match result {
-            Err(FailureReason::Disconnected)
-                if action_cancellation.is_cancelled()
-                    && !self.session_cancellation.is_cancelled() =>
-            {
-                Ok(false)
-            }
-            result => result,
-        };
+        let action_timed_out = matches!(result, Err(FailureReason::Disconnected))
+            && action_cancellation.is_cancelled()
+            && !self.session_cancellation.is_cancelled();
+        let result = if action_timed_out { Ok(false) } else { result };
         self.action_results
-            .publish(request_id, result.as_ref().copied().unwrap_or(false))
+            .publish(
+                request_id,
+                action_timed_out || result.as_ref().copied().unwrap_or(false),
+            )
             .map_err(|_| FailureReason::DependencyUnavailable)?;
         result
     }

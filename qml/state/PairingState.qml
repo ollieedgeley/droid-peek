@@ -12,6 +12,9 @@ QtObject {
     property string statusDescription: "Open Wireless debugging on your phone."
     property string qrArtifact: ""
     property int qrExpiresInSeconds: 0
+    property string previewSize: "medium"
+    property string videoQuality: "high"
+    property var quickActions: ["back", "home", "recent-apps"]
 
     signal commandRequested(string command)
     signal pairingCancellationConfirmed()
@@ -23,6 +26,9 @@ QtObject {
         pairingStage = "idle"
         statusTitle = "Preparing QR code"
         statusDescription = "Open Wireless debugging on your phone."
+        previewSize = "medium"
+        videoQuality = "high"
+        quickActions = ["back", "home", "recent-apps"]
         clearQrPresentation()
     }
 
@@ -104,6 +110,46 @@ QtObject {
         sendCommand({ type: "text-input", text: text })
     }
 
+    function validPreference(value, allowed) {
+        return typeof value === "string" && allowed.indexOf(value) >= 0
+    }
+
+    function applyPreferences(preferences) {
+        if (!preferences
+                || !validPreference(preferences.previewSize, ["small", "medium", "large"])
+                || !validPreference(preferences.videoQuality, ["low", "medium", "high"])
+                || !Array.isArray(preferences.quickActions)
+                || preferences.quickActions.length !== 3) {
+            return false
+        }
+        for (var index = 0; index < preferences.quickActions.length; ++index) {
+            if (!validPreference(preferences.quickActions[index],
+                                 ["back", "home", "recent-apps"]))
+                return false
+        }
+        previewSize = preferences.previewSize
+        videoQuality = preferences.videoQuality
+        quickActions = preferences.quickActions.slice()
+        return true
+    }
+
+    function setRenderPreferences(size, quality, actions) {
+        var preferences = {
+            previewSize: size,
+            videoQuality: quality,
+            quickActions: actions
+        }
+        if (!applyPreferences(preferences))
+            return false
+        sendCommand({
+            type: "set-render-preferences",
+            previewSize: previewSize,
+            videoQuality: videoQuality,
+            quickActions: quickActions
+        })
+        return true
+    }
+
     function protocolFailure() {
         clearQrPresentation()
         sessionState = "dependency-unavailable"
@@ -152,7 +198,8 @@ QtObject {
 
         switch (event.type) {
         case "ready":
-            if (typeof event.hasTrustedDevice !== "boolean") {
+            if (typeof event.hasTrustedDevice !== "boolean"
+                    || !applyPreferences(event.preferences)) {
                 protocolFailure()
                 return
             }
@@ -161,6 +208,19 @@ QtObject {
                 reconnectTrustedDevice()
             else if (automaticPairingEnabled && sessionState === "unpaired")
                 startQrPairing()
+            return
+        case "preferences-updated":
+            if (!applyPreferences(event)
+                    || typeof event.sessionRestarted !== "boolean") {
+                protocolFailure()
+                return
+            }
+            if (event.sessionRestarted) {
+                sessionState = "pairing"
+                pairingStage = "session-starting"
+                statusTitle = "Updating video quality"
+                statusDescription = "Restarting the private phone stream."
+            }
             return
         case "qr-waiting":
             if (typeof event.artifact !== "string"

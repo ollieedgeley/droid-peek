@@ -42,9 +42,13 @@ fn main() -> io::Result<()> {
         sink.clone(),
     )?;
     let has_trusted_device = backend.has_trusted_device();
+    let preferences = backend.render_preferences();
     let mut engine = ProtocolEngine::new(backend);
 
-    sink.emit_event(&Event::Ready { has_trusted_device })?;
+    sink.emit_event(&Event::Ready {
+        has_trusted_device,
+        preferences,
+    })?;
     for line in stdin.lock().lines() {
         for event in engine.handle_line(&line?) {
             sink.emit_line(&event)?;

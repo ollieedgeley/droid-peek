@@ -1,6 +1,9 @@
 use zeroize::Zeroizing;
 
-use crate::input::{AndroidKey, DisplayGeometry, NormalizedPoint};
+use crate::{
+    input::{AndroidKey, DisplayGeometry, NormalizedPoint},
+    preferences::RenderPreferences,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -61,6 +64,17 @@ pub trait PairingBackend {
 
     fn text_input(&mut self, _text: &str) -> Result<(), FailureReason> {
         Err(FailureReason::Disconnected)
+    }
+
+    fn render_preferences(&self) -> RenderPreferences {
+        RenderPreferences::default()
+    }
+
+    fn set_render_preferences(
+        &mut self,
+        _preferences: RenderPreferences,
+    ) -> Result<bool, FailureReason> {
+        Err(FailureReason::DependencyUnavailable)
     }
 
     fn response_emitted(&mut self) {}
@@ -197,6 +211,24 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                             .map_err(InputCommandFailure::Backend)
                     }),
             ),
+            Command::SetRenderPreferences {
+                preview_size,
+                video_quality,
+                quick_actions,
+            } => vec![
+                match self.backend.set_render_preferences(RenderPreferences {
+                    preview_size,
+                    video_quality,
+                    quick_actions,
+                }) {
+                    Ok(session_restarted) => Event::PreferencesUpdated {
+                        preferences: self.backend.render_preferences(),
+                        session_restarted,
+                    },
+                    Err(reason) => Event::Failure { reason },
+                }
+                .to_line(),
+            ],
         }
     }
 }
@@ -276,6 +308,14 @@ enum Command {
     TextInput {
         text: String,
     },
+    SetRenderPreferences {
+        #[serde(rename = "previewSize")]
+        preview_size: crate::preferences::PreviewSize,
+        #[serde(rename = "videoQuality")]
+        video_quality: crate::preferences::VideoQuality,
+        #[serde(rename = "quickActions")]
+        quick_actions: [crate::preferences::QuickAction; 3],
+    },
 }
 
 fn parse_command(line: &str) -> Result<Command, ProtocolErrorReason> {
@@ -310,6 +350,7 @@ pub enum Event {
     Ready {
         #[serde(rename = "hasTrustedDevice")]
         has_trusted_device: bool,
+        preferences: RenderPreferences,
     },
     QrWaiting {
         artifact: PathBuf,
@@ -329,6 +370,12 @@ pub enum Event {
     SessionStarted,
     SessionEnded,
     SessionStopped,
+    PreferencesUpdated {
+        #[serde(flatten)]
+        preferences: RenderPreferences,
+        #[serde(rename = "sessionRestarted")]
+        session_restarted: bool,
+    },
     Failure {
         reason: FailureReason,
     },

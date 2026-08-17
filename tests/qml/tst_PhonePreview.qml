@@ -73,6 +73,20 @@ TestCase {
         compare(preview.normalizedPoint(120, 500, Qt.rect(20, 40, 200, 400)), null)
     }
 
+    function test_preview_bounds_follow_android_aspect_ratio_without_letterboxing() {
+        var portrait = preview.fittedSize(360, 420, 1080, 2400)
+        compare(portrait.width, 189)
+        compare(portrait.height, 420)
+
+        var landscape = preview.fittedSize(360, 420, 2400, 1080)
+        compare(landscape.width, 360)
+        compare(landscape.height, 162)
+
+        var fallback = preview.fittedSize(360, 420, 0, 0)
+        compare(fallback.width, 189)
+        compare(fallback.height, 420)
+    }
+
     function test_pointer_release_distinguishes_taps_and_swipes() {
         var content = Qt.rect(20, 40, 200, 400)
         verify(preview.dispatchPointer(120, 240, 122, 242, 80, content, 1080, 2400))

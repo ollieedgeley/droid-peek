@@ -1,11 +1,13 @@
 //! Cancellable lifecycle boundary for the unmodified scrcpy client.
 use std::{
+    fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
+use crate::preferences::VideoQuality;
 use crate::process::CancellationToken;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,6 +33,8 @@ pub trait SessionRunner {
         cancellation: &CancellationToken,
         on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure>;
+
+    fn set_quality(&mut self, _quality: VideoQuality) {}
 }
 
 impl<T> SessionRunner for Box<T>
@@ -44,6 +48,10 @@ where
         on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
         (**self).run(target, cancellation, on_started)
+    }
+
+    fn set_quality(&mut self, quality: VideoQuality) {
+        (**self).set_quality(quality);
     }
 }
 
@@ -64,7 +72,11 @@ pub struct ScrcpySessionRunner {
     executable: PathBuf,
     v4l2_sink: PathBuf,
     poll_interval: Duration,
+    quality: VideoQuality,
+    readiness_path: Option<PathBuf>,
 }
+
+const SESSION_START_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl ScrcpySessionRunner {
     #[must_use]
@@ -73,11 +85,43 @@ impl ScrcpySessionRunner {
         v4l2_sink: impl AsRef<Path>,
         poll_interval: Duration,
     ) -> Self {
+        let v4l2_sink = v4l2_sink.as_ref().to_owned();
+        let readiness_path = if v4l2_sink.parent() == Some(Path::new("/dev")) {
+            v4l2_sink
+                .file_name()
+                .map(|name| Path::new("/sys/class/video4linux").join(name).join("state"))
+        } else {
+            None
+        };
+
         Self {
             executable: executable.as_ref().to_owned(),
-            v4l2_sink: v4l2_sink.as_ref().to_owned(),
+            v4l2_sink,
             poll_interval,
+            quality: VideoQuality::default(),
+            readiness_path,
         }
+    }
+
+    #[must_use]
+    pub fn with_readiness_path(mut self, readiness_path: impl AsRef<Path>) -> Self {
+        self.readiness_path = Some(readiness_path.as_ref().to_owned());
+        self
+    }
+
+    pub fn set_quality(&mut self, quality: VideoQuality) {
+        self.quality = quality;
+    }
+
+    fn sink_is_capture_ready(&self) -> bool {
+        self.readiness_path.as_ref().is_none_or(|path| {
+            fs::read_to_string(path).is_ok_and(|state| state.trim() == "capture")
+        })
+    }
+
+    fn stop_child(child: &mut Child) {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
@@ -92,23 +136,54 @@ impl SessionRunner for ScrcpySessionRunner {
             return Ok(SessionExit::Stopped);
         }
 
+        let [max_size, bit_rate, max_fps] = match self.quality {
+            VideoQuality::Low => ["720", "4M", "30"],
+            VideoQuality::Medium => ["1080", "8M", "60"],
+            VideoQuality::High => ["0", "16M", "60"],
+        };
         let mut child = Command::new(&self.executable)
             .arg(format!("--serial={target}"))
             .arg("--no-window")
             .arg("--no-audio")
             .arg("--no-control")
             .arg(format!("--v4l2-sink={}", self.v4l2_sink.display()))
+            .arg(format!("--max-size={max_size}"))
+            .arg(format!("--video-bit-rate={bit_rate}"))
+            .arg(format!("--max-fps={max_fps}"))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| SessionFailure::DependencyUnavailable)?;
-        on_started();
+        let start_deadline = Instant::now() + SESSION_START_TIMEOUT;
+        loop {
+            if cancellation.is_cancelled() {
+                Self::stop_child(&mut child);
+                return Ok(SessionExit::Stopped);
+            }
+
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => return Ok(SessionExit::Ended),
+                Ok(Some(_)) => return Err(SessionFailure::Disconnected),
+                Ok(None) if self.sink_is_capture_ready() => {
+                    on_started();
+                    break;
+                }
+                Ok(None) if Instant::now() >= start_deadline => {
+                    Self::stop_child(&mut child);
+                    return Err(SessionFailure::Disconnected);
+                }
+                Ok(None) => thread::sleep(self.poll_interval),
+                Err(_) => {
+                    Self::stop_child(&mut child);
+                    return Err(SessionFailure::DependencyUnavailable);
+                }
+            }
+        }
 
         loop {
             if cancellation.is_cancelled() {
-                let _ = child.kill();
-                let _ = child.wait();
+                Self::stop_child(&mut child);
                 return Ok(SessionExit::Stopped);
             }
 
@@ -117,8 +192,7 @@ impl SessionRunner for ScrcpySessionRunner {
                 Ok(Some(_)) => return Err(SessionFailure::Disconnected),
                 Ok(None) => thread::sleep(self.poll_interval),
                 Err(_) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    Self::stop_child(&mut child);
                     return Err(SessionFailure::DependencyUnavailable);
                 }
             }

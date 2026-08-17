@@ -38,6 +38,13 @@ TestCase {
         var value = properties || {}
         value.version = 1
         value.type = type
+        if (type === "ready" && value.preferences === undefined) {
+            value.preferences = {
+                previewSize: "medium",
+                videoQuality: "high",
+                quickActions: ["back", "home", "recent-apps"]
+            }
+        }
         return JSON.stringify(value)
     }
 
@@ -178,6 +185,55 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[2][0]).type, "cancel-pairing")
         compare(JSON.parse(commandSpy.signalArguments[3][0]).type, "stop-session")
         compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 1)
+    }
+
+    function test_render_preferences_are_versioned_and_applied_immediately() {
+        verify(state.setRenderPreferences(
+                   "large", "low", ["home", "recent-apps", "back"]))
+
+        compare(state.previewSize, "large")
+        compare(state.videoQuality, "low")
+        compare(state.quickActions, ["home", "recent-apps", "back"])
+        compare(commandSpy.count, 1)
+        compare(JSON.parse(commandSpy.signalArguments[0][0]), {
+                    version: 1,
+                    type: "set-render-preferences",
+                    previewSize: "large",
+                    videoQuality: "low",
+                    quickActions: ["home", "recent-apps", "back"]
+                })
+    }
+
+    function test_quality_restart_event_waits_for_the_new_session() {
+        state.receiveLine(event("session-started"))
+        state.receiveLine(event("preferences-updated", {
+                                    previewSize: "small",
+                                    videoQuality: "medium",
+                                    quickActions: ["back", "home", "recent-apps"],
+                                    sessionRestarted: true
+                                }))
+
+        compare(state.previewSize, "small")
+        compare(state.videoQuality, "medium")
+        compare(state.sessionState, "pairing")
+        compare(state.pairingStage, "session-starting")
+        state.receiveLine(event("session-started"))
+        compare(state.sessionState, "ready")
+    }
+
+    function test_invalid_preferences_fail_closed_without_command() {
+        verify(!state.setRenderPreferences(
+                   "huge", "high", ["back", "home", "recent-apps"]))
+        compare(commandSpy.count, 0)
+
+        state.receiveLine(event("preferences-updated", {
+                                    previewSize: "medium",
+                                    videoQuality: "ultra",
+                                    quickActions: ["back", "home", "recent-apps"],
+                                    sessionRestarted: false
+                                }))
+        compare(state.sessionState, "dependency-unavailable")
+        compare(state.pairingStage, "protocol-error")
     }
 
     function test_failures_and_invalid_events_are_redacted() {

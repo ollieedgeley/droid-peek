@@ -1,6 +1,9 @@
 use std::io::Write;
 
 use omarchy_android_helper::input::{AndroidKey, DisplayGeometry, NormalizedPoint};
+use omarchy_android_helper::preferences::{
+    PreviewSize, QuickAction, RenderPreferences, VideoQuality,
+};
 use omarchy_android_helper::protocol::{
     FailureReason, PROTOCOL_VERSION, PairingBackend, ProtocolEngine, QrPresentation,
 };
@@ -15,6 +18,7 @@ struct FakePairingBackend {
     pointer_swipes: Vec<(DisplayGeometry, NormalizedPoint, NormalizedPoint, u32)>,
     keys: Vec<AndroidKey>,
     texts: Vec<String>,
+    preference_updates: Vec<RenderPreferences>,
 }
 
 impl PairingBackend for FakePairingBackend {
@@ -70,6 +74,19 @@ impl PairingBackend for FakePairingBackend {
     fn text_input(&mut self, text: &str) -> Result<(), FailureReason> {
         self.texts.push(text.to_owned());
         Ok(())
+    }
+
+    fn render_preferences(&self) -> RenderPreferences {
+        self.preference_updates.last().copied().unwrap_or_default()
+    }
+
+    fn set_render_preferences(
+        &mut self,
+        preferences: RenderPreferences,
+    ) -> Result<bool, FailureReason> {
+        let restarted = preferences.video_quality != self.render_preferences().video_quality;
+        self.preference_updates.push(preferences);
+        Ok(restarted)
     }
 }
 
@@ -153,6 +170,54 @@ fn stop_session_confirms_cleanup_and_calls_backend() {
 
     let backend = engine.into_backend();
     assert_eq!(backend.session_stops, 1);
+}
+
+#[test]
+fn render_preferences_are_validated_forwarded_and_echoed() {
+    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
+
+    assert_eq!(
+        engine.handle_line(
+            r#"{"version":1,"type":"set-render-preferences","previewSize":"large","videoQuality":"low","quickActions":["home","recent-apps","back"]}"#,
+        ),
+        [format!(
+            r#"{{"version":{PROTOCOL_VERSION},"type":"preferences-updated","previewSize":"large","videoQuality":"low","quickActions":["home","recent-apps","back"],"sessionRestarted":true}}"#
+        )]
+    );
+
+    let backend = engine.into_backend();
+    assert_eq!(
+        backend.preference_updates,
+        [RenderPreferences {
+            preview_size: PreviewSize::Large,
+            video_quality: VideoQuality::Low,
+            quick_actions: [
+                QuickAction::Home,
+                QuickAction::RecentApps,
+                QuickAction::Back
+            ],
+        }]
+    );
+}
+
+#[test]
+fn invalid_render_preferences_do_not_reach_the_backend() {
+    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
+    let invalid = [
+        r#"{"version":1,"type":"set-render-preferences","previewSize":"huge","videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":1,"type":"set-render-preferences","previewSize":"medium","videoQuality":"ultra","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":1,"type":"set-render-preferences","previewSize":"medium","videoQuality":"high","quickActions":["back"]}"#,
+    ];
+
+    for command in invalid {
+        assert_eq!(
+            engine.handle_line(command),
+            [format!(
+                r#"{{"version":{PROTOCOL_VERSION},"type":"protocol-error","reason":"invalid-command"}}"#
+            )]
+        );
+    }
+    assert!(engine.into_backend().preference_updates.is_empty());
 }
 
 #[test]

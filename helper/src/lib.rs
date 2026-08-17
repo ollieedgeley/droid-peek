@@ -7,6 +7,7 @@ pub mod actions;
 pub mod input;
 pub mod pairing;
 pub mod persistence;
+pub mod preferences;
 pub mod process;
 pub mod protocol;
 pub mod qr;
@@ -21,6 +22,7 @@ pub use protocol::PROTOCOL_VERSION;
 pub fn ready_event() -> String {
     protocol::Event::Ready {
         has_trusted_device: false,
+        preferences: preferences::RenderPreferences::default(),
     }
     .to_line()
 }
@@ -33,7 +35,9 @@ mod tests {
     fn ready_event_is_versioned_and_secret_free() {
         assert_eq!(
             ready_event(),
-            format!(r#"{{"version":{PROTOCOL_VERSION},"type":"ready","hasTrustedDevice":false}}"#)
+            format!(
+                r#"{{"version":{PROTOCOL_VERSION},"type":"ready","hasTrustedDevice":false,"preferences":{{"previewSize":"medium","videoQuality":"high","quickActions":["back","home","recent-apps"]}}}}"#
+            )
         );
         assert!(!ready_event().contains("secret"));
     }

@@ -39,6 +39,17 @@ Item {
         return -1
     }
 
+    function fittedSize(maxWidth, maxHeight, sourceWidth, sourceHeight) {
+        var boundedWidth = Math.max(1, maxWidth)
+        var boundedHeight = Math.max(1, maxHeight)
+        var contentWidth = sourceWidth > 0 ? sourceWidth : 9
+        var contentHeight = sourceHeight > 0 ? sourceHeight : 20
+        var scale = Math.min(boundedWidth / contentWidth,
+                             boundedHeight / contentHeight)
+        return Qt.size(Math.max(1, Math.round(contentWidth * scale)),
+                       Math.max(1, Math.round(contentHeight * scale)))
+    }
+
     function normalizedPoint(x, y, contentRect) {
         if (contentRect.width <= 0 || contentRect.height <= 0
                 || x < contentRect.x || y < contentRect.y
@@ -109,10 +120,7 @@ Item {
             focus = false
     }
 
-    onCaptureRequestedChanged: {
-        if (!captureRequested)
-            frameCount = 0
-    }
+    onCaptureRequestedChanged: frameCount = 0
 
     MediaDevices {
         id: mediaDevices

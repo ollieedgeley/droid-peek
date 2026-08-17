@@ -15,6 +15,7 @@ use zeroize::Zeroizing;
 use crate::{
     input::{AdbInputAdapter, AndroidKey, DisplayGeometry, InputFailure, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
+    preferences::{FileRenderPreferenceStore, RenderPreferences},
     process::{AdbCommandRunner, CancellationToken, CommandRunner},
     protocol::{Event, FailureReason, PairingBackend, PairingMethod, QrPresentation},
     qr::{QrCeremony, RuntimeQrRenderer, SystemClock, SystemEntropy},
@@ -149,6 +150,8 @@ pub struct RuntimePairingBackend<S> {
     session_cancellation: CancellationToken,
     pending: Option<PendingPairing>,
     store: FileTrustedDeviceStore,
+    preference_store: FileRenderPreferenceStore,
+    preferences: RenderPreferences,
     trusted_device: Arc<Mutex<Option<TrustedDevice>>>,
     pending_reconnect: Option<PendingReconnect>,
 }
@@ -261,7 +264,7 @@ where
         sink: S,
         discovery: D,
         runner: R,
-        session: Option<Box<dyn SessionRunner + Send>>,
+        mut session: Option<Box<dyn SessionRunner + Send>>,
     ) -> io::Result<Self>
     where
         D: WirelessDiscovery + Send + 'static,
@@ -273,8 +276,13 @@ where
             RuntimeQrRenderer::new(runtime_directory.as_ref()),
             lifetime,
         );
-        let store = FileTrustedDeviceStore::new(state_directory);
+        let store = FileTrustedDeviceStore::new(&state_directory);
         let trusted_device = store.load()?;
+        let preference_store = FileRenderPreferenceStore::new(&state_directory);
+        let preferences = preference_store.load()?;
+        if let Some(runner) = session.as_mut() {
+            runner.set_quality(preferences.video_quality);
+        }
         Ok(Self {
             ceremony: Arc::new(Mutex::new(ceremony)),
             flow: Arc::new(Mutex::new(PairingFlow::new(
@@ -291,6 +299,8 @@ where
             session_cancellation: CancellationToken::new(),
             pending: None,
             store,
+            preference_store,
+            preferences,
             trusted_device: Arc::new(Mutex::new(trusted_device)),
             pending_reconnect: None,
         })
@@ -328,6 +338,27 @@ where
             InputFailure::DependencyUnavailable => FailureReason::DependencyUnavailable,
             InputFailure::Disconnected | InputFailure::Cancelled => FailureReason::Disconnected,
         })
+    }
+
+    fn restart_session(&mut self, target: String) -> Result<(), FailureReason> {
+        self.reset_session();
+        self.session
+            .lock()
+            .map_err(|_| FailureReason::DependencyUnavailable)?
+            .as_mut()
+            .ok_or(FailureReason::DependencyUnavailable)?
+            .set_quality(self.preferences.video_quality);
+        let expected_generation = self.session_generation.fetch_add(1, Ordering::AcqRel) + 1;
+        Self::spawn_session(
+            Arc::clone(&self.session),
+            Arc::clone(&self.session_generation),
+            expected_generation,
+            self.session_cancellation.clone(),
+            self.sink.clone(),
+            Arc::clone(&self.active_target),
+            target,
+        );
+        Ok(())
     }
 
     fn spawn_session(
@@ -727,6 +758,46 @@ where
 
     fn text_input(&mut self, text: &str) -> Result<(), FailureReason> {
         self.run_input(|adapter, target| adapter.text(target, text))
+    }
+
+    fn render_preferences(&self) -> RenderPreferences {
+        self.preferences
+    }
+
+    fn set_render_preferences(
+        &mut self,
+        preferences: RenderPreferences,
+    ) -> Result<bool, FailureReason> {
+        let quality_changed = preferences.video_quality != self.preferences.video_quality;
+        let restart_target = quality_changed
+            .then(|| {
+                self.active_target
+                    .lock()
+                    .map_err(|_| FailureReason::DependencyUnavailable)
+                    .map(|target| target.clone())
+            })
+            .transpose()?
+            .flatten();
+
+        self.preference_store
+            .save(&preferences)
+            .map_err(|_| FailureReason::DependencyUnavailable)?;
+        self.preferences = preferences;
+
+        if let Some(target) = restart_target {
+            self.restart_session(target)?;
+            return Ok(true);
+        }
+        if quality_changed {
+            let mut session = self
+                .session
+                .lock()
+                .map_err(|_| FailureReason::DependencyUnavailable)?;
+            if let Some(runner) = session.as_mut() {
+                runner.set_quality(preferences.video_quality);
+            }
+        }
+        Ok(false)
     }
 
     fn response_emitted(&mut self) {

@@ -12,6 +12,9 @@ use std::{
 use omarchy_android_helper::{
     input::{AndroidKey, DisplayGeometry, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
+    preferences::{
+        FileRenderPreferenceStore, PreviewSize, QuickAction, RenderPreferences, VideoQuality,
+    },
     process::{CancellationToken, CommandFailure, CommandOutput, CommandRequest, CommandRunner},
     protocol::{Event, FailureReason, PairingBackend},
     runtime::{ProtocolSink, RuntimePairingBackend},
@@ -182,11 +185,32 @@ impl MemorySink {
         }
         panic!("event was not emitted");
     }
+
+    fn wait_for_count(&self, expected: &str, count: usize) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline {
+            if self
+                .lines
+                .lock()
+                .expect("memory sink lock")
+                .iter()
+                .filter(|line| line.as_str() == expected)
+                .count()
+                >= count
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        panic!("event count was not reached");
+    }
 }
 
 struct BlockingSession {
     target: Arc<Mutex<Option<String>>>,
     stopped: Arc<AtomicBool>,
+    quality: VideoQuality,
+    qualities: Arc<Mutex<Vec<VideoQuality>>>,
 }
 
 impl SessionRunner for BlockingSession {
@@ -196,6 +220,10 @@ impl SessionRunner for BlockingSession {
         cancellation: &CancellationToken,
         on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
+        self.qualities
+            .lock()
+            .expect("session qualities lock")
+            .push(self.quality);
         *self.target.lock().expect("session target lock") = Some(target.to_owned());
         on_started();
         while !cancellation.is_cancelled() {
@@ -203,6 +231,10 @@ impl SessionRunner for BlockingSession {
         }
         self.stopped.store(true, Ordering::Release);
         Ok(SessionExit::Stopped)
+    }
+
+    fn set_quality(&mut self, quality: VideoQuality) {
+        self.quality = quality;
     }
 }
 
@@ -255,6 +287,7 @@ fn runtime_starts_scrcpy_after_reconnect_and_stops_it_before_confirmation() {
     let sink = MemorySink::default();
     let target = Arc::new(Mutex::new(None));
     let stopped = Arc::new(AtomicBool::new(false));
+    let qualities = Arc::new(Mutex::new(Vec::new()));
     let requests = Arc::new(Mutex::new(Vec::new()));
     let outputs = Arc::new(Mutex::new(VecDeque::from([
         Ok(CommandOutput { succeeded: true }),
@@ -279,6 +312,8 @@ fn runtime_starts_scrcpy_after_reconnect_and_stops_it_before_confirmation() {
         BlockingSession {
             target: Arc::clone(&target),
             stopped: Arc::clone(&stopped),
+            quality: VideoQuality::default(),
+            qualities,
         },
     )
     .expect("runtime backend");
@@ -351,4 +386,74 @@ fn runtime_starts_scrcpy_after_reconnect_and_stops_it_before_confirmation() {
     backend.stop_session();
 
     assert!(stopped.load(Ordering::Acquire));
+}
+
+#[test]
+fn quality_update_is_persisted_and_restarts_only_the_active_session() {
+    let directory = tempfile::tempdir().expect("temporary runtime");
+    let state_directory = directory.path().join("state");
+    FileTrustedDeviceStore::new(&state_directory)
+        .save(&TrustedDevice::new("adb-14141FD6F00081-TnSdi9").expect("trusted device"))
+        .expect("seed trusted-device state");
+    let sink = MemorySink::default();
+    let target = Arc::new(Mutex::new(None));
+    let stopped = Arc::new(AtomicBool::new(false));
+    let qualities = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = RuntimePairingBackend::with_adapters_store_and_session(
+        directory.path().join("runtime"),
+        &state_directory,
+        Duration::from_secs(1),
+        sink.clone(),
+        FakeDiscovery {
+            trusted_result: PairingEndpoint::new("192.168.50.4", 37_123)
+                .map_err(|_| DiscoveryFailure::NetworkUnavailable),
+            requested_devices: Vec::new(),
+        },
+        FakeRunner {
+            outputs: VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+            requests: Vec::new(),
+        },
+        BlockingSession {
+            target,
+            stopped: Arc::clone(&stopped),
+            quality: VideoQuality::Low,
+            qualities: Arc::clone(&qualities),
+        },
+    )
+    .expect("runtime backend");
+
+    backend
+        .reconnect_trusted_device()
+        .expect("queue trusted reconnect");
+    backend.response_emitted();
+    sink.wait_for_count(&Event::SessionStarted.to_line(), 1);
+
+    let preferences = RenderPreferences {
+        preview_size: PreviewSize::Large,
+        video_quality: VideoQuality::Low,
+        quick_actions: [
+            QuickAction::Home,
+            QuickAction::RecentApps,
+            QuickAction::Back,
+        ],
+    };
+    assert!(
+        backend
+            .set_render_preferences(preferences)
+            .expect("save and restart session")
+    );
+    sink.wait_for_count(&Event::SessionStarted.to_line(), 2);
+    assert_eq!(
+        qualities.lock().expect("session qualities lock").as_slice(),
+        [VideoQuality::High, VideoQuality::Low]
+    );
+    assert!(stopped.load(Ordering::Acquire));
+    assert_eq!(
+        FileRenderPreferenceStore::new(&state_directory)
+            .load()
+            .expect("load saved preferences"),
+        preferences
+    );
+
+    backend.stop_session();
 }

@@ -21,6 +21,16 @@ BarWidget {
         if (panel) panel.toggle()
     }
 
+    function runSemanticAction(actionId) {
+        if (actionId === "toggle-android-panel") {
+            root.togglePanel()
+            return true
+        }
+        if (root.panel && "triggerSemanticAction" in root.panel)
+            return root.panel.triggerSemanticAction(actionId)
+        return false
+    }
+
     function injectPanel() {
         if (!root.panel) return
         if ("bar" in root.panel) root.panel.bar = root.bar
@@ -53,6 +63,7 @@ BarWidget {
         function show() { root.open() }
         function hide() { root.close() }
         function toggle() { root.togglePanel() }
+        function action(actionId: string): bool { return root.runSemanticAction(actionId) }
     }
 
     WidgetButton {

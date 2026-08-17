@@ -16,12 +16,70 @@ Panel {
     property var hostWidget: null
     property var helperCommand: ["omarchy-android-helper", "--acceptance-log"]
     property bool helperShutdownPending: false
+    property bool settingsOpen: false
     readonly property var barIdentity: hostWidget || root
     readonly property string sessionState: pairingState.sessionState
     readonly property color contentForeground: root.barForeground
+    readonly property var phonePreview: phonePreviewLoader.item
 
     implicitWidth: 320
     implicitHeight: 480
+
+    function previewBounds(availableHeight) {
+        switch (pairingState.previewSize) {
+        case "small":
+            return Qt.size(Style.space(280), Style.space(260))
+        case "large":
+            var height = availableHeight > 0
+                       ? availableHeight - Style.space(120)
+                       : Style.space(720)
+            return Qt.size(Style.space(480),
+                           Math.max(Style.space(360),
+                                    Math.min(Style.space(720), height)))
+        default:
+            return Qt.size(Style.space(360), Style.space(420))
+        }
+    }
+
+    function desiredPreviewSize(availableHeight) {
+        var bounds = previewBounds(availableHeight)
+        var sourceWidth = phonePreview && phonePreview.displayWidth > 0
+                        ? phonePreview.displayWidth : 9
+        var sourceHeight = phonePreview && phonePreview.displayHeight > 0
+                         ? phonePreview.displayHeight : 20
+        var scale = Math.min(Math.max(1, bounds.width) / sourceWidth,
+                             Math.max(1, bounds.height) / sourceHeight)
+        return Qt.size(Math.max(1, Math.round(sourceWidth * scale)),
+                       Math.max(1, Math.round(sourceHeight * scale)))
+    }
+
+    function desiredPanelWidth() {
+        if (pairingState.sessionState === "ready" && !settingsOpen)
+            return desiredPreviewSize(panel.availableCardHeight).width
+        return previewBounds(panel.availableCardHeight).width
+    }
+
+    function desiredPreviewHeight(availableHeight) {
+        return desiredPreviewSize(availableHeight).height
+    }
+
+    function runQuickAction(action) {
+        pairingState.sendKeyInput(action)
+        if (phonePreview) {
+            Qt.callLater(function() {
+                if (root.phonePreview)
+                    root.phonePreview.forceActiveFocus()
+            })
+        }
+    }
+
+    function updateRenderPreferences(size, quality, actions) {
+        pairingState.setRenderPreferences(size, quality, actions)
+    }
+
+    function triggerSemanticAction(actionId) {
+        return semanticActionRouter.trigger(actionId)
+    }
 
     function activatePrimary() {
         if (pairingState.pairingStage !== "manual-code")
@@ -66,6 +124,8 @@ Panel {
                 helperStopTimer.restart()
             }
         }
+        if (!opened)
+            settingsOpen = false
     }
 
     PairingState {
@@ -88,6 +148,17 @@ Panel {
         onSessionStopConfirmed: {
             if (root.helperShutdownPending)
                 root.finishHelperShutdown()
+        }
+    }
+
+    SemanticActionRouter {
+        id: semanticActionRouter
+        sessionReady: pairingState.sessionState === "ready"
+        phoneFocused: root.opened && !root.settingsOpen
+                      && root.phonePreview !== null
+                      && root.phonePreview.inputFocused
+        onKeyRequested: function(key) {
+            pairingState.sendKeyInput(key)
         }
     }
 
@@ -130,18 +201,19 @@ Panel {
         bar: root.bar
         open: root.opened
         focusTarget: keyCatcher
-        contentWidth: panel.fittedContentWidth(Style.space(320))
+        contentWidth: panel.fittedContentWidth(root.desiredPanelWidth())
         contentHeight: panel.fittedContentHeight(content.implicitHeight)
 
         PanelKeyCatcher {
             id: keyCatcher
             anchors.fill: parent
-            blocked: manualCode.activeFocus || phonePreview.inputFocused
+            blocked: manualCode.activeFocus
+                     || (root.phonePreview !== null
+                         && root.phonePreview.inputFocused)
             onActivateRequested: root.activatePrimary()
             onCloseRequested: root.close()
             onTextKey: function(text) {
-                if (text === "r" || text === "R")
-                    pairingState.startQrPairing()
+                pairingState.sendTextInput(text)
             }
 
             Column {
@@ -151,13 +223,15 @@ Panel {
 
                 PanelHero {
                     width: parent.width
-                    title: pairingState.statusTitle
-                    meta: "Omarchy Android"
-                    detail: pairingState.sessionState
+                    visible: pairingState.sessionState !== "ready"
+                    title: root.settingsOpen ? "Render settings" : pairingState.statusTitle
+                    meta: root.settingsOpen ? "Omarchy Android" : "Omarchy Android"
+                    detail: root.settingsOpen ? "" : pairingState.sessionState
                     foreground: root.contentForeground
                 }
 
                 Text {
+                    visible: pairingState.sessionState !== "ready" && !root.settingsOpen
                     width: parent.width
                     text: pairingState.statusDescription
                     color: Qt.darker(root.contentForeground, 1.25)
@@ -165,35 +239,73 @@ Panel {
                     font.pixelSize: Style.fontBaseSize
                     wrapMode: Text.Wrap
                 }
-                Rectangle {
-                    visible: pairingState.sessionState === "ready"
+                PhoneToolbar {
                     width: parent.width
-                    height: Math.min(width * 16 / 9, Style.space(340))
-                    color: Qt.darker(root.contentForeground, 2.4)
+                    visible: pairingState.sessionState === "ready"
+                    actions: pairingState.quickActions
+                    settingsOpen: root.settingsOpen
+                    controlsEnabled: pairingState.sessionState === "ready"
+                    foreground: root.contentForeground
+                    onActionRequested: function(action) {
+                        root.runQuickAction(action)
+                    }
+                    onSettingsRequested: root.settingsOpen = true
+                    onBackRequested: root.settingsOpen = false
+                }
+
+                Rectangle {
+                    visible: pairingState.sessionState === "ready" && !root.settingsOpen
+                    width: parent.width
+                    height: root.desiredPreviewHeight(panel.availableCardHeight)
+                    color: "black"
                     radius: Style.cornerRadius
                     clip: true
-
-                    PhonePreview {
-                        id: phonePreview
+                    Loader {
+                        id: phonePreviewLoader
                         anchors.fill: parent
-                        captureRequested: parent.visible && root.opened
-                        inputEnabled: pairingState.sessionState === "ready"
-                        foreground: root.contentForeground
-                        background: parent.color
-                        onTapRequested: function(x, y, displayWidth, displayHeight) {
+                        active: parent.visible && root.opened
+                        source: Qt.resolvedUrl("qml/components/PhonePreview.qml")
+                        onLoaded: {
+                            item.background = "black"
+                            item.foreground = Qt.binding(function() {
+                                return root.contentForeground
+                            })
+                            item.captureRequested = true
+                            item.inputEnabled = Qt.binding(function() {
+                                return root.opened && !root.settingsOpen
+                            })
+                        }
+                    }
+
+                    Connections {
+                        target: phonePreviewLoader.item
+                        enabled: target !== null
+                        function onTapRequested(x, y, displayWidth, displayHeight) {
                             pairingState.sendPointerTap(x, y, displayWidth, displayHeight)
                         }
-                        onSwipeRequested: function(startX, startY, endX, endY,
-                                                   displayWidth, displayHeight, durationMs) {
+                        function onSwipeRequested(startX, startY, endX, endY,
+                                                  displayWidth, displayHeight, durationMs) {
                             pairingState.sendPointerSwipe(startX, startY, endX, endY,
-                                                          displayWidth, displayHeight, durationMs)
+                                                         displayWidth, displayHeight, durationMs)
                         }
-                        onKeyRequested: function(key) {
+                        function onKeyRequested(key) {
                             pairingState.sendKeyInput(key)
                         }
-                        onTextRequested: function(text) {
+                        function onTextRequested(text) {
                             pairingState.sendTextInput(text)
                         }
+                    }
+                }
+
+                RenderSettings {
+                    width: parent.width
+                    visible: pairingState.sessionState === "ready" && root.settingsOpen
+                    previewSize: pairingState.previewSize
+                    videoQuality: pairingState.videoQuality
+                    quickActions: pairingState.quickActions
+                    foreground: root.contentForeground
+                    onPreferencesRequested: function(size, quality, actions) {
+                        root.updateRenderPreferences(size, quality, actions)
                     }
                 }
 

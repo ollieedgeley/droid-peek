@@ -68,20 +68,43 @@ assert(type(android.install_custom_bindings) == "function")
 
 local integration_directory = integration:match("^(.*)/[^/]+$") or "."
 local template = dofile(integration_directory .. "/config.example.lua")
+assert(template.smartDefaults == nil, "template must not hide routes behind smart defaults")
+assert(template.routes["omarchy.android.panel.toggle"] == "android.panel.toggle")
+assert(template.routes["omarchy.browser"] == "android.browser.default")
+assert(template.routes["omarchy.window.close"] == "android.navigate.home")
 android.configure(template)
 
-local malformed_ok, malformed_error = pcall(android.configure, {
+local hidden_defaults_ok, hidden_defaults_error = pcall(android.configure, {
   smartDefaults = true,
+  routes = {},
+  customBindings = {},
+})
+assert(not hidden_defaults_ok, "smartDefaults must not remain a supported policy field")
+assert(tostring(hidden_defaults_error):match("unknown configuration field smartDefaults"))
+
+local missing_routes_ok, missing_routes_error = pcall(android.configure, {
+  customBindings = {},
+})
+assert(not missing_routes_ok, "routes must be explicit")
+assert(tostring(missing_routes_error):match("routes must be a table"))
+
+local malformed_ok, malformed_error = pcall(android.configure, {
   routes = { ["omarchy.browser"] = "android.navigate.hmoe" },
   customBindings = {},
 })
 assert(not malformed_ok, "unknown target must fail configuration")
+
+local legacy_disable_ok, legacy_disable_error = pcall(android.configure, {
+  routes = { ["omarchy.browser"] = false },
+  customBindings = {},
+})
+assert(not legacy_disable_ok, "false route must be removed instead of retained as policy")
+assert(tostring(legacy_disable_error):match("Android target must be a string or table"))
 assert(tostring(malformed_error):match("unknown Android target"))
 
 local invalid_package_ok, invalid_package_error = pcall(function()
   local fresh = dofile(integration)
   fresh.configure({
-    smartDefaults = false,
     routes = {},
     customBindings = {
       {
@@ -94,14 +117,13 @@ end)
 assert(not invalid_package_ok, "invalid package names must fail configuration")
 assert(tostring(invalid_package_error):match("invalid Android package"))
 android.configure({
-  smartDefaults = true,
   routes = {
+    ["omarchy.browser"] = "android.browser.default",
     ["omarchy.window.close"] = "android.navigate.back",
     ["omarchy.spotify"] = {
       type = "android.app.launch",
       package = "com.spotify.music",
     },
-    ["omarchy.editor"] = false,
   },
   customBindings = {
     {

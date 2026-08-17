@@ -72,10 +72,18 @@ os.time = function()
   return 1700000000
 end
 
-dofile(integration)
+local android = dofile(integration)
 local installed_bind = o.bind
 local installed_close_factory = hl.dsp.window.close
-dofile(integration)
+assert(dofile(integration) == android)
+android.configure({
+  routes = {
+    ["omarchy.android.panel.toggle"] = "android.panel.toggle",
+    ["omarchy.browser"] = "android.browser.default",
+    ["omarchy.window.close"] = "android.navigate.home",
+  },
+  customBindings = {},
+})
 
 assert(o.bind == installed_bind, "duplicate loading must not wrap bindings twice")
 assert(hl.dsp.window.close == installed_close_factory, "duplicate loading must not wrap close twice")

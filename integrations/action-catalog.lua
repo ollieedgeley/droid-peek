@@ -40,9 +40,4 @@ return {
       actionId = "android-recent-apps",
     },
   },
-  smartDefaults = {
-    ["omarchy.android.panel.toggle"] = "android.panel.toggle",
-    ["omarchy.browser"] = "android.browser.default",
-    ["omarchy.window.close"] = "android.navigate.home",
-  },
 }

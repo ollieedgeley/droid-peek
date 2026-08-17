@@ -81,6 +81,10 @@ local function normalize_target(value)
     }
   end
 
+  if type(value) ~= "table" then
+    fail("Android target must be a string or table")
+  end
+
   validate_keys(value, { type = true, package = true }, "Android target")
   if value.type ~= "android.app.launch" then
     fail("unknown Android target " .. string.format("%q", tostring(value.type)))
@@ -96,13 +100,6 @@ local function normalize_target(value)
   }
 end
 
-local function default_routes()
-  local routes = {}
-  for source_id, target_id in pairs(catalog.smartDefaults) do
-    routes[source_id] = normalize_target(target_id)
-  end
-  return routes
-end
 
 local function is_array(value)
   if type(value) ~= "table" then
@@ -147,31 +144,20 @@ local function configure(configuration)
   end
   validate_keys(
     configuration,
-    { smartDefaults = true, routes = true, customBindings = true },
+    { routes = true, customBindings = true },
     "configuration"
   )
 
-  local smart_defaults = configuration.smartDefaults
-  if smart_defaults == nil then
-    smart_defaults = true
-  elseif type(smart_defaults) ~= "boolean" then
-    fail("smartDefaults must be a boolean")
-  end
-
-  local configured_routes = configuration.routes or {}
+  local configured_routes = configuration.routes
   if type(configured_routes) ~= "table" then
     fail("routes must be a table")
   end
-  local routes = smart_defaults and default_routes() or {}
+  local routes = {}
   for source_id, target in pairs(configured_routes) do
     if type(source_id) ~= "string" or not source_ids[source_id] then
       fail("unknown Omarchy source " .. string.format("%q", tostring(source_id)))
     end
-    if target == false then
-      routes[source_id] = nil
-    else
-      routes[source_id] = normalize_target(target)
-    end
+    routes[source_id] = normalize_target(target)
   end
 
   local configured_bindings = configuration.customBindings or {}
@@ -345,7 +331,7 @@ if state.close_factory == nil then
   hl.dsp.window.close = state.close_factory
 end
 
-state.routes = default_routes()
+state.routes = {}
 state.custom_bindings = {}
 state.bind = bind_with_android
 state.api = {

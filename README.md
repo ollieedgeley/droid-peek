@@ -186,11 +186,10 @@ The configuration file returns one strict table:
 
 ```lua
 return {
-  smartDefaults = true,
   routes = {
+    ["omarchy.android.panel.toggle"] = "android.panel.toggle",
     ["omarchy.browser"] = "android.browser.default",
-    ["omarchy.window.close"] = "android.navigate.back",
-    ["omarchy.menu"] = false,
+    ["omarchy.window.close"] = "android.navigate.home",
   },
   customBindings = {
     {
@@ -201,10 +200,11 @@ return {
 }
 ```
 
-`smartDefaults = true` installs the reviewed defaults. A route entry overrides
-one default; `false` disables Android interception for that source while
-preserving its original Omarchy behavior. Unknown fields, source IDs, target
-IDs, and malformed package names stop configuration with a precise error.
+`routes` is the complete enabled routing table; there is no second built-in
+default mapping table. Remove or comment out a route to preserve that source's
+original Omarchy behavior. Change its target to remap it. Unknown fields,
+missing `routes`, unknown source or target IDs, and malformed package names stop
+configuration with a precise error.
 Custom bindings are registered only in the second phase, after normal bindings,
 so collision handling remains Omarchy's. They have no desktop fallback because
 no pre-existing desktop action owns them.
@@ -243,12 +243,10 @@ Available Android target IDs:
 | `android.navigate.recent-apps` | Android recent apps |
 | `{ type = "android.app.launch", package = "com.example.app" }` | Launch one validated package |
 
-The reviewed smart defaults are
-`omarchy.android.panel.toggle` to `android.panel.toggle`,
-`omarchy.browser` to `android.browser.default`, and
-`omarchy.window.close` to `android.navigate.home`. Existing bindings retain
-their exact desktop dispatcher as fallback. The panel toggle is global and has
-no fallback. The loader matches only allowlisted typed Omarchy declarations and
+The example configuration explicitly enables the panel toggle, default-browser,
+and close-to-Home routes. Existing bindings retain their exact desktop
+dispatcher as fallback. The panel toggle is global and has no fallback.
+The loader matches only allowlisted typed Omarchy declarations and
 opaque closures returned by `hl.dsp.window.close()`; it never parses chords,
 labels, shell strings, or binding files.
 

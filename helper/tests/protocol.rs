@@ -5,7 +5,7 @@ use omarchy_android_helper::preferences::{
     PreviewScale, QuickAction, RenderPreferences, VideoQuality,
 };
 use omarchy_android_helper::protocol::{
-    FailureReason, PROTOCOL_VERSION, PairingBackend, ProtocolEngine, QrPresentation,
+    Event, FailureReason, PROTOCOL_VERSION, PairingBackend, ProtocolEngine, QrPresentation,
 };
 use omarchy_android_helper::runtime::AcceptanceEventWriter;
 
@@ -325,5 +325,19 @@ fn backend_failures_are_fixed_categories_not_raw_messages() {
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"failure","reason":"dependency-unavailable"}}"#
         )]
+    );
+}
+
+#[test]
+fn session_started_reports_only_bounded_physical_dimensions() {
+    assert_eq!(
+        Event::SessionStarted {
+            physical_width_mm: Some(70),
+            physical_height_mm: Some(157),
+        }
+        .to_line(),
+        format!(
+            r#"{{"version":{PROTOCOL_VERSION},"type":"session-started","physicalWidthMm":70,"physicalHeightMm":157}}"#
+        )
     );
 }

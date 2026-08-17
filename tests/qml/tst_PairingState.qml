@@ -143,9 +143,18 @@ TestCase {
         compare(state.sessionState, "pairing")
         compare(state.pairingStage, "session-starting")
 
-        state.receiveLine(event("session-started"))
+        state.receiveLine(event("session-started", {
+                                    physicalWidthMm: 70,
+                                    physicalHeightMm: 157
+                                }))
         compare(state.sessionState, "ready")
         compare(state.pairingStage, "session-started")
+        compare(state.physicalDisplayWidthMm, 70)
+        compare(state.physicalDisplayHeightMm, 157)
+        compare(state.physicalPreviewSize(3, 1080, 2392, 100),
+                Qt.size(210, 471))
+        compare(state.physicalPreviewSize(3, 2392, 1080, 150),
+                Qt.size(707, 315))
 
         state.receiveLine(event("session-ended"))
         compare(state.sessionState, "disconnected")

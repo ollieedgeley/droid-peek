@@ -199,3 +199,38 @@ impl SessionRunner for ScrcpySessionRunner {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PhysicalDisplaySize, parse_surface_flinger_display};
+
+    #[test]
+    fn parses_active_mode_into_physical_millimeters() {
+        let output = r#"
+            activeMode={id=2, hwcId=2, resolution=1080x2392, vsyncRate=60.00 Hz, dpi=391.89x386.98, group=0}
+            x-dpi                     : 391.89
+            y-dpi                     : 386.98
+        "#;
+
+        assert_eq!(
+            parse_surface_flinger_display(output),
+            Some(PhysicalDisplaySize::new(70, 157).expect("valid phone dimensions"))
+        );
+    }
+
+    #[test]
+    fn rejects_missing_or_implausible_physical_dpi() {
+        assert_eq!(
+            parse_surface_flinger_display(
+                "activeMode={resolution=1080x2392, dpi=0x386.98}"
+            ),
+            None
+        );
+        assert_eq!(
+            parse_surface_flinger_display(
+                "activeMode={resolution=1080x2392, dpi=20x20}"
+            ),
+            None
+        );
+    }
+}

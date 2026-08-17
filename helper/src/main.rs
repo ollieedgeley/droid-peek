@@ -1,14 +1,14 @@
 use std::{
-    env, fs,
-    fs::{File, OpenOptions},
+    env,
+    fs::File,
     io::{self, BufRead},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::Path,
     time::Duration,
 };
 
 use omarchy_android_helper::{
     persistence::default_state_directory,
+    private_fs::create_private_file,
     protocol::{Event, PairingBackend, ProtocolEngine},
     runtime::{
         AcceptanceEventWriter, ProtocolSink, RuntimePairingBackend, WriterProtocolSink,
@@ -18,7 +18,8 @@ use omarchy_android_helper::{
 
 fn main() -> io::Result<()> {
     let stdin = io::stdin();
-    let runtime_directory = default_runtime_directory();
+    let runtime_directory = default_runtime_directory()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "XDG_RUNTIME_DIR is unavailable"))?;
     let state_directory = default_state_directory().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -49,14 +50,17 @@ fn main() -> io::Result<()> {
         has_trusted_device,
         preferences,
     })?;
-    for line in stdin.lock().lines() {
-        for event in engine.handle_line(&line?) {
-            sink.emit_line(&event)?;
+    let result = (|| {
+        for line in stdin.lock().lines() {
+            for event in engine.handle_line(&line?) {
+                sink.emit_line(&event)?;
+            }
+            engine.response_emitted();
         }
-        engine.response_emitted();
-    }
-
-    Ok(())
+        Ok(())
+    })();
+    engine.into_backend().shutdown();
+    result
 }
 
 fn acceptance_logging_enabled() -> io::Result<bool> {
@@ -72,12 +76,5 @@ fn acceptance_logging_enabled() -> io::Result<bool> {
 }
 
 fn open_acceptance_log(runtime_directory: &Path) -> io::Result<File> {
-    fs::create_dir_all(runtime_directory)?;
-    fs::set_permissions(runtime_directory, fs::Permissions::from_mode(0o700))?;
-    OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(runtime_directory.join("acceptance.log"))
+    create_private_file(&runtime_directory.join("acceptance.log"))
 }

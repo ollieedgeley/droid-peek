@@ -20,6 +20,7 @@ use crate::{
     input::{AdbInputAdapter, AndroidKey, DisplayGeometry, InputFailure, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
     preferences::{FilePreferenceStore, Preferences},
+    private_fs::ensure_private_directory,
     process::{AdbCommandRunner, CancellationToken, CommandFailure, CommandRequest, CommandRunner},
     protocol::{Event, FailureReason, PairingBackend, PairingMethod, QrPresentation},
     qr::{QrCeremony, RuntimeQrRenderer, SystemClock, SystemEntropy},
@@ -29,6 +30,7 @@ use crate::{
 
 const MAX_SEMANTIC_DEADLINE_AHEAD_MS: u64 = 5_000;
 const MAX_SEMANTIC_EXECUTION_MS: u64 = 750;
+const MAX_LOCAL_COMMAND_MS: u64 = 750;
 
 pub trait ProtocolSink: Clone + Send + 'static {
     type Error;
@@ -279,6 +281,8 @@ where
         D: WirelessDiscovery + Send + 'static,
         R: CommandRunner + Send + 'static,
     {
+        let state_directory = state_directory.as_ref();
+        ensure_private_directory(state_directory)?;
         let action_results = ActionResultStore::new(runtime_directory.as_ref())?;
         let ceremony = QrCeremony::new(
             SystemEntropy::new()?,
@@ -286,9 +290,9 @@ where
             RuntimeQrRenderer::new(runtime_directory.as_ref()),
             lifetime,
         );
-        let store = FileTrustedDeviceStore::new(&state_directory);
+        let store = FileTrustedDeviceStore::new(state_directory);
         let trusted_device = store.load()?;
-        let preference_store = FilePreferenceStore::new(&state_directory);
+        let preference_store = FilePreferenceStore::new(state_directory);
         let preferences = preference_store.load()?;
         let action_manifest = bundled_action_manifest().map_err(|_| {
             io::Error::new(
@@ -338,9 +342,12 @@ where
 
     fn run_input(
         &mut self,
+        timeout_ms: u64,
         operation: impl FnOnce(&mut AdbInputAdapter<'_>, &str) -> Result<(), InputFailure>,
     ) -> Result<(), FailureReason> {
-        let cancellation = self.session_cancellation.clone();
+        let cancellation = self
+            .session_cancellation
+            .child_with_timeout(Duration::from_millis(timeout_ms));
         self.run_input_with_cancellation(&cancellation, operation)
     }
 
@@ -805,9 +812,11 @@ where
             .lock()
             .map_err(|_| FailureReason::DependencyUnavailable)?;
         if let Some(target) = active_target {
+            let cancellation = CancellationToken::new()
+                .child_with_timeout(Duration::from_millis(MAX_LOCAL_COMMAND_MS));
             let _ = flow.runner_mut().run(
                 CommandRequest::new("adb", vec!["disconnect".to_owned(), target]),
-                &CancellationToken::new(),
+                &cancellation,
             );
         }
         drop(flow);
@@ -831,7 +840,9 @@ where
         geometry: DisplayGeometry,
         point: NormalizedPoint,
     ) -> Result<(), FailureReason> {
-        self.run_input(|adapter, target| adapter.tap(target, geometry, point))
+        self.run_input(MAX_LOCAL_COMMAND_MS, |adapter, target| {
+            adapter.tap(target, geometry, point)
+        })
     }
 
     fn pointer_swipe(
@@ -841,15 +852,23 @@ where
         end: NormalizedPoint,
         duration_ms: u32,
     ) -> Result<(), FailureReason> {
-        self.run_input(|adapter, target| adapter.swipe(target, geometry, start, end, duration_ms))
+        self.run_input(
+            u64::from(duration_ms) + MAX_LOCAL_COMMAND_MS,
+            |adapter, target| adapter.swipe(target, geometry, start, end, duration_ms),
+        )
     }
 
     fn key_input(&mut self, key: AndroidKey) -> Result<(), FailureReason> {
-        self.run_input(|adapter, target| adapter.key(target, key))
+        self.run_input(MAX_LOCAL_COMMAND_MS, |adapter, target| {
+            adapter.key(target, key)
+        })
     }
 
     fn text_input(&mut self, text: &str) -> Result<(), FailureReason> {
-        self.run_input(|adapter, target| adapter.text(target, text))
+        let command_count = text.matches("%s").count() as u64 + 1;
+        self.run_input(MAX_LOCAL_COMMAND_MS * command_count, |adapter, target| {
+            adapter.text(target, text)
+        })
     }
 
     fn semantic_action(
@@ -886,9 +905,7 @@ where
             Unhandled,
         }
 
-        let execution = match resolve_action(&self.action_manifest, None, action.as_str())
-            .map(|resolved| resolved.result)
-        {
+        let execution = match resolve_action(&self.action_manifest, action.as_str()) {
             Some(ActionResult::KeyInput { key }) => Execution::Key(*key),
             Some(ActionResult::StandardBrowserIntent {}) => Execution::StandardBrowser,
             Some(ActionResult::PackageLaunch {}) => action_argument
@@ -970,9 +987,9 @@ where
 }
 
 #[must_use]
-pub fn default_runtime_directory() -> PathBuf {
+pub fn default_runtime_directory() -> Option<PathBuf> {
     env::var_os("XDG_RUNTIME_DIR")
+        .filter(|directory| !directory.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(env::temp_dir)
-        .join("omarchy-android")
+        .map(|root| root.join("omarchy-android"))
 }

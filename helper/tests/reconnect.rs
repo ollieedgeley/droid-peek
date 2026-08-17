@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     convert::Infallible,
+    os::unix::fs::symlink,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -598,4 +599,33 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
     );
 
     backend.stop_session();
+}
+
+#[test]
+fn runtime_rejects_a_symlinked_private_state_root_before_loading() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let target = directory.path().join("target-state");
+    std::fs::create_dir(&target).expect("state target");
+    let state_directory = directory.path().join("state");
+    symlink(&target, &state_directory).expect("state symlink");
+
+    let result = RuntimePairingBackend::with_adapters_and_store(
+        directory.path().join("runtime"),
+        &state_directory,
+        Duration::from_secs(1),
+        MemorySink::default(),
+        FakeDiscovery {
+            trusted_result: Err(DiscoveryFailure::NetworkUnavailable),
+            requested_devices: Vec::new(),
+        },
+        FakeRunner {
+            outputs: VecDeque::new(),
+            requests: Vec::new(),
+        },
+    );
+    let error = match result {
+        Ok(_) => panic!("symlinked state root was accepted"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
 }

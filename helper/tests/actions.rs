@@ -3,9 +3,8 @@ use std::collections::{HashMap, VecDeque};
 use omarchy_android_helper::{
     actions::{
         ActionCapability, ActionClassification, ActionManifestError, ActionOverridePolicy,
-        ActionProfileError, ActionResult, ActionScope, ActionSource, AdbActionAdapter,
-        SemanticAction, VerificationStatus, bundled_action_manifest, parse_action_manifest,
-        parse_action_profile, resolve_action,
+        ActionResult, ActionScope, AdbActionAdapter, SemanticAction, VerificationStatus,
+        bundled_action_manifest, parse_action_manifest, resolve_action,
     },
     input::AndroidKey,
     process::{CancellationToken, CommandFailure, CommandOutput, CommandRequest, CommandRunner},
@@ -181,101 +180,16 @@ fn manifest_rejects_duplicate_ids_and_unverified_device_claims() {
 }
 
 #[test]
-fn only_manifest_declared_override_targets_can_replace_a_default() {
-    let manifest = parse_action_manifest(
-        r#"{
-            "schemaVersion": 3,
-            "actions": [{
-                "id": "android-back",
-                "label": "Back",
-                "classification": "android-native-extension",
-                "scope": "focused-phone",
-                "result": {"kind": "key-input", "key": "back"},
-                "overridePolicy": "validated-manifest-action",
-                "overrideTargets": [{
-                    "id": "home-instead",
-                    "result": {"kind": "key-input", "key": "home"},
-                    "verification": {"status": "device-verified", "androidVersions": [16]}
-                }],
-                "verification": {"status": "device-verified", "androidVersions": [16]}
-            }]
-        }"#,
-    )
-    .expect("valid test manifest");
-    let profile = parse_action_profile(
-        r#"{
-            "schemaVersion": 3,
-            "overrides": [{"actionId": "android-back", "targetId": "home-instead"}]
-        }"#,
-    )
-    .expect("valid profile");
-
-    assert_eq!(profile.schema_version(), 3);
-    let resolved =
-        resolve_action(&manifest, Some(&profile), "android-back").expect("known action resolves");
-    assert_eq!(resolved.source, ActionSource::UserOverride);
-    assert_eq!(
-        resolved.result,
-        &ActionResult::KeyInput {
-            key: AndroidKey::Home,
-        }
-    );
-}
-
-#[test]
-fn stale_unknown_and_legacy_overrides_fail_closed() {
+fn bundled_actions_resolve_directly_and_unknown_actions_do_not() {
     let manifest = bundled_action_manifest().expect("valid bundled action manifest");
-    let stale = parse_action_profile(
-        r#"{
-            "schemaVersion": 3,
-            "overrides": [{"actionId": "android-back", "targetId": "removed-target"}]
-        }"#,
-    )
-    .expect("structurally valid stale profile");
 
-    let resolved = resolve_action(&manifest, Some(&stale), "android-back")
-        .expect("known action resolves to its default");
-    assert_eq!(resolved.source, ActionSource::Default);
     assert_eq!(
-        resolved.result,
-        &ActionResult::KeyInput {
+        resolve_action(&manifest, "android-back"),
+        Some(&ActionResult::KeyInput {
             key: AndroidKey::Back,
-        }
+        })
     );
-    assert!(resolve_action(&manifest, Some(&stale), "unknown-action").is_none());
-
-    let legacy = r#"{
-        "schemaVersion": 3,
-        "overrides": [{"actionId": "open-universal-search", "targetId": "anything"}]
-    }"#;
-    assert_eq!(
-        parse_action_profile(legacy),
-        Err(ActionProfileError::LegacyActionId)
-    );
-}
-
-#[test]
-fn malformed_or_unsupported_profiles_are_rejected() {
-    assert_eq!(
-        parse_action_profile(r#"{"schemaVersion": 1, "overrides": []}"#),
-        Err(ActionProfileError::UnsupportedVersion)
-    );
-    assert_eq!(
-        parse_action_profile(
-            r#"{
-                "schemaVersion": 3,
-                "overrides": [
-                    {"actionId": "android-back", "targetId": "one"},
-                    {"actionId": "android-back", "targetId": "two"}
-                ]
-            }"#,
-        ),
-        Err(ActionProfileError::DuplicateActionId)
-    );
-    assert_eq!(
-        parse_action_profile(r#"{"schemaVersion": 3, "overrides": [], "chord": "Super+B"}"#),
-        Err(ActionProfileError::InvalidJson)
-    );
+    assert!(resolve_action(&manifest, "unknown-action").is_none());
 }
 
 #[test]

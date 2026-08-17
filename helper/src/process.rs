@@ -1,5 +1,6 @@
 //! A fakeable boundary around local process execution.
 use std::{
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -9,15 +10,18 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use zeroize::{Zeroize, Zeroizing};
 
-/// A command expressed as an executable plus already-separated arguments.
+/// A command expressed as an executable plus already-separated arguments and
+/// optional private standard input.
 ///
-/// It intentionally has no `Debug` implementation: pairing secrets can appear
-/// in argument lists and must never be included in logs by accident.
-#[derive(Clone, Eq, PartialEq)]
+/// It intentionally has no `Debug` implementation so private input cannot be
+/// included in logs by accident.
+#[derive(Eq, PartialEq)]
 pub struct CommandRequest {
     program: String,
     arguments: Vec<String>,
+    stdin: Option<Zeroizing<String>>,
 }
 
 impl CommandRequest {
@@ -26,7 +30,14 @@ impl CommandRequest {
         Self {
             program: program.into(),
             arguments,
+            stdin: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_stdin(mut self, stdin: Zeroizing<String>) -> Self {
+        self.stdin = Some(stdin);
+        self
     }
 
     #[must_use]
@@ -37,6 +48,18 @@ impl CommandRequest {
     #[must_use]
     pub fn arguments(&self) -> &[String] {
         &self.arguments
+    }
+
+    #[must_use]
+    pub fn stdin(&self) -> Option<&str> {
+        self.stdin.as_deref().map(String::as_str)
+    }
+}
+
+impl Drop for CommandRequest {
+    fn drop(&mut self) {
+        self.program.zeroize();
+        self.arguments.zeroize();
     }
 }
 
@@ -141,13 +164,31 @@ impl CommandRunner for AdbCommandRunner {
             return Err(CommandFailure::Cancelled);
         }
 
-        let mut child = Command::new(&self.executable)
+        let mut command = Command::new(&self.executable);
+        command
             .args(request.arguments())
-            .stdin(Stdio::null())
+            .stdin(if request.stdin().is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = command
             .spawn()
             .map_err(|_| CommandFailure::DependencyUnavailable)?;
+        if let Some(input) = request.stdin()
+            && child
+                .stdin
+                .take()
+                .ok_or(CommandFailure::DependencyUnavailable)?
+                .write_all(input.as_bytes())
+                .is_err()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(CommandFailure::DependencyUnavailable);
+        }
 
         loop {
             if cancellation.is_cancelled() {

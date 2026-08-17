@@ -13,6 +13,7 @@ use omarchy_android_helper::{
     process::{AdbCommandRunner, CancellationToken, CommandFailure, CommandRequest, CommandRunner},
     wireless::{AvahiDiscovery, DiscoveryFailure, PairingEndpoint, WirelessDiscovery},
 };
+use zeroize::Zeroizing;
 
 static PROCESS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -27,16 +28,18 @@ fn executable(directory: &Path, name: &str, body: &str) -> PathBuf {
 }
 
 #[test]
-fn adb_runner_uses_separated_arguments_and_discards_output() {
+fn adb_runner_uses_separated_arguments_private_stdin_and_discards_output() {
     let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
     let directory = tempfile::tempdir().expect("temporary directory");
     let arguments_file = directory.path().join("arguments");
+    let stdin_file = directory.path().join("stdin");
     let fake_adb = executable(
         directory.path(),
         "adb",
         &format!(
-            "printf '%s\\n' \"$@\" > '{}'\nprintf 'raw endpoint and secret'\nprintf 'raw failure' >&2",
-            arguments_file.display()
+            "printf '%s\\n' \"$@\" > '{}'\ncat > '{}'\nprintf 'raw endpoint and secret'\nprintf 'raw failure' >&2",
+            arguments_file.display(),
+            stdin_file.display()
         ),
     );
     let mut runner = AdbCommandRunner::new(fake_adb, Duration::from_millis(2));
@@ -45,12 +48,9 @@ fn adb_runner_uses_separated_arguments_and_discards_output() {
         .run(
             CommandRequest::new(
                 "adb",
-                vec![
-                    "pair".to_owned(),
-                    "phone.local:37000".to_owned(),
-                    "temporary-secret".to_owned(),
-                ],
-            ),
+                vec!["pair".to_owned(), "phone.local:37000".to_owned()],
+            )
+            .with_stdin(Zeroizing::new("temporary-secret\n".to_owned())),
             &CancellationToken::new(),
         )
         .expect("fake ADB command");
@@ -58,7 +58,11 @@ fn adb_runner_uses_separated_arguments_and_discards_output() {
     assert!(output.succeeded);
     assert_eq!(
         fs::read_to_string(arguments_file).expect("recorded arguments"),
-        "pair\nphone.local:37000\ntemporary-secret\n"
+        "pair\nphone.local:37000\n"
+    );
+    assert_eq!(
+        fs::read_to_string(stdin_file).expect("recorded standard input"),
+        "temporary-secret\n"
     );
 }
 
@@ -185,6 +189,21 @@ fn avahi_timeout_cancellation_and_malformed_output_are_bounded() {
     );
     let mut discovery =
         AvahiDiscovery::new(malformed, Duration::from_secs(1), Duration::from_millis(2));
+    assert!(matches!(
+        discovery.find_pairing_endpoint("requested", &CancellationToken::new()),
+        Err(DiscoveryFailure::NetworkUnavailable)
+    ));
+
+    let out_of_range_escape = executable(
+        directory.path(),
+        "out-of-range-avahi",
+        r#"printf '%s\n' '=;wlan0;IPv4;requested\999;_adb-tls-pairing._tcp;local;phone.local;192.0.2.40;39000;'"#,
+    );
+    let mut discovery = AvahiDiscovery::new(
+        out_of_range_escape,
+        Duration::from_secs(1),
+        Duration::from_millis(2),
+    );
     assert!(matches!(
         discovery.find_pairing_endpoint("requested", &CancellationToken::new()),
         Err(DiscoveryFailure::NetworkUnavailable)

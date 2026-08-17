@@ -149,7 +149,7 @@ assert_timeout_process_stopped() {
   fi
 }
 
-assert_timeout_result_not_accepted() {
+assert_timeout_result_consumed() {
   local ipc_app ipc_method ipc_action ipc_argument logged_request_id ipc_deadline
   local timeout_request_id=
   while IFS='|' read -r \
@@ -158,12 +158,8 @@ assert_timeout_result_not_accepted() {
   done <"$FAKE_IPC_ARGUMENT_LOG"
 
   local result_path="$XDG_RUNTIME_DIR/omarchy-android/action-results/$timeout_request_id"
-  local result=
-  if [[ -f "$result_path" ]]; then
-    IFS= read -r result <"$result_path" || true
-  fi
-  if [[ "$result" != "true" ]]; then
-    printf 'timed IPC result was consumed or did not correlate with its request\n' >&2
+  if [[ -e "$result_path" ]]; then
+    printf 'accepted timed IPC result was not consumed\n' >&2
     exit 1
   fi
 }
@@ -177,13 +173,8 @@ assert_hard_timeout_bound() {
     exit 1
   fi
 
-  local fallback_at_ms=
-  if [[ -s "$FAKE_TIMEOUT_FALLBACK_AT_FILE" ]]; then
-    read -r fallback_at_ms <"$FAKE_TIMEOUT_FALLBACK_AT_FILE"
-  fi
-  if [[ ! "$fallback_at_ms" =~ ^[0-9]+$ ]] \
-    || ((fallback_at_ms < started_at_ms + 2500 || fallback_at_ms > finished_at_ms)); then
-    printf 'fallback did not run after the hard IPC timeout\n' >&2
+  if [[ -e "$FAKE_TIMEOUT_FALLBACK_AT_FILE" ]]; then
+    printf 'accepted timed IPC unexpectedly ran desktop fallback\n' >&2
     exit 1
   fi
   if [[ -e "$FAKE_TIMEOUT_LATE_CONTINUATION_LOG" ]]; then
@@ -208,41 +199,41 @@ assert_ipc_count 1
 
 FAKE_ACCEPT_RESULT=true FAKE_FINAL_RESULT=false \
   "$dispatcher" omarchy-browser '' fallback
-assert_fallback_count 1
+assert_fallback_count 0
 
 FAKE_ACCEPT_RESULT=true FAKE_FINAL_RESULT=unexpected \
   "$dispatcher" omarchy-browser '' fallback
-assert_fallback_count 2
+assert_fallback_count 0
 
 FAKE_ACCEPT_RESULT=false "$dispatcher" omarchy-browser '' fallback
-assert_fallback_count 3
+assert_fallback_count 1
 
 FAKE_ACCEPT_RESULT=true FAKE_ACTION_STATUS=1 \
   "$dispatcher" omarchy-browser '' fallback
-assert_fallback_count 4
+assert_fallback_count 1
 
 FAKE_ACCEPT_RESULT=true "$dispatcher" omarchy-browser '' fallback
-assert_fallback_count 5
+assert_fallback_count 1
 
 timeout_started_at_ms="$(date +%s%3N)"
 FAKE_IPC_TIMEOUT=true FAKE_ACCEPT_RESULT=true FAKE_FINAL_RESULT=true \
   "$dispatcher" omarchy-browser '' fallback
 timeout_finished_at_ms="$(date +%s%3N)"
-assert_fallback_count 6
+assert_fallback_count 1
 assert_ipc_count 7
 assert_hard_timeout_bound "$timeout_started_at_ms" "$timeout_finished_at_ms"
 assert_timeout_process_stopped
-assert_timeout_result_not_accepted
+assert_timeout_result_consumed
 assert_hard_ipc_wrapper
 
 FAKE_ACCEPT_RESULT=true FAKE_FINAL_RESULT=true \
   "$dispatcher" android-launch-app com.example.notes fallback
-assert_fallback_count 6
+assert_fallback_count 1
 assert_ipc_count 8
 
 if "$dispatcher" omarchy-browser '' 2>/dev/null; then
   printf 'dispatcher accepted a missing fallback\n' >&2
   exit 1
 fi
-assert_fallback_count 6
+assert_fallback_count 1
 assert_ipc_count 8

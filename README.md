@@ -48,13 +48,15 @@ action profiles are not inferred.
 Settings exposes two global controls. **Android-mode shortcuts** is the master
 switch and defaults off. When it is enabled under the complete focused-phone
 predicate, every route configured in `omarchy-android.lua` invokes only its
-Android action and bypasses compositor shortcut inhibition. **Command
-passthrough** controls unconfigured bindings: when off, the focused panel
-inhibits them; when on, they continue to their normal Omarchy actions. Closing
-the panel, opening Settings, or losing phone focus releases that inhibition.
-Configured Android routes never fall back to the corresponding desktop action.
-Turning the master switch off restores normal desktop handling. Both controls
-update before the next dispatch, persist privately as global preferences,
+Android action and bypasses compositor shortcut inhibition. If that predicate
+is not satisfied, the original Omarchy action runs normally. Once QML accepts
+an Android action, Android owns the attempt and a later rejection, timeout, or
+unhandled result does not duplicate it on the desktop. **Command passthrough**
+controls unconfigured bindings: when off, the focused panel inhibits them;
+when on, they continue to their normal Omarchy actions. Closing the panel,
+opening Settings, losing phone focus, or turning the master switch off restores
+normal desktop handling.
+Both controls update before the next dispatch, persist privately as global preferences,
 survive **Start over**, and do not disable quick actions, pointer input, named
 key input, or text input.
 
@@ -118,7 +120,7 @@ run the following only when those changes are acceptable:
 ```bash
 omarchy pkg add android-tools avahi scrcpy qt6-multimedia v4l2loopback-dkms
 sudo systemctl enable --now avahi-daemon.service
-sudo modprobe v4l2loopback devices=1 video_nr=42 card_label=\"Omarchy Android\" exclusive_caps=1
+sudo modprobe v4l2loopback devices=1 video_nr=42 card_label="Omarchy Android" exclusive_caps=1
 ```
 
 The module load lasts until reboot. Persisting it requires a deliberate local
@@ -146,10 +148,10 @@ From the repository root:
 ```bash
 cargo build --release --manifest-path helper/Cargo.toml
 install -Dm755 helper/target/release/omarchy-android-helper \
-  \"$HOME/.local/bin/omarchy-android-helper\"
+  "$HOME/.local/bin/omarchy-android-helper"
 install -Dm755 scripts/omarchy-android-action \
   "$HOME/.local/bin/omarchy-android-action"
-mkdir -p \"$HOME/.config/omarchy/plugins\"
+mkdir -p "$HOME/.config/omarchy/plugins"
 ln -s "$PWD" "$HOME/.config/omarchy/plugins/ollie.android"
 omarchy-shell shell rescanPlugins
 omarchy plugin enable ollie.android
@@ -220,10 +222,10 @@ configuration with a precise error.
 Custom bindings are registered only in the second phase, after normal bindings,
 so collision handling remains Omarchy's. They have no desktop fallback because
 no pre-existing desktop action owns them.
-The routed global panel toggle automatically gains Hyprland's `dont_inhibit`
-option without mutating caller-owned binding options. Other routed actions keep
-their original options and remain suppressible while raw shortcut inhibition is
-active.
+Every configured route and the routed global panel toggle automatically gain
+Hyprland's `dont_inhibit` option without mutating caller-owned binding options.
+Unconfigured routes retain their original options and remain subject to raw
+shortcut inhibition.
 
 The bundled semantic action matrix uses schema version 3; the version bump adds
 the structured `android-launch-app` result rather than silently extending
@@ -269,11 +271,13 @@ labels, shell strings, or binding files.
 The global **Android-mode shortcuts** Settings switch remains the master
 control and defaults off. While enabled, a ready, visible, input-enabled phone
 preview must own keyboard focus before a focused-phone route can run. Protocol
-v9 carries the correlated request ID, absolute expiry, and optional validated
-action argument. IPC is bounded to 3 seconds; semantic ADB work is capped at
-750 ms and is killed and reaped before desktop fallback. Close routing also has
-a 7-second outer guard. Android rejection, disconnect, timeout, protocol
-mismatch, or an unhandled action invokes the original fallback exactly once.
+v10 carries the correlated request ID, absolute expiry, and validated action
+argument. IPC is bounded to 3 seconds and semantic ADB work is capped at 750 ms.
+If QML refuses the request before dispatch because the routing predicate is not
+satisfied, the original Omarchy action runs once. After QML accepts the request,
+the dispatcher consumes the correlated result and never runs desktop fallback,
+including after rejection, disconnect, timeout, mismatch, or an unhandled
+Android result.
 
 Hyprland watches modules loaded through its wrapped `require`, so saving
 `~/.config/hypr/omarchy-android.lua` automatically reloads the complete
@@ -287,8 +291,8 @@ Disable the widget before removing files:
 
 ```bash
 omarchy plugin disable ollie.android
-rm \"$HOME/.config/omarchy/plugins/ollie.android\"
-rm -f \"$HOME/.local/bin/omarchy-android-helper\"
+rm "$HOME/.config/omarchy/plugins/ollie.android"
+rm -f "$HOME/.local/bin/omarchy-android-helper"
 rm -f "$HOME/.local/bin/omarchy-android-action"
 ```
 

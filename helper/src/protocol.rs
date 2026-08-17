@@ -30,6 +30,11 @@ pub struct QrPresentation {
 pub trait PairingBackend {
     fn start_qr_pairing(&mut self) -> Result<QrPresentation, FailureReason>;
     fn cancel_pairing(&mut self);
+
+    fn shutdown(&mut self) {
+        self.cancel_pairing();
+        self.stop_session();
+    }
     fn submit_manual_code(&mut self, code: &str) -> Result<(), FailureReason>;
 
     fn has_trusted_device(&self) -> bool {
@@ -165,6 +170,14 @@ impl<B: PairingBackend> ProtocolEngine<B> {
             }
             Command::SubmitManualCode { code } => {
                 let code = Zeroizing::new(code);
+                if code.len() != 6 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return vec![
+                        Event::ProtocolError {
+                            reason: ProtocolErrorReason::InvalidCommand,
+                        }
+                        .to_line(),
+                    ];
+                }
                 let mut events = vec![
                     Event::Pairing {
                         method: PairingMethod::ManualCode,

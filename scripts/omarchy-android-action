@@ -34,8 +34,8 @@ fi
 now_unix_ms="$(date +%s%3N)"
 expires_at_unix_ms=$((now_unix_ms + 2000))
 
-if response="$(/usr/bin/timeout --signal=KILL 3 omarchy-shell ollie.android action "$action_id" "$action_argument" "$request_id" "$expires_at_unix_ms" 2>/dev/null)" \
-  && [[ "$response" == "true" ]]; then
+response="$(/usr/bin/timeout --signal=KILL 3 omarchy-shell ollie.android action "$action_id" "$action_argument" "$request_id" "$expires_at_unix_ms" 2>/dev/null)"
+if [[ "$response" == "true" ]]; then
   for ((attempt = 0; attempt < poll_attempts; ++attempt)); do
     if [[ -f "$result_path" ]]; then
       final_result=
@@ -48,6 +48,7 @@ if response="$(/usr/bin/timeout --signal=KILL 3 omarchy-shell ollie.android acti
     fi
     sleep 0.05
   done
+  exit 0
 fi
 
 exec "$@"

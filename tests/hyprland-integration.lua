@@ -148,12 +148,15 @@ o.bind("SUPER + RETURN", "Terminal", terminal)
 assert(o.bind == installed_bind, "loader must remain active for later user bindings")
 
 assert(#calls == 11, "each binding must be registered exactly once")
-assert(type(calls[1].dispatcher) == "string")
-assert(calls[1].dispatcher:match("omarchy%-android%-action' android%-home '' /usr/bin/true$"))
-assert(type(calls[2].dispatcher) == "string")
-assert(calls[2].dispatcher == calls[1].dispatcher)
-assert(type(calls[3].dispatcher) == "string")
-assert(calls[3].dispatcher == calls[1].dispatcher)
+assert(type(calls[1].dispatcher) == "function")
+assert(calls[1].dispatcher ~= stock_close, "stock close must be wrapped")
+assert(type(calls[2].dispatcher) == "function")
+assert(calls[2].dispatcher ~= custom_close, "custom close must be wrapped")
+assert(type(calls[3].dispatcher) == "function")
+assert(calls[3].dispatcher ~= nil_description_close, "nil-description close must be wrapped")
+assert(calls[1].dispatcher ~= calls[2].dispatcher, "each close must retain its own fallback")
+assert(calls[1].dispatcher ~= calls[3].dispatcher, "each close must be wrapped independently")
+assert(calls[2].dispatcher ~= calls[3].dispatcher, "each close must be wrapped independently")
 assert(calls[1].options ~= close_options, "close route options must be copied")
 assert(calls[1].options.locked == true, "close route options must be preserved")
 assert(calls[1].options.dont_inhibit == true, "configured close must bypass inhibition")
@@ -184,7 +187,7 @@ assert(calls[8].options.dont_inhibit == true, "nil panel options must gain inhib
 assert(calls[9].keys == "SUPER + SHIFT + B")
 assert(calls[9].description == "Browser / Android default browser")
 assert(type(calls[9].dispatcher) == "string")
-assert(calls[9].dispatcher:match("omarchy%-android%-action' omarchy%-browser '' /usr/bin/true$"))
+assert(calls[9].dispatcher:match("omarchy%-android%-action' omarchy%-browser '' omarchy%-launch%-browser$"))
 assert(calls[9].options ~= browser_options, "Android route options must be copied")
 assert(calls[9].options.locked == true, "Android route options must be preserved")
 assert(calls[9].options.dont_inhibit == true, "configured Android routes must bypass inhibition")
@@ -194,6 +197,51 @@ assert(calls[11].dispatcher == terminal, "unsupported bindings must remain untou
 assert(#executed_commands == 0, "panel bindings must not launch asynchronous commands")
 assert(#timers == 0, "panel bindings must not start asynchronous timers")
 
+local marker = "/tmp/omarchy-android-fallback-1700000000-1"
+local function marker_exists()
+  local file = io.open(marker, "r")
+  if file == nil then
+    return false
+  end
+  file:close()
+  return true
+end
+
+local function write_marker()
+  local file = assert(io.open(marker, "w"))
+  file:close()
+end
+
+write_marker()
+calls[1].dispatcher()
+
+assert(#executed_commands == 1, "close must launch one semantic action")
+local expected_close_command = table.concat({
+  "/usr/bin/timeout --signal=KILL 7",
+  "'/home/test/.local/bin/omarchy-android-action'",
+  "android-home",
+  "''",
+  "/usr/bin/touch",
+  "'" .. marker .. "'",
+  "|| true",
+}, " ")
+assert(
+  executed_commands[1] == expected_close_command,
+  "close must bound the dispatcher without converting ambiguous timeout into fallback"
+)
+assert(not marker_exists(), "stale fallback marker must be removed before launch")
+assert(#dispatches == 0, "fallback must not run while the semantic action is pending")
+assert(#timers == 1, "close must start one fallback watcher")
+
+timers[1].callback()
+assert(#dispatches == 0, "missing marker must not dispatch the fallback")
+
+write_marker()
+timers[1].callback()
+assert(#dispatches == 1, "ineligible route must dispatch fallback exactly once")
+assert(dispatches[1] == stock_close, "fallback must dispatch the exact original close dispatcher")
+assert(not marker_exists(), "handled fallback marker must be removed")
+assert(not timers[1].enabled, "fallback watcher must disable itself after dispatch")
 
 os.getenv = original_getenv
 os.time = original_time

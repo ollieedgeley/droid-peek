@@ -17,6 +17,7 @@ local catalog = dofile(integration_directory .. "/action-catalog.lua")
 
 state = state or {}
 state.close_dispatchers = state.close_dispatchers or setmetatable({}, { __mode = "k" })
+state.fallback_counter = state.fallback_counter or 0
 state.bindings_seen = 0
 state.custom_bindings_installed = false
 o.omarchy_android_hyprland = state
@@ -172,12 +173,12 @@ local function configure(configuration)
   state.custom_bindings = custom_bindings
 end
 
-local function semantic_command(target)
+local function semantic_command(target, fallback)
   return table.concat({
     dispatcher,
     target.action_id,
     o.shell_quote(target.argument),
-    "/usr/bin/true",
+    fallback,
   }, " ")
 end
 local function routed_description(description, target)
@@ -194,6 +195,67 @@ local function routed_options(options)
   end
   result.dont_inhibit = true
   return result
+end
+
+local function close_with_android(target, fallback)
+  return function()
+    local runtime_directory = os.getenv("XDG_RUNTIME_DIR")
+    if runtime_directory == nil or runtime_directory == "" then
+      hl.dispatch(fallback)
+      return
+    end
+
+    state.fallback_counter = state.fallback_counter + 1
+    local marker = runtime_directory
+      .. "/omarchy-android-fallback-"
+      .. os.time()
+      .. "-"
+      .. state.fallback_counter
+    os.remove(marker)
+
+    local finished = false
+    local polls = 0
+    local watcher
+    local function finish(dispatch_fallback)
+      if finished then
+        return
+      end
+      finished = true
+      os.remove(marker)
+      if watcher ~= nil then
+        watcher:set_enabled(false)
+      end
+      if dispatch_fallback then
+        hl.dispatch(fallback)
+      end
+    end
+
+    watcher = hl.timer(function()
+      if finished then
+        return
+      end
+      local fallback_marker = io.open(marker, "r")
+      if fallback_marker ~= nil then
+        fallback_marker:close()
+        finish(true)
+        return
+      end
+      polls = polls + 1
+      if polls >= 160 then
+        finish(false)
+      end
+    end, { timeout = 50, type = "repeat" })
+
+    local command = table.concat({
+      "/usr/bin/timeout --signal=KILL 7",
+      semantic_command(target, "/usr/bin/touch " .. o.shell_quote(marker)),
+      "|| true",
+    }, " ")
+    local launched = pcall(hl.exec_cmd, command)
+    if not launched then
+      finish(true)
+    end
+  end
 end
 
 
@@ -216,7 +278,7 @@ local function bind_with_android(keys, description, binding, options)
     return original_bind(
       keys,
       routed_description(description, target),
-      semantic_command(target),
+      close_with_android(target, binding),
       routed_options(options)
     )
   end
@@ -245,7 +307,7 @@ local function bind_with_android(keys, description, binding, options)
   return original_bind(
     keys,
     routed_description(description, target),
-    semantic_command(target),
+    semantic_command(target, "omarchy-launch-" .. value),
     routed_options(options)
   )
 end
@@ -257,7 +319,8 @@ local function install_custom_bindings()
   state.custom_bindings_installed = true
   for _, binding in ipairs(state.custom_bindings) do
     local target = binding.target
-    local command = target.direct_command or semantic_command(target)
+    local command = target.direct_command
+      or semantic_command(target, "/usr/bin/true")
     original_bind(
       binding.keys,
       binding.description or target.label,

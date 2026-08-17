@@ -11,6 +11,7 @@ use omarchy_android_helper::runtime::AcceptanceEventWriter;
 #[derive(Default)]
 struct FakePairingBackend {
     manual_codes: Vec<String>,
+    pairing_cancels: usize,
     reconnects: usize,
     session_stops: usize,
     start_overs: usize,
@@ -33,7 +34,9 @@ impl PairingBackend for FakePairingBackend {
         })
     }
 
-    fn cancel_pairing(&mut self) {}
+    fn cancel_pairing(&mut self) {
+        self.pairing_cancels += 1;
+    }
 
     fn submit_manual_code(&mut self, code: &str) -> Result<(), FailureReason> {
         self.manual_codes.push(code.to_owned());
@@ -117,6 +120,17 @@ impl PairingBackend for FakePairingBackend {
 }
 
 #[test]
+fn backend_shutdown_cancels_pairing_and_session_work() {
+    let engine = ProtocolEngine::new(FakePairingBackend::default());
+    let mut backend = engine.into_backend();
+
+    backend.shutdown();
+
+    assert_eq!(backend.pairing_cancels, 1);
+    assert_eq!(backend.session_stops, 1);
+}
+
+#[test]
 fn protocol_version_ten_ready_event_exposes_shortcut_preferences() {
     assert_eq!(PROTOCOL_VERSION, 10);
     assert_eq!(
@@ -190,6 +204,27 @@ fn manual_code_is_consumed_without_appearing_in_events() {
 
     let backend = engine.into_backend();
     assert_eq!(backend.manual_codes, [code]);
+}
+
+#[test]
+fn manual_code_rejects_non_six_digit_values_before_the_backend() {
+    let expected = [format!(
+        r#"{{"version":{PROTOCOL_VERSION},"type":"protocol-error","reason":"invalid-command"}}"#
+    )];
+
+    for code in ["", "12345", "1234567", "12345a", "１２３４５６"] {
+        let mut engine = ProtocolEngine::new(FakePairingBackend::default());
+        assert_eq!(
+            engine.handle_line(&format!(
+                r#"{{"version":10,"type":"submit-manual-code","code":"{code}"}}"#
+            )),
+            expected
+        );
+        assert!(
+            engine.into_backend().manual_codes.is_empty(),
+            "invalid manual code reached the pairing backend"
+        );
+    }
 }
 
 #[test]

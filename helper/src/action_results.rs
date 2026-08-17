@@ -1,7 +1,8 @@
+use crate::private_fs::ensure_private_directory;
 use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
 
@@ -15,9 +16,10 @@ pub struct ActionResultStore {
 
 impl ActionResultStore {
     pub fn new(runtime_directory: impl AsRef<Path>) -> io::Result<Self> {
-        let directory = runtime_directory.as_ref().join(RESULT_DIRECTORY);
-        fs::create_dir_all(&directory)?;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        let runtime_directory = runtime_directory.as_ref();
+        ensure_private_directory(runtime_directory)?;
+        let directory = runtime_directory.join(RESULT_DIRECTORY);
+        ensure_private_directory(&directory)?;
 
         for entry in fs::read_dir(&directory)? {
             let entry = entry?;

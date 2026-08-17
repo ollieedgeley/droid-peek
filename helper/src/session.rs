@@ -189,19 +189,6 @@ where
     }
 }
 
-pub struct UnavailableSessionRunner;
-
-impl SessionRunner for UnavailableSessionRunner {
-    fn run(
-        &mut self,
-        _target: &str,
-        _cancellation: &CancellationToken,
-        _on_started: &mut dyn FnMut(Option<PhysicalDisplaySize>),
-    ) -> Result<SessionExit, SessionFailure> {
-        Err(SessionFailure::DependencyUnavailable)
-    }
-}
-
 pub struct ScrcpySessionRunner {
     executable: PathBuf,
     v4l2_sink: PathBuf,

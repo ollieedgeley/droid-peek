@@ -125,6 +125,9 @@ fn adb_adapter_maps_keys_and_quotes_remote_shell_text() {
     adapter
         .text("device.local:38100", "safe'; echo no")
         .expect("quoted text succeeds");
+    adapter
+        .text("device.local:38100", "100%sure")
+        .expect("literal percent-s text succeeds");
 
     assert_eq!(
         runner.requests[0].arguments(),
@@ -168,6 +171,28 @@ fn adb_adapter_maps_keys_and_quotes_remote_shell_text() {
             "input",
             "text",
             "'safe'\\'';%secho%sno'"
+        ]
+    );
+    assert_eq!(
+        runner.requests[4].arguments(),
+        [
+            "-s",
+            "device.local:38100",
+            "shell",
+            "input",
+            "text",
+            "'100%'"
+        ]
+    );
+    assert_eq!(
+        runner.requests[5].arguments(),
+        [
+            "-s",
+            "device.local:38100",
+            "shell",
+            "input",
+            "text",
+            "'sure'"
         ]
     );
 }

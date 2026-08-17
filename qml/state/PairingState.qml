@@ -75,11 +75,13 @@ QtObject {
     }
 
     function submitManualCode(code) {
-        if (String(code).trim() === "") {
-            statusDescription = "Enter the pairing code shown by Android."
-            return
+        var submittedCode = String(code)
+        if (!/^[0-9]{6}$/.test(submittedCode)) {
+            statusDescription = "Enter the six-digit pairing code shown by Android."
+            return false
         }
-        sendCommand({ type: "submit-manual-code", code: String(code) })
+        sendCommand({ type: "submit-manual-code", code: submittedCode })
+        return true
     }
 
     function cancelPairing() {

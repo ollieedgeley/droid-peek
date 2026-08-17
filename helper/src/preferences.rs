@@ -1,11 +1,10 @@
 use std::{
     fs,
-    fs::OpenOptions,
     io::{self, Write},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
+use crate::private_fs::atomic_replace;
 use serde::{Deserialize, Serialize};
 
 const PREFERENCES_VERSION: u8 = 5;
@@ -186,22 +185,11 @@ impl FilePreferenceStore {
     }
 
     pub fn save(&self, preferences: &Preferences) -> io::Result<()> {
-        fs::create_dir_all(&self.directory)?;
-        fs::set_permissions(&self.directory, fs::Permissions::from_mode(0o700))?;
-
-        let temporary_path = self.directory.join(".preferences.json.tmp");
-        let mut temporary = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&temporary_path)?;
-        temporary.set_permissions(fs::Permissions::from_mode(0o600))?;
-        serde_json::to_writer(&mut temporary, &StoredPreferences::from(*preferences))
-            .map_err(io::Error::other)?;
-        temporary.write_all(b"\n")?;
-        temporary.sync_all()?;
-        fs::rename(temporary_path, self.path())
+        atomic_replace(&self.path(), |temporary| {
+            serde_json::to_writer(&mut *temporary, &StoredPreferences::from(*preferences))
+                .map_err(io::Error::other)?;
+            temporary.write_all(b"\n")
+        })
     }
 }
 

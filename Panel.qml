@@ -101,8 +101,8 @@ Panel {
         if (pairingState.pairingStage !== "manual-code")
             return;
         var code = manualCode.text;
-        manualCode.text = "";
-        pairingState.submitManualCode(code);
+        if (pairingState.submitManualCode(code))
+            manualCode.text = "";
     }
 
     function finishHelperShutdown() {
@@ -376,6 +376,7 @@ Panel {
                     visible: pairingState.pairingStage === "manual-code"
                     placeholderText: "Pairing code"
                     inputMethodHints: Qt.ImhDigitsOnly
+                    maximumLength: 6
                     onAccepted: root.activatePrimary()
                 }
 

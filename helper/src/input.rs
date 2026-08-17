@@ -132,6 +132,19 @@ impl<'a> AdbInputAdapter<'a> {
     }
 
     pub fn text(&mut self, target: &str, text: &str) -> Result<(), InputFailure> {
+        let mut remainder = text;
+        while let Some(index) = remainder.find("%s") {
+            let split = index + 1;
+            self.run_text_fragment(target, &remainder[..split])?;
+            remainder = &remainder[split..];
+        }
+        if !remainder.is_empty() || text.is_empty() {
+            self.run_text_fragment(target, remainder)?;
+        }
+        Ok(())
+    }
+
+    fn run_text_fragment(&mut self, target: &str, text: &str) -> Result<(), InputFailure> {
         let encoded = text.replace(' ', "%s");
         let quoted = format!("'{}'", encoded.replace('\'', "'\\''"));
         self.run(target, ["text".to_owned(), quoted])

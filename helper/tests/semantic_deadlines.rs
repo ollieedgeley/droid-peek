@@ -11,6 +11,7 @@ use std::{
 
 use omarchy_android_helper::{
     actions::SemanticAction,
+    input::{AndroidKey, DisplayGeometry, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
     process::{CancellationToken, CommandFailure, CommandOutput, CommandRequest, CommandRunner},
     protocol::{Event, PairingBackend},
@@ -84,6 +85,53 @@ impl CommandRunner for SlowActionRunner {
             }
             thread::sleep(Duration::from_millis(2));
         }
+    }
+}
+
+#[derive(Clone)]
+struct SlowInputRunner {
+    calls: Arc<AtomicUsize>,
+    cancelled_calls: Arc<AtomicUsize>,
+}
+
+impl CommandRunner for SlowInputRunner {
+    fn run(
+        &mut self,
+        request: CommandRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<CommandOutput, CommandFailure> {
+        let call = self.calls.fetch_add(1, Ordering::AcqRel);
+        if call == 0 {
+            assert_eq!(request.arguments()[0], "connect");
+            return Ok(CommandOutput { succeeded: true });
+        }
+        if request
+            .arguments()
+            .iter()
+            .any(|argument| argument == "swipe")
+        {
+            let completes_at = Instant::now() + Duration::from_millis(1_000);
+            while Instant::now() < completes_at {
+                if cancellation.is_cancelled() {
+                    return Err(CommandFailure::Cancelled);
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+            return Ok(CommandOutput { succeeded: true });
+        }
+
+        assert!(
+            request
+                .arguments()
+                .iter()
+                .any(|argument| { argument == "keyevent" || argument == "disconnect" }),
+            "unexpected synchronous command"
+        );
+        while !cancellation.is_cancelled() {
+            thread::sleep(Duration::from_millis(2));
+        }
+        self.cancelled_calls.fetch_add(1, Ordering::AcqRel);
+        Err(CommandFailure::Cancelled)
     }
 }
 
@@ -258,5 +306,74 @@ fn runtime_rejects_expired_actions_and_consumes_slow_accepted_actions() {
     );
 
     backend.stop_session();
+    assert!(session_stopped.load(Ordering::Acquire));
+}
+
+#[test]
+fn runtime_bounds_input_and_start_over_disconnect_commands() {
+    let directory = tempfile::tempdir().expect("temporary runtime");
+    let runtime_directory = directory.path().join("runtime");
+    let state_directory = directory.path().join("state");
+    FileTrustedDeviceStore::new(&state_directory)
+        .save(&TrustedDevice::new("adb-14141FD6F00081-TnSdi9").expect("trusted device"))
+        .expect("seed trusted-device state");
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let cancelled_calls = Arc::new(AtomicUsize::new(0));
+    let session_stopped = Arc::new(AtomicBool::new(false));
+    let sink = MemorySink::default();
+    let mut backend = RuntimePairingBackend::with_adapters_store_and_session(
+        &runtime_directory,
+        &state_directory,
+        Duration::from_secs(1),
+        sink.clone(),
+        TrustedDiscovery {
+            endpoint: PairingEndpoint::new("192.168.50.4", 37_123).expect("connection endpoint"),
+        },
+        SlowInputRunner {
+            calls: Arc::clone(&calls),
+            cancelled_calls: Arc::clone(&cancelled_calls),
+        },
+        BlockingSession {
+            stopped: Arc::clone(&session_stopped),
+        },
+    )
+    .expect("runtime backend");
+
+    backend
+        .reconnect_trusted_device()
+        .expect("queue trusted reconnect");
+    backend.response_emitted();
+    sink.wait_for(
+        &Event::SessionStarted {
+            physical_width_mm: None,
+            physical_height_mm: None,
+        }
+        .to_line(),
+    );
+
+    let swipe_started = Instant::now();
+    backend
+        .pointer_swipe(
+            DisplayGeometry::new(1080, 2400).expect("display geometry"),
+            NormalizedPoint::new(0.2, 0.2).expect("swipe start"),
+            NormalizedPoint::new(0.8, 0.8).expect("swipe end"),
+            1_000,
+        )
+        .expect("long swipe remains within its duration-aware deadline");
+    assert!(swipe_started.elapsed() >= Duration::from_millis(900));
+
+    let input_started = Instant::now();
+    assert_eq!(
+        backend.key_input(AndroidKey::Back),
+        Err(omarchy_android_helper::protocol::FailureReason::Disconnected)
+    );
+    assert!(input_started.elapsed() < Duration::from_millis(1_500));
+
+    let start_over_started = Instant::now();
+    backend.start_over().expect("start over completes");
+    assert!(start_over_started.elapsed() < Duration::from_millis(1_500));
+    assert_eq!(calls.load(Ordering::Acquire), 4);
+    assert_eq!(cancelled_calls.load(Ordering::Acquire), 2);
     assert!(session_stopped.load(Ordering::Acquire));
 }

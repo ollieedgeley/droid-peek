@@ -115,13 +115,15 @@ fn pairs_and_connects_only_the_requested_qr_service() {
     assert_eq!(runner.requests[0].program(), "adb");
     assert_eq!(
         runner.requests[0].arguments(),
-        ["pair", "pairing.local:37000", secret]
+        ["pair", "pairing.local:37000"]
     );
+    assert_eq!(runner.requests[0].stdin(), Some("temporary-qr-secret\n"));
     assert_eq!(runner.requests[1].program(), "adb");
     assert_eq!(
         runner.requests[1].arguments(),
         ["connect", "connect.local:38000"]
     );
+    assert_eq!(runner.requests[1].stdin(), None);
 }
 
 #[test]
@@ -330,5 +332,9 @@ fn active_qr_material_drives_the_flow_then_is_discarded() {
         .expect("ADB QR payload fields");
     let (discovery, runner) = flow.into_parts();
     assert_eq!(discovery.requested_services, [service]);
-    assert_eq!(runner.requests[0].arguments()[2], secret);
+    assert_eq!(runner.requests[0].arguments().len(), 2);
+    assert_eq!(
+        runner.requests[0].stdin(),
+        Some(format!("{secret}\n").as_str())
+    );
 }

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "qt-qml": {
+      "source": "theqtcompanyrnd/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/qt-qml/SKILL.md",
+      "computedHash": "b4f483457bf2deb250053ffe8cffe5727724792bcdca06180d4737184bee9dcb"
+    },
+    "rust-best-practices": {
+      "source": "apollographql/skills",
+      "sourceType": "github",
+      "skillPath": "skills/rust-best-practices/SKILL.md",
+      "computedHash": "0ac6606adb27e64a31bdc8c1ed34e446ae0c14bff1c7648867c46e106adc048f"
+    }
+  }
+}

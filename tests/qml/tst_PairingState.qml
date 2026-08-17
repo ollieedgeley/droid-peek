@@ -158,13 +158,25 @@ TestCase {
         compare(state.sessionState, "qr-waiting")
         compare(state.pairingStage, "manual-code")
 
-        state.submitManualCode("482913")
+        verify(state.submitManualCode("482913"))
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
         compare(command.version, 10)
         compare(command.type, "submit-manual-code")
         compare(command.code, "482913")
         compare(state.statusDescription.indexOf("482913"), -1)
+    }
+
+    function test_manual_code_rejects_invalid_values_without_leaving_the_flow() {
+        state.receiveLine(event("manual-code-required"))
+
+        var invalidCodes = ["", "12345", "1234567", "12345a", "１２３４５６"]
+        for (var index = 0; index < invalidCodes.length; ++index)
+            verify(!state.submitManualCode(invalidCodes[index]))
+
+        compare(commandSpy.count, 0)
+        compare(state.pairingStage, "manual-code")
+        compare(state.statusDescription, "Enter the six-digit pairing code shown by Android.")
     }
 
     function test_connected_phone_becomes_ready_only_after_session_starts() {

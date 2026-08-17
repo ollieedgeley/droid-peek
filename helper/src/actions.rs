@@ -346,112 +346,14 @@ fn validate_verification(verification: &ActionVerification) -> Result<(), Action
         .ok_or(ActionManifestError::InvalidVerification)
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct ActionProfile {
-    schema_version: u8,
-    overrides: Vec<ActionOverride>,
-}
-
-impl ActionProfile {
-    #[must_use]
-    pub const fn schema_version(&self) -> u8 {
-        self.schema_version
-    }
-}
-
-#[derive(Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct UncheckedActionProfile {
-    schema_version: u8,
-    overrides: Vec<ActionOverride>,
-}
-
-#[derive(Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ActionOverride {
-    action_id: String,
-    target_id: String,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ActionProfileError {
-    InvalidJson,
-    UnsupportedVersion,
-    DuplicateActionId,
-    LegacyActionId,
-    InvalidOverride,
-}
-
-pub fn parse_action_profile(input: &str) -> Result<ActionProfile, ActionProfileError> {
-    let version: VersionEnvelope =
-        serde_json::from_str(input).map_err(|_| ActionProfileError::InvalidJson)?;
-    if version.schema_version != ACTION_SCHEMA_VERSION {
-        return Err(ActionProfileError::UnsupportedVersion);
-    }
-
-    let unchecked: UncheckedActionProfile =
-        serde_json::from_str(input).map_err(|_| ActionProfileError::InvalidJson)?;
-    let mut action_ids = HashSet::with_capacity(unchecked.overrides.len());
-    for action_override in &unchecked.overrides {
-        if action_override.action_id == LEGACY_UNIVERSAL_SEARCH_ID {
-            return Err(ActionProfileError::LegacyActionId);
-        }
-        if action_override.action_id.is_empty() || action_override.target_id.is_empty() {
-            return Err(ActionProfileError::InvalidOverride);
-        }
-        if !action_ids.insert(action_override.action_id.as_str()) {
-            return Err(ActionProfileError::DuplicateActionId);
-        }
-    }
-    Ok(ActionProfile {
-        schema_version: unchecked.schema_version,
-        overrides: unchecked.overrides,
-    })
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ActionSource {
-    Default,
-    UserOverride,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ResolvedAction<'a> {
-    pub result: &'a ActionResult,
-    pub source: ActionSource,
-}
-
 #[must_use]
 pub fn resolve_action<'a>(
     manifest: &'a ActionManifest,
-    profile: Option<&ActionProfile>,
     action_id: &str,
-) -> Option<ResolvedAction<'a>> {
-    let action = manifest
+) -> Option<&'a ActionResult> {
+    manifest
         .actions
         .iter()
-        .find(|action| action.id == action_id)?;
-
-    if action.override_policy != ActionOverridePolicy::NotAllowed
-        && let Some(action_override) = profile.and_then(|profile| {
-            profile
-                .overrides
-                .iter()
-                .find(|action_override| action_override.action_id == action_id)
-        })
-        && let Some(target) = action
-            .override_targets
-            .iter()
-            .find(|target| target.id == action_override.target_id)
-    {
-        return Some(ResolvedAction {
-            result: &target.result,
-            source: ActionSource::UserOverride,
-        });
-    }
-
-    Some(ResolvedAction {
-        result: &action.result,
-        source: ActionSource::Default,
-    })
+        .find(|action| action.id == action_id)
+        .map(|action| &action.result)
 }

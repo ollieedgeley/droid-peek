@@ -8,6 +8,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use zeroize::Zeroizing;
 
 pub use crate::process::CancellationToken;
 
@@ -352,10 +353,10 @@ fn unescape_avahi(value: &str) -> Option<String> {
             {
                 return None;
             }
-            let escaped = (bytes[index + 1] - b'0') * 100
-                + (bytes[index + 2] - b'0') * 10
-                + (bytes[index + 3] - b'0');
-            decoded.push(char::from(escaped));
+            let escaped = u16::from(bytes[index + 1] - b'0') * 100
+                + u16::from(bytes[index + 2] - b'0') * 10
+                + u16::from(bytes[index + 3] - b'0');
+            decoded.push(char::from(u8::try_from(escaped).ok()?));
             index += 4;
         } else {
             let character = value[index..].chars().next()?;
@@ -701,14 +702,8 @@ fn command_failure(failure: CommandFailure) -> Event {
 }
 
 fn adb_pair_request(endpoint: &PairingEndpoint, pairing_code: &str) -> CommandRequest {
-    CommandRequest::new(
-        "adb",
-        vec![
-            "pair".to_owned(),
-            endpoint.adb_target(),
-            pairing_code.to_owned(),
-        ],
-    )
+    CommandRequest::new("adb", vec!["pair".to_owned(), endpoint.adb_target()])
+        .with_stdin(Zeroizing::new(format!("{pairing_code}\n")))
 }
 
 fn adb_connect_request(endpoint: &PairingEndpoint) -> CommandRequest {

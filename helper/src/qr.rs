@@ -48,7 +48,7 @@ pub struct QrSessionPresentation {
 struct ActiveSession<A> {
     _requested_service: Zeroizing<String>,
     _secret: Zeroizing<String>,
-    artifact: A,
+    _artifact: A,
     expires_at: Duration,
 }
 
@@ -111,7 +111,7 @@ where
         self.active = Some(ActiveSession {
             _requested_service: requested_service,
             _secret: secret,
-            artifact,
+            _artifact: artifact,
             expires_at,
         });
 
@@ -151,11 +151,6 @@ where
     #[must_use]
     pub fn has_active_session(&self) -> bool {
         self.active.is_some()
-    }
-
-    #[must_use]
-    pub fn artifact_path(&self) -> Option<&Path> {
-        self.active.as_ref().map(|session| session.artifact.path())
     }
 }
 

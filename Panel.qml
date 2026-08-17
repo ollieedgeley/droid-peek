@@ -92,8 +92,8 @@ Panel {
         startOverDialog.forceActiveFocus();
     }
 
-    function triggerSemanticAction(actionId) {
-        return semanticActionRouter.trigger(actionId);
+    function triggerSemanticAction(actionId, requestId) {
+        return semanticActionRouter.trigger(actionId, requestId);
     }
 
     function activatePrimary() {
@@ -164,9 +164,16 @@ Panel {
     SemanticActionRouter {
         id: semanticActionRouter
         sessionReady: pairingState.sessionState === "ready"
-        phoneFocused: root.opened && !root.settingsOpen && root.phonePreview !== null && root.phonePreview.inputFocused
+        panelOpen: root.opened
+        settingsOpen: root.settingsOpen
+        phoneVisible: root.phonePreview !== null && root.phonePreview.visible
+        phoneEnabled: root.phonePreview !== null && root.phonePreview.inputActive
+        phoneFocused: root.phonePreview !== null && root.phonePreview.inputFocused
         onKeyRequested: function (key) {
             pairingState.sendKeyInput(key);
+        }
+        onSemanticActionRequested: function (actionId, requestId) {
+            pairingState.sendSemanticAction(actionId, requestId);
         }
     }
 

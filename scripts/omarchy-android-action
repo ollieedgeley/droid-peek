@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -u
+
+if [[ $# -lt 2 ]]; then
+  printf 'usage: %s <semantic-action-id> <fallback> [args...]\n' "${0##*/}" >&2
+  exit 64
+fi
+
+action_id="$1"
+shift
+
+case "$action_id" in
+  omarchy-browser | omarchy-close-current-window) ;;
+  *)
+    printf 'unsupported semantic action: %s\n' "$action_id" >&2
+    exit 64
+    ;;
+esac
+
+request_id="${BASHPID}-${RANDOM}-${RANDOM}"
+runtime_root="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/omarchy-android"
+result_path="$runtime_root/action-results/$request_id"
+poll_attempts="${OMARCHY_ANDROID_ACTION_POLL_ATTEMPTS:-100}"
+if [[ ! "$poll_attempts" =~ ^[1-9][0-9]*$ ]]; then
+  poll_attempts=100
+fi
+
+if response="$(omarchy-shell ollie.android action "$action_id" "$request_id" 2>/dev/null)" \
+  && [[ "$response" == "true" ]]; then
+  for ((attempt = 0; attempt < poll_attempts; ++attempt)); do
+    if [[ -f "$result_path" ]]; then
+      final_result=
+      IFS= read -r final_result <"$result_path" || true
+      rm -f "$result_path"
+      if [[ "$final_result" == "true" ]]; then
+        exit 0
+      fi
+      break
+    fi
+    sleep 0.05
+  done
+fi
+
+exec "$@"

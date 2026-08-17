@@ -21,13 +21,13 @@ BarWidget {
         if (panel) panel.toggle()
     }
 
-    function runSemanticAction(actionId) {
+    function runSemanticAction(actionId, requestId) {
         if (actionId === "toggle-android-panel") {
             root.togglePanel()
             return true
         }
         if (root.panel && "triggerSemanticAction" in root.panel)
-            return root.panel.triggerSemanticAction(actionId)
+            return root.panel.triggerSemanticAction(actionId, requestId)
         return false
     }
 
@@ -63,7 +63,7 @@ BarWidget {
         function show() { root.open() }
         function hide() { root.close() }
         function toggle() { root.togglePanel() }
-        function action(actionId: string): bool { return root.runSemanticAction(actionId) }
+        function action(actionId: string, requestId: string): bool { return root.runSemanticAction(actionId, requestId) }
     }
 
     WidgetButton {

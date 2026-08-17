@@ -1,13 +1,15 @@
 use zeroize::Zeroizing;
 
 use crate::{
+    action_results::validate_request_id,
+    actions::SemanticAction,
     input::{AndroidKey, DisplayGeometry, NormalizedPoint},
     preferences::Preferences,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub const PROTOCOL_VERSION: u8 = 4;
+pub const PROTOCOL_VERSION: u8 = 6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -68,6 +70,14 @@ pub trait PairingBackend {
 
     fn text_input(&mut self, _text: &str) -> Result<(), FailureReason> {
         Err(FailureReason::Disconnected)
+    }
+
+    fn semantic_action(
+        &mut self,
+        _action: SemanticAction,
+        _request_id: &str,
+    ) -> Result<bool, FailureReason> {
+        Ok(false)
     }
 
     fn preferences(&self) -> Preferences {
@@ -219,6 +229,38 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                             .map_err(InputCommandFailure::Backend)
                     }),
             ),
+            Command::SemanticAction {
+                action_id,
+                request_id,
+            } => {
+                if validate_request_id(&request_id).is_err() {
+                    return vec![
+                        Event::ProtocolError {
+                            reason: ProtocolErrorReason::InvalidCommand,
+                        }
+                        .to_line(),
+                    ];
+                }
+                match self.backend.semantic_action(action_id, &request_id) {
+                    Ok(handled) => vec![
+                        Event::ActionResult {
+                            action_id,
+                            request_id,
+                            handled,
+                        }
+                        .to_line(),
+                    ],
+                    Err(reason) => vec![
+                        Event::ActionResult {
+                            action_id,
+                            request_id,
+                            handled: false,
+                        }
+                        .to_line(),
+                        Event::Failure { reason }.to_line(),
+                    ],
+                }
+            }
             Command::SetPreferences {
                 keep_connected,
                 preview_scale,
@@ -319,6 +361,12 @@ enum Command {
     TextInput {
         text: String,
     },
+    SemanticAction {
+        #[serde(rename = "actionId")]
+        action_id: SemanticAction,
+        #[serde(rename = "requestId")]
+        request_id: String,
+    },
     SetPreferences {
         #[serde(rename = "keepConnected")]
         keep_connected: bool,
@@ -397,6 +445,13 @@ pub enum Event {
     },
     Failure {
         reason: FailureReason,
+    },
+    ActionResult {
+        #[serde(rename = "actionId")]
+        action_id: SemanticAction,
+        #[serde(rename = "requestId")]
+        request_id: String,
+        handled: bool,
     },
     ProtocolError {
         reason: ProtocolErrorReason,

@@ -13,10 +13,14 @@ use std::{
 use zeroize::Zeroizing;
 
 use crate::{
+    action_results::ActionResultStore,
+    actions::{
+        ActionResult, AdbActionAdapter, SemanticAction, bundled_action_manifest, resolve_action,
+    },
     input::{AdbInputAdapter, AndroidKey, DisplayGeometry, InputFailure, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
     preferences::{FilePreferenceStore, Preferences},
-    process::{AdbCommandRunner, CancellationToken, CommandRequest, CommandRunner},
+    process::{AdbCommandRunner, CancellationToken, CommandFailure, CommandRequest, CommandRunner},
     protocol::{Event, FailureReason, PairingBackend, PairingMethod, QrPresentation},
     qr::{QrCeremony, RuntimeQrRenderer, SystemClock, SystemEntropy},
     session::{ScrcpySessionRunner, SessionExit, SessionFailure, SessionRunner},
@@ -153,6 +157,8 @@ pub struct RuntimePairingBackend<S> {
     preference_store: FilePreferenceStore,
     preferences: Preferences,
     trusted_device: Arc<Mutex<Option<TrustedDevice>>>,
+    action_manifest: crate::actions::ActionManifest,
+    action_results: ActionResultStore,
     pending_reconnect: Option<PendingReconnect>,
 }
 
@@ -270,6 +276,7 @@ where
         D: WirelessDiscovery + Send + 'static,
         R: CommandRunner + Send + 'static,
     {
+        let action_results = ActionResultStore::new(runtime_directory.as_ref())?;
         let ceremony = QrCeremony::new(
             SystemEntropy::new()?,
             SystemClock::new(),
@@ -280,6 +287,12 @@ where
         let trusted_device = store.load()?;
         let preference_store = FilePreferenceStore::new(&state_directory);
         let preferences = preference_store.load()?;
+        let action_manifest = bundled_action_manifest().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bundled action manifest is invalid",
+            )
+        })?;
         if let Some(runner) = session.as_mut() {
             runner.set_quality(preferences.video_quality);
         }
@@ -302,6 +315,8 @@ where
             preference_store,
             preferences,
             trusted_device: Arc::new(Mutex::new(trusted_device)),
+            action_manifest,
+            action_results,
             pending_reconnect: None,
         })
     }
@@ -337,6 +352,29 @@ where
         operation(&mut adapter, &target).map_err(|failure| match failure {
             InputFailure::DependencyUnavailable => FailureReason::DependencyUnavailable,
             InputFailure::Disconnected | InputFailure::Cancelled => FailureReason::Disconnected,
+        })
+    }
+
+    fn run_action(
+        &mut self,
+        operation: impl FnOnce(&mut AdbActionAdapter<'_>, &str) -> Result<bool, CommandFailure>,
+    ) -> Result<bool, FailureReason> {
+        let target = self
+            .active_target
+            .lock()
+            .map_err(|_| FailureReason::DependencyUnavailable)?
+            .clone()
+            .ok_or(FailureReason::Disconnected)?;
+        let mut flow = self
+            .flow
+            .lock()
+            .map_err(|_| FailureReason::DependencyUnavailable)?;
+        let mut adapter =
+            AdbActionAdapter::new(flow.runner_mut().as_mut(), &self.session_cancellation);
+        operation(&mut adapter, &target).map_err(|failure| match failure {
+            CommandFailure::DependencyUnavailable => FailureReason::DependencyUnavailable,
+            CommandFailure::Unauthorized => FailureReason::Unauthorized,
+            CommandFailure::Cancelled => FailureReason::Disconnected,
         })
     }
 
@@ -800,6 +838,38 @@ where
 
     fn text_input(&mut self, text: &str) -> Result<(), FailureReason> {
         self.run_input(|adapter, target| adapter.text(target, text))
+    }
+
+    fn semantic_action(
+        &mut self,
+        action: SemanticAction,
+        request_id: &str,
+    ) -> Result<bool, FailureReason> {
+        enum Execution {
+            Key(AndroidKey),
+            StandardBrowser,
+            Unhandled,
+        }
+
+        let execution = match resolve_action(&self.action_manifest, None, action.as_str())
+            .map(|resolved| resolved.result)
+        {
+            Some(ActionResult::KeyInput { key }) => Execution::Key(*key),
+            Some(ActionResult::StandardBrowserIntent {}) => Execution::StandardBrowser,
+            _ => Execution::Unhandled,
+        };
+
+        let result = match execution {
+            Execution::Key(key) => self.key_input(key).map(|()| true),
+            Execution::StandardBrowser => {
+                self.run_action(|adapter, target| adapter.open_standard_browser(target))
+            }
+            Execution::Unhandled => Ok(false),
+        };
+        self.action_results
+            .publish(request_id, result.as_ref().copied().unwrap_or(false))
+            .map_err(|_| FailureReason::DependencyUnavailable)?;
+        result
     }
 
     fn preferences(&self) -> Preferences {

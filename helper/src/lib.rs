@@ -3,6 +3,7 @@
 //! Process execution, mDNS discovery, persistence, and device input are added
 //! only after their Phase 0 contracts have explicit tests.
 
+pub mod action_results;
 pub mod actions;
 pub mod input;
 pub mod pairing;

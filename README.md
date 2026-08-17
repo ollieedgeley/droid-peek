@@ -30,6 +30,15 @@ sink path.
 Opening a ready panel, or reaching Ready after reconnection, automatically
 focuses this input surface so keyboard control works without an extra click.
 
+Focused semantic action routing uses the bundled Android 16 profile through the
+versioned helper protocol. **Close current window** maps to Android Home, and
+**Open browser** uses a package-free standard Android browser intent. An
+optional user-owned Hyprland loader wraps supported typed Omarchy browser
+declarations before defaults load; it preserves each declaration's original
+desktop fallback and never reads or rewrites binding files. Unavailable,
+removed, and unknown semantic IDs remain unhandled. The plugin does not infer
+desktop chords or add per-device action profiles.
+
 The ready view includes Back, Home, and recent-apps controls plus an inline
 Settings page. A chain-link toolbar button and the Settings toggle control the
 same persisted keep-connected value. Preview scale accepts 50% through 150%
@@ -46,16 +55,19 @@ Settings is keyboard navigable. Opening it focuses the Back control; Tab and
 Shift+Tab traverse its controls, while Escape closes an open selector or
 confirmation before returning from Settings to the focused phone view.
 
-Phase 0 is complete for the V1 Android 16 target. The development machine proved
-synthetic 360×640 playback at 30 fps and clean stop/restart behavior with
-`v4l2loopback` 0.15.4. A physical CPH2719 running OxygenOS 16 / Android 16 then
-proved real 1080×2392 QML playback, session and capture restart, pointer input,
-Back, Home, recent apps, and typed input. QR pairing, six-digit fallback, and
-cancel/retry had already passed on the same platform.
+The current Android 16 hardware baseline is proven on the supported surface.
+The development machine rendered synthetic 360×640 playback at 30 fps and
+recovered cleanly across stop/restart with `v4l2loopback` 0.15.4. A physical
+CPH2719 running OxygenOS 16 / Android 16 proved real 1080×2392 QML playback,
+session and capture restart, pointer input, Back, Home, recent apps, typed
+input, focused semantic routing, fail-closed desktop fallback, and lifecycle
+recovery. QR pairing, six-digit fallback, and cancel/retry had already passed
+on the same platform. This evidence completes the current compatibility slice,
+not the full V1 acceptance contract.
 
-Other Android versions are deferred until the application is complete and
-require explicit emulator and physical-device evidence before support is
-claimed. The project does not install or load system dependencies.
+Other Android versions remain unsupported until they receive explicit emulator
+and physical-device evidence. The project does not install or load system
+dependencies.
 
 ## Requirements
 
@@ -104,6 +116,8 @@ From the repository root:
 cargo build --release --manifest-path helper/Cargo.toml
 install -Dm755 helper/target/release/omarchy-android-helper \
   \"$HOME/.local/bin/omarchy-android-helper\"
+install -Dm755 scripts/omarchy-android-action \
+  "$HOME/.local/bin/omarchy-android-action"
 mkdir -p \"$HOME/.config/omarchy/plugins\"
 ln -s "$PWD" "$HOME/.config/omarchy/plugins/ollie.android"
 omarchy-shell shell rescanPlugins
@@ -120,6 +134,31 @@ No Omarchy configuration is overwritten by these steps. Enabling the plugin
 adds its widget to the persisted bar layout through Omarchy's supported plugin
 command.
 
+### Optional semantic binding integration
+
+One opt-in loader routes every supported stock Omarchy mapping without a
+per-chord override. Add this line to `~/.config/hypr/hyprland.lua` after the
+bootstrap `dofile(...)` and before `require("default.hypr.omarchy")`:
+
+```lua
+dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/ollie.android/integrations/hyprland.lua")
+```
+
+The loader intercepts only allowlisted, typed Omarchy defaults while Hyprland
+evaluates them. It does not read or rewrite binding files, inspect labels, or
+infer intent from commands. The current allowlist covers the stock `browser`
+intent, so both `SUPER + SHIFT + B` and `SUPER + SHIFT + RETURN` route through
+the dispatcher. Unsupported and later user-overridden bindings remain
+unchanged.
+
+Hyprland reloads the user configuration automatically. Validate it with
+`hyprctl reload` followed by `hyprctl configerrors`. While the ready, visible,
+enabled phone preview owns focus, an allowlisted chord runs its Android action.
+The dispatcher waits for the correlated helper result; rejection, an unhandled
+or malformed result, helper failure, and timeout each invoke the mapping's
+direct nonrecursive Omarchy fallback exactly once. Remove the one `dofile`
+line to disable semantic binding integration.
+
 ## Remove
 
 Disable the widget before removing files:
@@ -128,6 +167,7 @@ Disable the widget before removing files:
 omarchy plugin disable ollie.android
 rm \"$HOME/.config/omarchy/plugins/ollie.android\"
 rm -f \"$HOME/.local/bin/omarchy-android-helper\"
+rm -f "$HOME/.local/bin/omarchy-android-action"
 ```
 
 If the plugin was installed with `omarchy plugin add`, use

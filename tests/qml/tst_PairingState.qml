@@ -36,7 +36,7 @@ TestCase {
 
     function event(type, properties) {
         var value = properties || {}
-        value.version = 1
+        value.version = 2
         value.type = type
         if (type === "ready" && value.preferences === undefined) {
             value.preferences = {
@@ -62,7 +62,7 @@ TestCase {
         compare(state.helperReady, true)
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 1)
+        compare(command.version, 2)
         compare(command.type, "start-qr-pairing")
     }
 
@@ -128,7 +128,7 @@ TestCase {
         state.submitManualCode("482913")
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 1)
+        compare(command.version, 2)
         compare(command.type, "submit-manual-code")
         compare(command.code, "482913")
         compare(state.statusDescription.indexOf("482913"), -1)
@@ -184,7 +184,7 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "use-manual-code")
         compare(JSON.parse(commandSpy.signalArguments[2][0]).type, "cancel-pairing")
         compare(JSON.parse(commandSpy.signalArguments[3][0]).type, "stop-session")
-        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 1)
+        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 2)
     }
 
     function test_render_preferences_are_versioned_and_applied_immediately() {
@@ -281,7 +281,7 @@ TestCase {
 
         compare(commandSpy.count, 4)
         compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 1,
+                    version: 2,
                     type: "pointer-tap",
                     x: 0.25,
                     y: 0.75,
@@ -291,8 +291,8 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "pointer-swipe")
         compare(JSON.parse(commandSpy.signalArguments[1][0]).durationMs, 320)
         compare(JSON.parse(commandSpy.signalArguments[2][0]),
-                { version: 1, type: "key-input", key: "back" })
+                { version: 2, type: "key-input", key: "back" })
         compare(JSON.parse(commandSpy.signalArguments[3][0]),
-                { version: 1, type: "text-input", text: "a" })
+                { version: 2, type: "text-input", text: "a" })
     }
 }

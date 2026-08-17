@@ -26,19 +26,15 @@ Panel {
     implicitHeight: 480
 
     function previewBounds(availableHeight) {
-        switch (pairingState.previewSize) {
-        case "small":
-            return Qt.size(Style.space(280), Style.space(260))
-        case "large":
-            var height = availableHeight > 0
-                       ? availableHeight - Style.space(120)
-                       : Style.space(720)
-            return Qt.size(Style.space(480),
-                           Math.max(Style.space(360),
-                                    Math.min(Style.space(720), height)))
-        default:
-            return Qt.size(Style.space(360), Style.space(420))
+        var scale = pairingState.previewScale / 100
+        var width = Style.space(360) * scale
+        var height = Style.space(420) * scale
+        if (availableHeight > 0) {
+            height = Math.min(height,
+                              Math.max(Style.space(210),
+                                       availableHeight - Style.space(120)))
         }
+        return Qt.size(Math.round(width), Math.round(height))
     }
 
     function desiredPreviewSize(availableHeight) {
@@ -56,7 +52,8 @@ Panel {
     function desiredPanelWidth() {
         if (pairingState.sessionState === "ready" && !settingsOpen)
             return desiredPreviewSize(panel.availableCardHeight).width
-        return previewBounds(panel.availableCardHeight).width
+        return Math.max(Style.space(280),
+                        previewBounds(panel.availableCardHeight).width)
     }
 
     function desiredPreviewHeight(availableHeight) {
@@ -73,8 +70,8 @@ Panel {
         }
     }
 
-    function updateRenderPreferences(size, quality, actions) {
-        pairingState.setRenderPreferences(size, quality, actions)
+    function updateRenderPreferences(scale, quality, actions) {
+        pairingState.setRenderPreferences(scale, quality, actions)
     }
 
     function triggerSemanticAction(actionId) {
@@ -300,12 +297,12 @@ Panel {
                 RenderSettings {
                     width: parent.width
                     visible: pairingState.sessionState === "ready" && root.settingsOpen
-                    previewSize: pairingState.previewSize
+                    previewScale: pairingState.previewScale
                     videoQuality: pairingState.videoQuality
                     quickActions: pairingState.quickActions
                     foreground: root.contentForeground
-                    onPreferencesRequested: function(size, quality, actions) {
-                        root.updateRenderPreferences(size, quality, actions)
+                    onPreferencesRequested: function(scale, quality, actions) {
+                        root.updateRenderPreferences(scale, quality, actions)
                     }
                 }
 

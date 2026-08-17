@@ -95,13 +95,13 @@ fn qr_pairing_commands_emit_versioned_redacted_states() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
 
     assert_eq!(
-        engine.handle_line(r#"{"version":1,"type":"start-qr-pairing"}"#),
+        engine.handle_line(r#"{"version":2,"type":"start-qr-pairing"}"#),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"qr-waiting","artifact":"/run/user/1000/omarchy-android/qr.svg","expiresInSeconds":120}}"#
         )]
     );
     assert_eq!(
-        engine.handle_line(r#"{"version":1,"type":"cancel-pairing"}"#),
+        engine.handle_line(r#"{"version":2,"type":"cancel-pairing"}"#),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"pairing-cancelled"}}"#
         )]
@@ -114,13 +114,13 @@ fn manual_code_is_consumed_without_appearing_in_events() {
     let code = "482913";
 
     assert_eq!(
-        engine.handle_line(r#"{"version":1,"type":"use-manual-code"}"#),
+        engine.handle_line(r#"{"version":2,"type":"use-manual-code"}"#),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"manual-code-required"}}"#
         )]
     );
     let events = engine.handle_line(&format!(
-        r#"{{"version":1,"type":"submit-manual-code","code":"{code}"}}"#
+        r#"{{"version":2,"type":"submit-manual-code","code":"{code}"}}"#
     ));
 
     assert_eq!(
@@ -147,7 +147,7 @@ fn reconnect_command_emits_redacted_progress_and_calls_backend() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
 
     assert_eq!(
-        engine.handle_line(r#"{"version":1,"type":"reconnect-trusted-device"}"#),
+        engine.handle_line(r#"{"version":2,"type":"reconnect-trusted-device"}"#),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"connecting"}}"#
         )]
@@ -162,7 +162,7 @@ fn stop_session_confirms_cleanup_and_calls_backend() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
 
     assert_eq!(
-        engine.handle_line(r#"{"version":1,"type":"stop-session"}"#),
+        engine.handle_line(r#"{"version":2,"type":"stop-session"}"#),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"session-stopped"}}"#
         )]
@@ -227,22 +227,22 @@ fn input_commands_are_versioned_validated_and_forwarded_without_response_noise()
 
     assert!(engine
         .handle_line(
-            r#"{"version":1,"type":"pointer-tap","x":0.25,"y":0.75,"displayWidth":1080,"displayHeight":2400}"#,
+            r#"{"version":2,"type":"pointer-tap","x":0.25,"y":0.75,"displayWidth":1080,"displayHeight":2400}"#,
         )
         .is_empty());
     assert!(engine
         .handle_line(
-            r#"{"version":1,"type":"pointer-swipe","startX":0.1,"startY":0.2,"endX":0.8,"endY":0.9,"displayWidth":1080,"displayHeight":2400,"durationMs":320}"#,
+            r#"{"version":2,"type":"pointer-swipe","startX":0.1,"startY":0.2,"endX":0.8,"endY":0.9,"displayWidth":1080,"displayHeight":2400,"durationMs":320}"#,
         )
         .is_empty());
     assert!(
         engine
-            .handle_line(r#"{"version":1,"type":"key-input","key":"back"}"#)
+            .handle_line(r#"{"version":2,"type":"key-input","key":"back"}"#)
             .is_empty()
     );
     assert!(
         engine
-            .handle_line(r#"{"version":1,"type":"text-input","text":"a"}"#)
+            .handle_line(r#"{"version":2,"type":"text-input","text":"a"}"#)
             .is_empty()
     );
 
@@ -258,10 +258,10 @@ fn input_commands_are_versioned_validated_and_forwarded_without_response_noise()
 fn malformed_input_is_rejected_before_reaching_the_backend() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
     let invalid_commands = [
-        r#"{"version":1,"type":"pointer-tap","x":1.01,"y":0.5,"displayWidth":1080,"displayHeight":2400}"#,
-        r#"{"version":1,"type":"pointer-tap","x":0.5,"y":0.5,"displayWidth":0,"displayHeight":2400}"#,
-        r#"{"version":1,"type":"pointer-swipe","startX":0.1,"startY":0.2,"endX":0.8,"endY":0.9,"displayWidth":1080,"displayHeight":2400,"durationMs":0}"#,
-        r#"{"version":1,"type":"text-input","text":"line\nfeed"}"#,
+        r#"{"version":2,"type":"pointer-tap","x":1.01,"y":0.5,"displayWidth":1080,"displayHeight":2400}"#,
+        r#"{"version":2,"type":"pointer-tap","x":0.5,"y":0.5,"displayWidth":0,"displayHeight":2400}"#,
+        r#"{"version":2,"type":"pointer-swipe","startX":0.1,"startY":0.2,"endX":0.8,"endY":0.9,"displayWidth":1080,"displayHeight":2400,"durationMs":0}"#,
+        r#"{"version":2,"type":"text-input","text":"line\nfeed"}"#,
     ];
     let expected = [format!(
         r#"{{"version":{PROTOCOL_VERSION},"type":"protocol-error","reason":"invalid-command"}}"#
@@ -283,7 +283,7 @@ fn malformed_unknown_and_mismatched_commands_fail_without_echoing_input() {
     let secret = "do-not-echo";
 
     let malformed = engine.handle_line(&format!(r#"{{"secret":"{secret}"}}"#));
-    let unknown = engine.handle_line(r#"{"version":1,"type":"unknown"}"#);
+    let unknown = engine.handle_line(r#"{"version":2,"type":"unknown"}"#);
     let mismatched = engine.handle_line(r#"{"version":9,"type":"start-qr-pairing"}"#);
 
     assert_eq!(
@@ -321,7 +321,7 @@ fn backend_failures_are_fixed_categories_not_raw_messages() {
     let mut engine = ProtocolEngine::new(UnavailableBackend);
 
     assert_eq!(
-        engine.handle_line(r#"{"version":1,"type":"start-qr-pairing"}"#),
+        engine.handle_line(r#"{"version":2,"type":"start-qr-pairing"}"#),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"failure","reason":"dependency-unavailable"}}"#
         )]

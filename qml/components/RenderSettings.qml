@@ -7,18 +7,13 @@ import qs.Ui
 Column {
     id: root
 
-    property string previewSize: "medium"
+    property int previewScale: 100
     property string videoQuality: "high"
     property var quickActions: ["back", "home", "recent-apps"]
     property color foreground: Color.foreground
 
-    signal preferencesRequested(string previewSize, string videoQuality, var quickActions)
+    signal preferencesRequested(int previewScale, string videoQuality, var quickActions)
 
-    readonly property var sizeOptions: [
-        { value: "small", label: "Small" },
-        { value: "medium", label: "Medium" },
-        { value: "large", label: "Large" }
-    ]
     readonly property var qualityOptions: [
         { value: "low", label: "Low" },
         { value: "medium", label: "Medium" },
@@ -32,23 +27,26 @@ Column {
 
     spacing: Style.space(12)
 
-    function request(size, quality, actions) {
-        preferencesRequested(size, quality, actions.slice())
+    function request(scale, quality, actions) {
+        preferencesRequested(scale, quality, actions.slice())
     }
 
     function replaceAction(index, action) {
         var actions = quickActions.slice()
         actions[index] = action
-        request(previewSize, videoQuality, actions)
+        request(previewScale, videoQuality, actions)
     }
 
-    Dropdown {
+    NumberField {
+        objectName: "previewScaleField"
         width: parent.width
-        label: "Preview size"
-        value: root.previewSize
-        options: root.sizeOptions
+        label: "Preview scale (%)"
+        value: root.previewScale
+        from: 50
+        to: 150
+        stepSize: 5
         foreground: root.foreground
-        onChanged: function(value) {
+        onModified: function(value) {
             root.request(value, root.videoQuality, root.quickActions)
         }
     }
@@ -60,7 +58,7 @@ Column {
         options: root.qualityOptions
         foreground: root.foreground
         onChanged: function(value) {
-            root.request(root.previewSize, value, root.quickActions)
+            root.request(root.previewScale, value, root.quickActions)
         }
     }
 

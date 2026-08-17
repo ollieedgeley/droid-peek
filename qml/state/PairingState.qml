@@ -3,7 +3,7 @@ import QtQuick
 QtObject {
     id: root
 
-    readonly property int protocolVersion: 1
+    readonly property int protocolVersion: 2
     property bool helperReady: false
     property bool automaticPairingEnabled: true
     property string sessionState: "unpaired"
@@ -12,7 +12,7 @@ QtObject {
     property string statusDescription: "Open Wireless debugging on your phone."
     property string qrArtifact: ""
     property int qrExpiresInSeconds: 0
-    property string previewSize: "medium"
+    property int previewScale: 100
     property string videoQuality: "high"
     property var quickActions: ["back", "home", "recent-apps"]
 
@@ -26,7 +26,7 @@ QtObject {
         pairingStage = "idle"
         statusTitle = "Preparing QR code"
         statusDescription = "Open Wireless debugging on your phone."
-        previewSize = "medium"
+        previewScale = 100
         videoQuality = "high"
         quickActions = ["back", "home", "recent-apps"]
         clearQrPresentation()
@@ -114,9 +114,15 @@ QtObject {
         return typeof value === "string" && allowed.indexOf(value) >= 0
     }
 
+    function validPreviewScale(value) {
+        return typeof value === "number"
+                && value >= 50 && value <= 150
+                && Math.floor(value) === value
+    }
+
     function applyPreferences(preferences) {
         if (!preferences
-                || !validPreference(preferences.previewSize, ["small", "medium", "large"])
+                || !validPreviewScale(preferences.previewScale)
                 || !validPreference(preferences.videoQuality, ["low", "medium", "high"])
                 || !Array.isArray(preferences.quickActions)
                 || preferences.quickActions.length !== 3) {
@@ -127,15 +133,15 @@ QtObject {
                                  ["back", "home", "recent-apps"]))
                 return false
         }
-        previewSize = preferences.previewSize
+        previewScale = preferences.previewScale
         videoQuality = preferences.videoQuality
         quickActions = preferences.quickActions.slice()
         return true
     }
 
-    function setRenderPreferences(size, quality, actions) {
+    function setRenderPreferences(scale, quality, actions) {
         var preferences = {
-            previewSize: size,
+            previewScale: scale,
             videoQuality: quality,
             quickActions: actions
         }
@@ -143,7 +149,7 @@ QtObject {
             return false
         sendCommand({
             type: "set-render-preferences",
-            previewSize: previewSize,
+            previewScale: previewScale,
             videoQuality: videoQuality,
             quickActions: quickActions
         })

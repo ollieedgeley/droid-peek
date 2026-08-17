@@ -13,7 +13,7 @@ use omarchy_android_helper::{
     input::{AndroidKey, DisplayGeometry, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
     preferences::{
-        FileRenderPreferenceStore, PreviewSize, QuickAction, RenderPreferences, VideoQuality,
+        FileRenderPreferenceStore, PreviewScale, QuickAction, RenderPreferences, VideoQuality,
     },
     process::{CancellationToken, CommandFailure, CommandOutput, CommandRequest, CommandRunner},
     protocol::{Event, FailureReason, PairingBackend},
@@ -429,7 +429,7 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
     sink.wait_for_count(&Event::SessionStarted.to_line(), 1);
 
     let preferences = RenderPreferences {
-        preview_size: PreviewSize::Large,
+        preview_scale: PreviewScale::new(150).expect("valid preview scale"),
         video_quality: VideoQuality::Low,
         quick_actions: [
             QuickAction::Home,

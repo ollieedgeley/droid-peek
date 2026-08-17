@@ -7,7 +7,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -212,12 +212,12 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                     }),
             ),
             Command::SetRenderPreferences {
-                preview_size,
+                preview_scale,
                 video_quality,
                 quick_actions,
             } => vec![
                 match self.backend.set_render_preferences(RenderPreferences {
-                    preview_size,
+                    preview_scale,
                     video_quality,
                     quick_actions,
                 }) {
@@ -309,8 +309,8 @@ enum Command {
         text: String,
     },
     SetRenderPreferences {
-        #[serde(rename = "previewSize")]
-        preview_size: crate::preferences::PreviewSize,
+        #[serde(rename = "previewScale")]
+        preview_scale: crate::preferences::PreviewScale,
         #[serde(rename = "videoQuality")]
         video_quality: crate::preferences::VideoQuality,
         #[serde(rename = "quickActions")]

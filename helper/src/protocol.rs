@@ -7,7 +7,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub const PROTOCOL_VERSION: u8 = 3;
+pub const PROTOCOL_VERSION: u8 = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -39,6 +39,10 @@ pub trait PairingBackend {
     }
 
     fn stop_session(&mut self) {}
+
+    fn start_over(&mut self) -> Result<(), FailureReason> {
+        Err(FailureReason::Disconnected)
+    }
 
     fn pointer_tap(
         &mut self,
@@ -132,6 +136,13 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                 self.backend.stop_session();
                 vec![Event::SessionStopped.to_line()]
             }
+            Command::StartOver => vec![
+                match self.backend.start_over() {
+                    Ok(()) => Event::StartOverComplete,
+                    Err(reason) => Event::Failure { reason },
+                }
+                .to_line(),
+            ],
             Command::CancelPairing => {
                 self.backend.cancel_pairing();
                 vec![Event::PairingCancelled.to_line()]
@@ -277,6 +288,7 @@ enum Command {
     },
     ReconnectTrustedDevice,
     StopSession,
+    StartOver,
     PointerTap {
         x: f64,
         y: f64,
@@ -376,6 +388,7 @@ pub enum Event {
     },
     SessionEnded,
     SessionStopped,
+    StartOverComplete,
     PreferencesUpdated {
         #[serde(flatten)]
         preferences: Preferences,

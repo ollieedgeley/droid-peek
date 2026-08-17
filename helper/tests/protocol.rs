@@ -12,6 +12,7 @@ struct FakePairingBackend {
     manual_codes: Vec<String>,
     reconnects: usize,
     session_stops: usize,
+    start_overs: usize,
     pointer_taps: Vec<(DisplayGeometry, NormalizedPoint)>,
     pointer_swipes: Vec<(DisplayGeometry, NormalizedPoint, NormalizedPoint, u32)>,
     keys: Vec<AndroidKey>,
@@ -41,6 +42,11 @@ impl PairingBackend for FakePairingBackend {
 
     fn stop_session(&mut self) {
         self.session_stops += 1;
+    }
+
+    fn start_over(&mut self) -> Result<(), FailureReason> {
+        self.start_overs += 1;
+        Ok(())
     }
 
     fn pointer_tap(
@@ -90,13 +96,13 @@ fn qr_pairing_commands_emit_versioned_redacted_states() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
 
     assert_eq!(
-        engine.handle_line(r#"{"version":3,"type":"start-qr-pairing"}"#),
+        engine.handle_line(r#"{"version":4,"type":"start-qr-pairing"}"#),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"qr-waiting","artifact":"/run/user/1000/omarchy-android/qr.svg","expiresInSeconds":120}}"#
         )]
     );
     assert_eq!(
-        engine.handle_line(r#"{"version":3,"type":"cancel-pairing"}"#),
+        engine.handle_line(r#"{"version":4,"type":"cancel-pairing"}"#),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"pairing-cancelled"}}"#
         )]
@@ -109,13 +115,13 @@ fn manual_code_is_consumed_without_appearing_in_events() {
     let code = "482913";
 
     assert_eq!(
-        engine.handle_line(r#"{"version":3,"type":"use-manual-code"}"#),
+        engine.handle_line(r#"{"version":4,"type":"use-manual-code"}"#),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"manual-code-required"}}"#
         )]
     );
     let events = engine.handle_line(&format!(
-        r#"{{"version":3,"type":"submit-manual-code","code":"{code}"}}"#
+        r#"{{"version":4,"type":"submit-manual-code","code":"{code}"}}"#
     ));
 
     assert_eq!(
@@ -142,7 +148,7 @@ fn reconnect_command_emits_redacted_progress_and_calls_backend() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
 
     assert_eq!(
-        engine.handle_line(r#"{"version":3,"type":"reconnect-trusted-device"}"#),
+        engine.handle_line(r#"{"version":4,"type":"reconnect-trusted-device"}"#),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"connecting"}}"#
         )]
@@ -157,7 +163,7 @@ fn stop_session_confirms_cleanup_and_calls_backend() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
 
     assert_eq!(
-        engine.handle_line(r#"{"version":3,"type":"stop-session"}"#),
+        engine.handle_line(r#"{"version":4,"type":"stop-session"}"#),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"session-stopped"}}"#
         )]
@@ -168,12 +174,27 @@ fn stop_session_confirms_cleanup_and_calls_backend() {
 }
 
 #[test]
+fn start_over_confirms_local_forgetting_and_calls_backend() {
+    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
+
+    assert_eq!(
+        engine.handle_line(r#"{"version":4,"type":"start-over"}"#),
+        [format!(
+            r#"{{"version":{PROTOCOL_VERSION},"type":"start-over-complete"}}"#
+        )]
+    );
+
+    let backend = engine.into_backend();
+    assert_eq!(backend.start_overs, 1);
+}
+
+#[test]
 fn preferences_are_validated_forwarded_and_echoed() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
 
     assert_eq!(
         engine.handle_line(
-            r#"{"version":3,"type":"set-preferences","keepConnected":true,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"]}"#,
+            r#"{"version":4,"type":"set-preferences","keepConnected":true,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"]}"#,
         ),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"preferences-updated","keepConnected":true,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"],"sessionRestarted":true}}"#
@@ -200,12 +221,12 @@ fn preferences_are_validated_forwarded_and_echoed() {
 fn invalid_preferences_do_not_reach_the_backend() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
     let invalid = [
-        r#"{"version":3,"type":"set-preferences","previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":3,"type":"set-preferences","keepConnected":"yes","previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":3,"type":"set-preferences","keepConnected":false,"previewScale":49,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":3,"type":"set-preferences","keepConnected":false,"previewScale":151,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":3,"type":"set-preferences","keepConnected":false,"previewScale":100,"videoQuality":"ultra","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":3,"type":"set-preferences","keepConnected":false,"previewScale":100,"videoQuality":"high","quickActions":["back"]}"#,
+        r#"{"version":4,"type":"set-preferences","previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":4,"type":"set-preferences","keepConnected":"yes","previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":4,"type":"set-preferences","keepConnected":false,"previewScale":49,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":4,"type":"set-preferences","keepConnected":false,"previewScale":151,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":4,"type":"set-preferences","keepConnected":false,"previewScale":100,"videoQuality":"ultra","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":4,"type":"set-preferences","keepConnected":false,"previewScale":100,"videoQuality":"high","quickActions":["back"]}"#,
     ];
 
     for command in invalid {
@@ -225,22 +246,22 @@ fn input_commands_are_versioned_validated_and_forwarded_without_response_noise()
 
     assert!(engine
         .handle_line(
-            r#"{"version":3,"type":"pointer-tap","x":0.25,"y":0.75,"displayWidth":1080,"displayHeight":2400}"#,
+            r#"{"version":4,"type":"pointer-tap","x":0.25,"y":0.75,"displayWidth":1080,"displayHeight":2400}"#,
         )
         .is_empty());
     assert!(engine
         .handle_line(
-            r#"{"version":3,"type":"pointer-swipe","startX":0.1,"startY":0.2,"endX":0.8,"endY":0.9,"displayWidth":1080,"displayHeight":2400,"durationMs":320}"#,
+            r#"{"version":4,"type":"pointer-swipe","startX":0.1,"startY":0.2,"endX":0.8,"endY":0.9,"displayWidth":1080,"displayHeight":2400,"durationMs":320}"#,
         )
         .is_empty());
     assert!(
         engine
-            .handle_line(r#"{"version":3,"type":"key-input","key":"back"}"#)
+            .handle_line(r#"{"version":4,"type":"key-input","key":"back"}"#)
             .is_empty()
     );
     assert!(
         engine
-            .handle_line(r#"{"version":3,"type":"text-input","text":"a"}"#)
+            .handle_line(r#"{"version":4,"type":"text-input","text":"a"}"#)
             .is_empty()
     );
 
@@ -256,10 +277,10 @@ fn input_commands_are_versioned_validated_and_forwarded_without_response_noise()
 fn malformed_input_is_rejected_before_reaching_the_backend() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
     let invalid_commands = [
-        r#"{"version":3,"type":"pointer-tap","x":1.01,"y":0.5,"displayWidth":1080,"displayHeight":2400}"#,
-        r#"{"version":3,"type":"pointer-tap","x":0.5,"y":0.5,"displayWidth":0,"displayHeight":2400}"#,
-        r#"{"version":3,"type":"pointer-swipe","startX":0.1,"startY":0.2,"endX":0.8,"endY":0.9,"displayWidth":1080,"displayHeight":2400,"durationMs":0}"#,
-        r#"{"version":3,"type":"text-input","text":"line\nfeed"}"#,
+        r#"{"version":4,"type":"pointer-tap","x":1.01,"y":0.5,"displayWidth":1080,"displayHeight":2400}"#,
+        r#"{"version":4,"type":"pointer-tap","x":0.5,"y":0.5,"displayWidth":0,"displayHeight":2400}"#,
+        r#"{"version":4,"type":"pointer-swipe","startX":0.1,"startY":0.2,"endX":0.8,"endY":0.9,"displayWidth":1080,"displayHeight":2400,"durationMs":0}"#,
+        r#"{"version":4,"type":"text-input","text":"line\nfeed"}"#,
     ];
     let expected = [format!(
         r#"{{"version":{PROTOCOL_VERSION},"type":"protocol-error","reason":"invalid-command"}}"#
@@ -281,7 +302,7 @@ fn malformed_unknown_and_mismatched_commands_fail_without_echoing_input() {
     let secret = "do-not-echo";
 
     let malformed = engine.handle_line(&format!(r#"{{"secret":"{secret}"}}"#));
-    let unknown = engine.handle_line(r#"{"version":3,"type":"unknown"}"#);
+    let unknown = engine.handle_line(r#"{"version":4,"type":"unknown"}"#);
     let mismatched = engine.handle_line(r#"{"version":9,"type":"start-qr-pairing"}"#);
 
     assert_eq!(
@@ -319,7 +340,7 @@ fn backend_failures_are_fixed_categories_not_raw_messages() {
     let mut engine = ProtocolEngine::new(UnavailableBackend);
 
     assert_eq!(
-        engine.handle_line(r#"{"version":3,"type":"start-qr-pairing"}"#),
+        engine.handle_line(r#"{"version":4,"type":"start-qr-pairing"}"#),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"failure","reason":"dependency-unavailable"}}"#
         )]

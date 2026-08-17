@@ -14,6 +14,11 @@ in-memory target. scrcpy output is discarded and raw endpoints never cross the
 protocol boundary. Panel close stops the child process by default. The optional
 **Keep connected** preference retains only an active trusted session while the
 panel is hidden; pairing and failure states always shut down.
+The Settings page and remembered-phone recovery states expose a confirmed
+**Start over** action. It stops the current trusted session, forgets the local
+device identity, preserves user preferences, and immediately opens a fresh QR
+ceremony. This local action does not remove the computer from Android’s Paired
+devices list.
 
 The ready panel captures the private `Omarchy Android` V4L2 device through Qt
 Multimedia and always releases that QML consumer when the panel closes. Its

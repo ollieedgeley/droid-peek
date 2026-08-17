@@ -64,6 +64,18 @@ fn missing_or_malformed_state_is_safely_unpaired() {
 }
 
 #[test]
+fn remove_forgets_a_saved_device_and_is_idempotent() {
+    let directory = tempdir().expect("temporary state directory");
+    let store = FileTrustedDeviceStore::new(directory.path().join("omarchy-android"));
+    let device = TrustedDevice::new("adb-14141FD6F00081-TnSdi9").expect("valid service name");
+    store.save(&device).expect("save trusted device");
+
+    store.remove().expect("remove trusted device");
+    assert!(store.load().expect("load removed state").is_none());
+    store.remove().expect("remove missing trusted device");
+}
+
+#[test]
 fn device_identity_rejects_raw_or_unsafe_values() {
     for value in [
         "",

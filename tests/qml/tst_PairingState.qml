@@ -63,7 +63,7 @@ TestCase {
         compare(state.helperReady, true)
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 3)
+        compare(command.version, 4)
         compare(command.type, "start-qr-pairing")
     }
 
@@ -129,7 +129,7 @@ TestCase {
         state.submitManualCode("482913")
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 3)
+        compare(command.version, 4)
         compare(command.type, "submit-manual-code")
         compare(command.code, "482913")
         compare(state.statusDescription.indexOf("482913"), -1)
@@ -177,6 +177,48 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "reconnect-trusted-device")
     }
 
+    function test_start_over_forgets_the_device_then_requests_fresh_qr() {
+        state.receiveLine(event("ready", { hasTrustedDevice: true }))
+        state.setPreferences(
+                    true, 125, "medium", ["home", "back", "recent-apps"])
+        commandSpy.clear()
+
+        state.startOver()
+        state.startOver()
+
+        compare(state.startOverPending, true)
+        compare(state.statusTitle, "Starting over")
+        compare(commandSpy.count, 1)
+        compare(JSON.parse(commandSpy.signalArguments[0][0]),
+                { version: 4, type: "start-over" })
+
+        state.receiveLine(event("start-over-complete"))
+
+        compare(state.startOverPending, false)
+        compare(state.hasTrustedDevice, false)
+        compare(state.sessionState, "unpaired")
+        compare(state.keepConnected, true)
+        compare(state.previewScale, 125)
+        compare(state.videoQuality, "medium")
+        compare(commandSpy.count, 2)
+        compare(JSON.parse(commandSpy.signalArguments[1][0]).type,
+                "start-qr-pairing")
+    }
+
+    function test_start_over_failure_keeps_the_phone_and_does_not_request_qr() {
+        state.receiveLine(event("ready", { hasTrustedDevice: true }))
+        commandSpy.clear()
+
+        state.startOver()
+        state.receiveLine(event("failure", { reason: "dependency-unavailable" }))
+
+        compare(state.startOverPending, false)
+        compare(state.hasTrustedDevice, true)
+        compare(state.pairingStage, "start-over-failed")
+        compare(state.statusTitle, "Couldn’t start over")
+        compare(commandSpy.count, 1)
+    }
+
     function test_commands_are_versioned_line_payloads() {
         state.startQrPairing()
         state.useManualCode()
@@ -188,7 +230,7 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "use-manual-code")
         compare(JSON.parse(commandSpy.signalArguments[2][0]).type, "cancel-pairing")
         compare(JSON.parse(commandSpy.signalArguments[3][0]).type, "stop-session")
-        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 3)
+        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 4)
     }
 
     function test_preferences_are_versioned_and_applied_immediately() {
@@ -201,7 +243,7 @@ TestCase {
         compare(state.quickActions, ["home", "recent-apps", "back"])
         compare(commandSpy.count, 1)
         compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 3,
+                    version: 4,
                     type: "set-preferences",
                     keepConnected: true,
                     previewScale: 150,
@@ -290,7 +332,7 @@ TestCase {
 
         compare(commandSpy.count, 4)
         compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 3,
+                    version: 4,
                     type: "pointer-tap",
                     x: 0.25,
                     y: 0.75,
@@ -300,8 +342,8 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "pointer-swipe")
         compare(JSON.parse(commandSpy.signalArguments[1][0]).durationMs, 320)
         compare(JSON.parse(commandSpy.signalArguments[2][0]),
-                { version: 3, type: "key-input", key: "back" })
+                { version: 4, type: "key-input", key: "back" })
         compare(JSON.parse(commandSpy.signalArguments[3][0]),
-                { version: 3, type: "text-input", text: "a" })
+                { version: 4, type: "text-input", text: "a" })
     }
 }

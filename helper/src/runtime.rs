@@ -16,7 +16,7 @@ use crate::{
     input::{AdbInputAdapter, AndroidKey, DisplayGeometry, InputFailure, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
     preferences::{FilePreferenceStore, Preferences},
-    process::{AdbCommandRunner, CancellationToken, CommandRunner},
+    process::{AdbCommandRunner, CancellationToken, CommandRequest, CommandRunner},
     protocol::{Event, FailureReason, PairingBackend, PairingMethod, QrPresentation},
     qr::{QrCeremony, RuntimeQrRenderer, SystemClock, SystemEntropy},
     session::{ScrcpySessionRunner, SessionExit, SessionFailure, SessionRunner},
@@ -736,6 +736,44 @@ where
         if let Ok(mut target) = self.active_target.lock() {
             *target = None;
         }
+    }
+
+    fn start_over(&mut self) -> Result<(), FailureReason> {
+        let active_target = self
+            .active_target
+            .lock()
+            .map_err(|_| FailureReason::DependencyUnavailable)?
+            .clone();
+
+        self.reset_session();
+        self.pending = None;
+        self.pending_reconnect = None;
+        self.cancellation.cancel();
+        self.generation.fetch_add(1, Ordering::AcqRel);
+
+        let mut flow = self
+            .flow
+            .lock()
+            .map_err(|_| FailureReason::DependencyUnavailable)?;
+        if let Some(target) = active_target {
+            let _ = flow.runner_mut().run(
+                CommandRequest::new("adb", vec!["disconnect".to_owned(), target]),
+                &CancellationToken::new(),
+            );
+        }
+        drop(flow);
+
+        if let Ok(mut ceremony) = self.ceremony.lock() {
+            ceremony.cancel();
+        }
+        self.store
+            .remove()
+            .map_err(|_| FailureReason::DependencyUnavailable)?;
+        *self
+            .trusted_device
+            .lock()
+            .map_err(|_| FailureReason::DependencyUnavailable)? = None;
+        Ok(())
     }
 
     fn pointer_tap(

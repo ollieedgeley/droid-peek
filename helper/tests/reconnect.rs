@@ -393,6 +393,87 @@ fn runtime_starts_scrcpy_after_reconnect_and_stops_it_before_confirmation() {
 }
 
 #[test]
+fn start_over_stops_the_session_forgets_the_device_and_preserves_preferences() {
+    let directory = tempfile::tempdir().expect("temporary runtime");
+    let state_directory = directory.path().join("state");
+    FileTrustedDeviceStore::new(&state_directory)
+        .save(&TrustedDevice::new("adb-14141FD6F00081-TnSdi9").expect("trusted device"))
+        .expect("seed trusted-device state");
+    let preferences = Preferences {
+        keep_connected: true,
+        preview_scale: PreviewScale::new(125).expect("valid preview scale"),
+        ..Preferences::default()
+    };
+    FilePreferenceStore::new(&state_directory)
+        .save(&preferences)
+        .expect("seed preferences");
+    let sink = MemorySink::default();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let outputs = Arc::new(Mutex::new(VecDeque::from([
+        Ok(CommandOutput { succeeded: true }),
+        Err(CommandFailure::DependencyUnavailable),
+    ])));
+    let mut backend = RuntimePairingBackend::with_adapters_store_and_session(
+        directory.path().join("runtime"),
+        &state_directory,
+        Duration::from_secs(1),
+        sink.clone(),
+        FakeDiscovery {
+            trusted_result: PairingEndpoint::new("192.168.50.4", 37_123)
+                .map_err(|_| DiscoveryFailure::NetworkUnavailable),
+            requested_devices: Vec::new(),
+        },
+        SharedRunner {
+            outputs,
+            requests: Arc::clone(&requests),
+        },
+        BlockingSession {
+            target: Arc::new(Mutex::new(None)),
+            stopped: Arc::clone(&stopped),
+            quality: VideoQuality::default(),
+            qualities: Arc::new(Mutex::new(Vec::new())),
+        },
+    )
+    .expect("runtime backend");
+
+    backend
+        .reconnect_trusted_device()
+        .expect("queue trusted reconnect");
+    backend.response_emitted();
+    sink.wait_for(
+        &Event::SessionStarted {
+            physical_width_mm: None,
+            physical_height_mm: None,
+        }
+        .to_line(),
+    );
+
+    backend.start_over().expect("start over");
+
+    assert!(stopped.load(Ordering::Acquire));
+    assert!(!backend.has_trusted_device());
+    assert!(
+        FileTrustedDeviceStore::new(&state_directory)
+            .load()
+            .expect("load trusted state")
+            .is_none()
+    );
+    assert_eq!(
+        FilePreferenceStore::new(&state_directory)
+            .load()
+            .expect("load preserved preferences"),
+        preferences
+    );
+    let requests = requests.lock().expect("request lock");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1].arguments(),
+        ["disconnect", "192.168.50.4:37123"]
+    );
+}
+
+#[test]
 fn quality_update_is_persisted_and_restarts_only_the_active_session() {
     let directory = tempfile::tempdir().expect("temporary runtime");
     let state_directory = directory.path().join("state");

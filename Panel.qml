@@ -83,6 +83,15 @@ Panel {
         pairingState.setPreferences(keepConnected, scale, quality, actions)
     }
 
+    function requestStartOver() {
+        if (!pairingState.helperReady || !pairingState.hasTrustedDevice
+                || pairingState.startOverPending)
+            return
+        startOverDialog.selectedIndex = 0
+        startOverDialog.opened = true
+        startOverDialog.forceActiveFocus()
+    }
+
     function triggerSemanticAction(actionId) {
         return semanticActionRouter.trigger(actionId)
     }
@@ -117,6 +126,7 @@ Panel {
                 pairingState.startQrPairing()
         } else {
             manualCode.text = ""
+            startOverDialog.opened = false
             pairingState.automaticPairingEnabled = false
             var closeAction = PanelLifecycle.closeAction(
                         pairingState.keepConnected,
@@ -215,6 +225,7 @@ Panel {
             id: keyCatcher
             anchors.fill: parent
             blocked: root.settingsOpen
+                     || startOverDialog.opened
                      || manualCode.activeFocus
                      || (root.phonePreview !== null
                          && root.phonePreview.inputFocused)
@@ -328,6 +339,7 @@ Panel {
                     onPreferencesRequested: function(keepConnected, scale, quality, actions) {
                         root.updatePreferences(keepConnected, scale, quality, actions)
                     }
+                    onStartOverRequested: root.requestStartOver()
                 }
 
 
@@ -395,7 +407,47 @@ Panel {
                         text: "Reconnect"
                         onClicked: pairingState.reconnectTrustedDevice()
                     }
+                    Button {
+                        visible: pairingState.helperReady
+                                 && pairingState.hasTrustedDevice
+                                 && pairingState.sessionState !== "ready"
+                                 && !pairingState.startOverPending
+                        text: pairingState.pairingStage === "start-over-failed"
+                              ? "Retry start over" : "Start over"
+                        onClicked: root.requestStartOver()
+                    }
 
+                }
+            }
+
+            ConfirmDialog {
+                id: startOverDialog
+                anchors.fill: parent
+                z: 10
+                message: "Start over with a new phone?\n\n"
+                         + "This stops the current session and forgets this phone "
+                         + "on this computer. It does not remove this computer "
+                         + "from Android’s Paired devices list."
+                cancelText: "Cancel"
+                confirmText: "Start over"
+                background: root.contentBackground
+                foreground: root.contentForeground
+                focus: opened
+
+                Keys.onPressed: function(event) {
+                    if (handleKey(event))
+                        event.accepted = true
+                }
+
+                onCanceled: {
+                    opened = false
+                    keyCatcher.forceActiveFocus()
+                }
+                onConfirmed: {
+                    opened = false
+                    root.settingsOpen = false
+                    pairingState.startOver()
+                    keyCatcher.forceActiveFocus()
                 }
             }
         }

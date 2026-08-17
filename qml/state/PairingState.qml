@@ -3,9 +3,11 @@ import QtQuick
 QtObject {
     id: root
 
-    readonly property int protocolVersion: 3
+    readonly property int protocolVersion: 4
     property bool helperReady: false
     property bool automaticPairingEnabled: true
+    property bool hasTrustedDevice: false
+    property bool startOverPending: false
     property string sessionState: "unpaired"
     property string pairingStage: "idle"
     property string statusTitle: "Preparing QR code"
@@ -20,9 +22,12 @@ QtObject {
     signal commandRequested(string command)
     signal pairingCancellationConfirmed()
     signal sessionStopConfirmed()
+    signal startOverConfirmed()
 
     function reset() {
         helperReady = false
+        hasTrustedDevice = false
+        startOverPending = false
         sessionState = "unpaired"
         pairingStage = "idle"
         statusTitle = "Preparing QR code"
@@ -78,6 +83,18 @@ QtObject {
 
     function stopSession() {
         sendCommand({ type: "stop-session" })
+    }
+
+    function startOver() {
+        if (!helperReady || !hasTrustedDevice || startOverPending)
+            return
+        startOverPending = true
+        clearQrPresentation()
+        sessionState = "pairing"
+        pairingStage = "starting-over"
+        statusTitle = "Starting over"
+        statusDescription = "Stopping this session and forgetting the trusted phone."
+        sendCommand({ type: "start-over" })
     }
 
     function sendPointerTap(x, y, displayWidth, displayHeight) {
@@ -164,6 +181,7 @@ QtObject {
     }
 
     function protocolFailure() {
+        startOverPending = false
         clearQrPresentation()
         sessionState = "dependency-unavailable"
         pairingStage = "protocol-error"
@@ -172,6 +190,15 @@ QtObject {
     }
 
     function applyFailure(reason) {
+        if (startOverPending) {
+            startOverPending = false
+            clearQrPresentation()
+            sessionState = "dependency-unavailable"
+            pairingStage = "start-over-failed"
+            statusTitle = "Couldn’t start over"
+            statusDescription = "The trusted phone is still remembered. Retry or close this panel."
+            return
+        }
         clearQrPresentation()
         pairingStage = "failed"
         if (reason === "pairing-rejected") {
@@ -217,6 +244,7 @@ QtObject {
                 return
             }
             helperReady = true
+            hasTrustedDevice = event.hasTrustedDevice
             if (event.hasTrustedDevice)
                 reconnectTrustedDevice()
             else if (automaticPairingEnabled && sessionState === "unpaired")
@@ -289,6 +317,7 @@ QtObject {
             return
         case "connected":
         case "paired":
+            hasTrustedDevice = true
             clearQrPresentation()
             sessionState = "pairing"
             pairingStage = "connected"
@@ -315,6 +344,18 @@ QtObject {
             return
         case "session-stopped":
             sessionStopConfirmed()
+            return
+        case "start-over-complete":
+            clearQrPresentation()
+            startOverPending = false
+            hasTrustedDevice = false
+            sessionState = "unpaired"
+            pairingStage = "starting"
+            statusTitle = "Preparing QR code"
+            statusDescription = "Open Wireless debugging on the phone you want to pair."
+            startOverConfirmed()
+            if (automaticPairingEnabled)
+                startQrPairing()
             return
         case "failure":
             applyFailure(event.reason)

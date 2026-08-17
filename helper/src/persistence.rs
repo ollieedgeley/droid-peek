@@ -62,6 +62,14 @@ impl FileTrustedDeviceStore {
         self.directory.join(STATE_FILE_NAME)
     }
 
+    pub fn remove(&self) -> io::Result<()> {
+        match fs::remove_file(self.path()) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn load(&self) -> io::Result<Option<TrustedDevice>> {
         let path = self.path();
         let contents = match fs::read(&path) {

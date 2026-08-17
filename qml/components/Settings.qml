@@ -14,6 +14,7 @@ Column {
     property color foreground: Color.foreground
 
     signal preferencesRequested(bool keepConnected, int previewScale, string videoQuality, var quickActions)
+    signal startOverRequested()
 
     readonly property var qualityOptions: [
         { value: "low", label: "Low" },
@@ -86,6 +87,45 @@ Column {
             foreground: root.foreground
             onToggled: root.request(!root.keepConnected, root.previewScale,
                                     root.videoQuality, root.quickActions)
+        }
+    }
+
+    Item {
+        width: parent.width
+        height: Math.max(startOverCopy.implicitHeight, startOverButton.implicitHeight)
+
+        Column {
+            id: startOverCopy
+            width: parent.width - startOverButton.width - Style.space(12)
+            spacing: Style.space(3)
+
+            Text {
+                width: parent.width
+                text: "Pair a different phone"
+                color: root.foreground
+                font.family: Style.fontFamily
+                font.pixelSize: Style.fontBaseSize
+                font.bold: true
+                wrapMode: Text.Wrap
+            }
+
+            Text {
+                width: parent.width
+                text: "Stops this session and forgets this phone on this computer."
+                color: Qt.darker(root.foreground, 1.35)
+                font.family: Style.fontFamily
+                font.pixelSize: Style.fontBaseSize * 0.85
+                wrapMode: Text.Wrap
+            }
+        }
+
+        Button {
+            id: startOverButton
+            objectName: "startOverButton"
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Start over"
+            onClicked: root.startOverRequested()
         }
     }
 

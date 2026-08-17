@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../../qml/components"
+import "../../qml/PreviewGeometry.js" as PreviewGeometry
 
 TestCase {
     name: "PhonePreview"
@@ -73,18 +74,23 @@ TestCase {
         compare(preview.normalizedPoint(120, 500, Qt.rect(20, 40, 200, 400)), null)
     }
 
-    function test_preview_bounds_follow_android_aspect_ratio_without_letterboxing() {
-        var portrait = preview.fittedSize(360, 420, 1080, 2400)
-        compare(portrait.width, 189)
-        compare(portrait.height, 420)
+    function test_letterbox_viewport_scales_like_a_window_width() {
+        compare(PreviewGeometry.scaledViewportSize(320, 560, 1000, 1000, 50),
+                Qt.size(160, 280))
+        compare(PreviewGeometry.scaledViewportSize(320, 560, 1000, 1000, 100),
+                Qt.size(320, 560))
+        compare(PreviewGeometry.scaledViewportSize(320, 560, 430, 700, 150),
+                Qt.size(400, 700))
+    }
 
-        var landscape = preview.fittedSize(360, 420, 2400, 1080)
-        compare(landscape.width, 360)
-        compare(landscape.height, 162)
+    function test_letterbox_content_preserves_android_aspect_ratio() {
+        var portrait = preview.fittedSize(320, 560, 1080, 2392)
+        compare(portrait.width, 253)
+        compare(portrait.height, 560)
 
-        var fallback = preview.fittedSize(360, 420, 0, 0)
-        compare(fallback.width, 189)
-        compare(fallback.height, 420)
+        var landscape = preview.fittedSize(320, 560, 2392, 1080)
+        compare(landscape.width, 320)
+        compare(landscape.height, 144)
     }
 
     function test_pointer_release_distinguishes_taps_and_swipes() {

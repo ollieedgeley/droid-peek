@@ -6,6 +6,7 @@ import qs.Ui
 import "qml/state"
 import "qml/components"
 import "qml/PreviewGeometry.js" as PreviewGeometry
+import "qml/PanelLifecycle.js" as PanelLifecycle
 
 Panel {
     id: root
@@ -66,7 +67,10 @@ Panel {
     }
 
     function runQuickAction(action) {
-        pairingState.sendKeyInput(action)
+        var key = semanticActionRouter.quickActionKey(action)
+        if (key === "")
+            return
+        pairingState.sendKeyInput(key)
         if (phonePreview) {
             Qt.callLater(function() {
                 if (root.phonePreview)
@@ -75,8 +79,8 @@ Panel {
         }
     }
 
-    function updateRenderPreferences(scale, quality, actions) {
-        pairingState.setRenderPreferences(scale, quality, actions)
+    function updatePreferences(keepConnected, scale, quality, actions) {
+        pairingState.setPreferences(keepConnected, scale, quality, actions)
     }
 
     function triggerSemanticAction(actionId) {
@@ -114,20 +118,21 @@ Panel {
         } else {
             manualCode.text = ""
             pairingState.automaticPairingEnabled = false
-            if (helperProcess.running) {
+            var closeAction = PanelLifecycle.closeAction(
+                        pairingState.keepConnected,
+                        pairingState.sessionState,
+                        pairingState.pairingStage,
+                        helperProcess.running)
+            if (closeAction === "stop-session" || closeAction === "cancel-pairing") {
                 helperShutdownPending = true
-                if (pairingState.sessionState === "ready"
-                        || pairingState.pairingStage === "connected"
-                        || pairingState.pairingStage === "session-starting") {
+                if (closeAction === "stop-session")
                     pairingState.stopSession()
-                } else {
+                else
                     pairingState.cancelPairing()
-                }
                 helperStopTimer.restart()
             }
-        }
-        if (!opened)
             settingsOpen = false
+        }
     }
 
     PairingState {
@@ -227,8 +232,8 @@ Panel {
                 PanelHero {
                     width: parent.width
                     visible: pairingState.sessionState !== "ready"
-                    title: root.settingsOpen ? "Render settings" : pairingState.statusTitle
-                    meta: root.settingsOpen ? "Omarchy Android" : "Omarchy Android"
+                    title: root.settingsOpen ? "Settings" : pairingState.statusTitle
+                    meta: "Omarchy Android"
                     detail: root.settingsOpen ? "" : pairingState.sessionState
                     foreground: root.contentForeground
                 }
@@ -247,6 +252,7 @@ Panel {
                     width: parent.width
                     visible: pairingState.sessionState === "ready"
                     actions: pairingState.quickActions
+                    keepConnected: pairingState.keepConnected
                     settingsOpen: root.settingsOpen
                     controlsEnabled: pairingState.sessionState === "ready"
                     foreground: root.contentForeground
@@ -255,6 +261,12 @@ Panel {
                     }
                     onSettingsRequested: root.settingsOpen = true
                     onBackRequested: root.settingsOpen = false
+                    onKeepConnectedRequested: function(keepConnected) {
+                        root.updatePreferences(keepConnected,
+                                               pairingState.previewScale,
+                                               pairingState.videoQuality,
+                                               pairingState.quickActions)
+                    }
                 }
 
                 Rectangle {
@@ -305,15 +317,16 @@ Panel {
                     }
                 }
 
-                RenderSettings {
+                Settings {
                     width: parent.width
                     visible: pairingState.sessionState === "ready" && root.settingsOpen
+                    keepConnected: pairingState.keepConnected
                     previewScale: pairingState.previewScale
                     videoQuality: pairingState.videoQuality
                     quickActions: pairingState.quickActions
                     foreground: root.contentForeground
-                    onPreferencesRequested: function(scale, quality, actions) {
-                        root.updateRenderPreferences(scale, quality, actions)
+                    onPreferencesRequested: function(keepConnected, scale, quality, actions) {
+                        root.updatePreferences(keepConnected, scale, quality, actions)
                     }
                 }
 

@@ -36,10 +36,11 @@ TestCase {
 
     function event(type, properties) {
         var value = properties || {}
-        value.version = 2
+        value.version = state.protocolVersion
         value.type = type
         if (type === "ready" && value.preferences === undefined) {
             value.preferences = {
+                keepConnected: false,
                 previewScale: 100,
                 videoQuality: "high",
                 quickActions: ["back", "home", "recent-apps"]
@@ -62,7 +63,7 @@ TestCase {
         compare(state.helperReady, true)
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 2)
+        compare(command.version, 3)
         compare(command.type, "start-qr-pairing")
     }
 
@@ -128,7 +129,7 @@ TestCase {
         state.submitManualCode("482913")
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 2)
+        compare(command.version, 3)
         compare(command.type, "submit-manual-code")
         compare(command.code, "482913")
         compare(state.statusDescription.indexOf("482913"), -1)
@@ -187,20 +188,22 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "use-manual-code")
         compare(JSON.parse(commandSpy.signalArguments[2][0]).type, "cancel-pairing")
         compare(JSON.parse(commandSpy.signalArguments[3][0]).type, "stop-session")
-        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 2)
+        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 3)
     }
 
-    function test_render_preferences_are_versioned_and_applied_immediately() {
-        verify(state.setRenderPreferences(
-                   150, "low", ["home", "recent-apps", "back"]))
+    function test_preferences_are_versioned_and_applied_immediately() {
+        verify(state.setPreferences(
+                   true, 150, "low", ["home", "recent-apps", "back"]))
 
+        compare(state.keepConnected, true)
         compare(state.previewScale, 150)
         compare(state.videoQuality, "low")
         compare(state.quickActions, ["home", "recent-apps", "back"])
         compare(commandSpy.count, 1)
         compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 2,
-                    type: "set-render-preferences",
+                    version: 3,
+                    type: "set-preferences",
+                    keepConnected: true,
                     previewScale: 150,
                     videoQuality: "low",
                     quickActions: ["home", "recent-apps", "back"]
@@ -210,6 +213,7 @@ TestCase {
     function test_quality_restart_event_waits_for_the_new_session() {
         state.receiveLine(event("session-started"))
         state.receiveLine(event("preferences-updated", {
+                                    keepConnected: true,
                                     previewScale: 50,
                                     videoQuality: "medium",
                                     quickActions: ["back", "home", "recent-apps"],
@@ -217,6 +221,7 @@ TestCase {
                                 }))
 
         compare(state.previewScale, 50)
+        compare(state.keepConnected, true)
         compare(state.videoQuality, "medium")
         compare(state.sessionState, "pairing")
         compare(state.pairingStage, "session-starting")
@@ -225,13 +230,14 @@ TestCase {
     }
 
     function test_invalid_preferences_fail_closed_without_command() {
-        verify(!state.setRenderPreferences(
-                   49, "high", ["back", "home", "recent-apps"]))
-        verify(!state.setRenderPreferences(
-                   151, "high", ["back", "home", "recent-apps"]))
+        verify(!state.setPreferences(
+                   false, 49, "high", ["back", "home", "recent-apps"]))
+        verify(!state.setPreferences(
+                   false, 151, "high", ["back", "home", "recent-apps"]))
         compare(commandSpy.count, 0)
 
         state.receiveLine(event("preferences-updated", {
+                                    keepConnected: false,
                                     previewScale: 151,
                                     videoQuality: "high",
                                     quickActions: ["back", "home", "recent-apps"],
@@ -284,7 +290,7 @@ TestCase {
 
         compare(commandSpy.count, 4)
         compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 2,
+                    version: 3,
                     type: "pointer-tap",
                     x: 0.25,
                     y: 0.75,
@@ -294,8 +300,8 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "pointer-swipe")
         compare(JSON.parse(commandSpy.signalArguments[1][0]).durationMs, 320)
         compare(JSON.parse(commandSpy.signalArguments[2][0]),
-                { version: 2, type: "key-input", key: "back" })
+                { version: 3, type: "key-input", key: "back" })
         compare(JSON.parse(commandSpy.signalArguments[3][0]),
-                { version: 2, type: "text-input", text: "a" })
+                { version: 3, type: "text-input", text: "a" })
     }
 }

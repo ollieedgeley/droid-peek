@@ -3,7 +3,7 @@ import QtQuick
 QtObject {
     id: root
 
-    readonly property int protocolVersion: 2
+    readonly property int protocolVersion: 3
     property bool helperReady: false
     property bool automaticPairingEnabled: true
     property string sessionState: "unpaired"
@@ -12,6 +12,7 @@ QtObject {
     property string statusDescription: "Open Wireless debugging on your phone."
     property string qrArtifact: ""
     property int qrExpiresInSeconds: 0
+    property bool keepConnected: false
     property int previewScale: 100
     property string videoQuality: "high"
     property var quickActions: ["back", "home", "recent-apps"]
@@ -26,6 +27,7 @@ QtObject {
         pairingStage = "idle"
         statusTitle = "Preparing QR code"
         statusDescription = "Open Wireless debugging on your phone."
+        keepConnected = false
         previewScale = 100
         videoQuality = "high"
         quickActions = ["back", "home", "recent-apps"]
@@ -123,6 +125,7 @@ QtObject {
 
     function applyPreferences(preferences) {
         if (!preferences
+                || typeof preferences.keepConnected !== "boolean"
                 || !validPreviewScale(preferences.previewScale)
                 || !validPreference(preferences.videoQuality, ["low", "medium", "high"])
                 || !Array.isArray(preferences.quickActions)
@@ -134,14 +137,16 @@ QtObject {
                                  ["back", "home", "recent-apps"]))
                 return false
         }
+        keepConnected = preferences.keepConnected
         previewScale = preferences.previewScale
         videoQuality = preferences.videoQuality
         quickActions = preferences.quickActions.slice()
         return true
     }
 
-    function setRenderPreferences(scale, quality, actions) {
+    function setPreferences(keepConnectedValue, scale, quality, actions) {
         var preferences = {
+            keepConnected: keepConnectedValue,
             previewScale: scale,
             videoQuality: quality,
             quickActions: actions
@@ -149,7 +154,8 @@ QtObject {
         if (!applyPreferences(preferences))
             return false
         sendCommand({
-            type: "set-render-preferences",
+            type: "set-preferences",
+            keepConnected: keepConnected,
             previewScale: previewScale,
             videoQuality: videoQuality,
             quickActions: quickActions

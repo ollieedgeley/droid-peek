@@ -8,6 +8,15 @@ QtObject {
 
     signal keyRequested(string key)
 
+    function quickActionKey(actionId) {
+        switch (actionId) {
+        case "back": return "back"
+        case "home": return "home"
+        case "recent-apps": return "app-switch"
+        default: return ""
+        }
+    }
+
     function trigger(actionId) {
         if (!sessionReady || !phoneFocused)
             return false

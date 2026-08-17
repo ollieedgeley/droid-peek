@@ -2,12 +2,12 @@ use zeroize::Zeroizing;
 
 use crate::{
     input::{AndroidKey, DisplayGeometry, NormalizedPoint},
-    preferences::RenderPreferences,
+    preferences::Preferences,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub const PROTOCOL_VERSION: u8 = 2;
+pub const PROTOCOL_VERSION: u8 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -66,14 +66,11 @@ pub trait PairingBackend {
         Err(FailureReason::Disconnected)
     }
 
-    fn render_preferences(&self) -> RenderPreferences {
-        RenderPreferences::default()
+    fn preferences(&self) -> Preferences {
+        Preferences::default()
     }
 
-    fn set_render_preferences(
-        &mut self,
-        _preferences: RenderPreferences,
-    ) -> Result<bool, FailureReason> {
+    fn set_preferences(&mut self, _preferences: Preferences) -> Result<bool, FailureReason> {
         Err(FailureReason::DependencyUnavailable)
     }
 
@@ -211,18 +208,20 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                             .map_err(InputCommandFailure::Backend)
                     }),
             ),
-            Command::SetRenderPreferences {
+            Command::SetPreferences {
+                keep_connected,
                 preview_scale,
                 video_quality,
                 quick_actions,
             } => vec![
-                match self.backend.set_render_preferences(RenderPreferences {
+                match self.backend.set_preferences(Preferences {
+                    keep_connected,
                     preview_scale,
                     video_quality,
                     quick_actions,
                 }) {
                     Ok(session_restarted) => Event::PreferencesUpdated {
-                        preferences: self.backend.render_preferences(),
+                        preferences: self.backend.preferences(),
                         session_restarted,
                     },
                     Err(reason) => Event::Failure { reason },
@@ -308,7 +307,9 @@ enum Command {
     TextInput {
         text: String,
     },
-    SetRenderPreferences {
+    SetPreferences {
+        #[serde(rename = "keepConnected")]
+        keep_connected: bool,
         #[serde(rename = "previewScale")]
         preview_scale: crate::preferences::PreviewScale,
         #[serde(rename = "videoQuality")]
@@ -350,7 +351,7 @@ pub enum Event {
     Ready {
         #[serde(rename = "hasTrustedDevice")]
         has_trusted_device: bool,
-        preferences: RenderPreferences,
+        preferences: Preferences,
     },
     QrWaiting {
         artifact: PathBuf,
@@ -377,7 +378,7 @@ pub enum Event {
     SessionStopped,
     PreferencesUpdated {
         #[serde(flatten)]
-        preferences: RenderPreferences,
+        preferences: Preferences,
         #[serde(rename = "sessionRestarted")]
         session_restarted: bool,
     },

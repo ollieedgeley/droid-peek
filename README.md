@@ -10,25 +10,30 @@ The panel and helper implement QR-first and six-digit fallback pairing through
 bounded Avahi discovery and ADB subprocesses. The helper privately remembers
 only the selected Android connection-service identity, resolves its current
 endpoint, and orchestrates a cancellable, headless scrcpy session against that
-in-memory target. scrcpy output is discarded, raw endpoints never cross the
-protocol boundary, and panel close waits for the child process to stop.
+in-memory target. scrcpy output is discarded and raw endpoints never cross the
+protocol boundary. Panel close stops the child process by default. The optional
+**Keep connected** preference retains only an active trusted session while the
+panel is hidden; pairing and failure states always shut down.
 
 The ready panel captures the private `Omarchy Android` V4L2 device through Qt
-Multimedia and releases it when the panel closes. Its focused input surface
-maps aspect-fit pointer coordinates and keyboard intent into versioned helper
-commands; the helper validates them and runs targeted Android `input` commands
-through its fakeable ADB boundary. Production uses `/dev/video42` by default;
-`OMARCHY_ANDROID_V4L2_SINK` overrides the private sink path.
+Multimedia and always releases that QML consumer when the panel closes. Its
+focused input surface maps aspect-fit pointer coordinates and keyboard intent
+into versioned helper commands; the helper validates them and runs targeted
+Android `input` commands through its fakeable ADB boundary. Production uses
+`/dev/video42` by default; `OMARCHY_ANDROID_V4L2_SINK` overrides the private
+sink path.
 
 The ready view includes Back, Home, and recent-apps controls plus an inline
-render-settings page. Preview scale accepts 50% through 150% and defaults to
-100%. The embedded viewport follows Qt Multimedia's live decoded-frame aspect
-ratio, fills the panel width inside the current Omarchy popup gutter at 100%,
-and scales both dimensions uniformly while remaining bounded by the active
-output. `PreserveAspectFit` protects frame transitions and rotation without
-cropping. Video quality selects a scrcpy profile and restarts only the active
-mirroring session; the trusted pairing and selected controls remain intact.
-Preferences are stored privately with the remembered-device record.
+Settings page. A chain-link toolbar button and the Settings toggle control the
+same persisted keep-connected value. Preview scale accepts 50% through 150%
+and defaults to 100%. The embedded viewport follows Qt Multimedia's live
+decoded-frame aspect ratio, fills the panel width inside the current Omarchy
+popup gutter at 100%, and scales both dimensions uniformly while remaining
+bounded by the active output. `PreserveAspectFit` protects frame transitions
+and rotation without cropping. Video quality selects a scrcpy profile and
+restarts only the active mirroring session; trusted pairing and other
+preferences remain intact. Preferences are stored privately beside the
+remembered-device record.
 
 Phase 0 is complete for the V1 Android 16 target. The development machine proved
 synthetic 360×640 playback at 30 fps and clean stop/restart behavior with

@@ -42,7 +42,7 @@ fn main() -> io::Result<()> {
         sink.clone(),
     )?;
     let has_trusted_device = backend.has_trusted_device();
-    let preferences = backend.render_preferences();
+    let preferences = backend.preferences();
     let mut engine = ProtocolEngine::new(backend);
 
     sink.emit_event(&Event::Ready {

@@ -7,12 +7,13 @@ import qs.Ui
 Column {
     id: root
 
+    property bool keepConnected: false
     property int previewScale: 100
     property string videoQuality: "high"
     property var quickActions: ["back", "home", "recent-apps"]
     property color foreground: Color.foreground
 
-    signal preferencesRequested(int previewScale, string videoQuality, var quickActions)
+    signal preferencesRequested(bool keepConnected, int previewScale, string videoQuality, var quickActions)
 
     readonly property var qualityOptions: [
         { value: "low", label: "Low" },
@@ -27,14 +28,65 @@ Column {
 
     spacing: Style.space(12)
 
-    function request(scale, quality, actions) {
-        preferencesRequested(scale, quality, actions.slice())
+    function request(keepConnectedValue, scale, quality, actions) {
+        preferencesRequested(keepConnectedValue, scale, quality, actions.slice())
     }
 
     function replaceAction(index, action) {
         var actions = quickActions.slice()
         actions[index] = action
-        request(previewScale, videoQuality, actions)
+        request(keepConnected, previewScale, videoQuality, actions)
+    }
+
+    Text {
+        width: parent.width
+        text: "CONNECTION"
+        color: Qt.darker(root.foreground, 1.35)
+        font.family: Style.fontFamily
+        font.pixelSize: Style.fontBaseSize * 0.85
+        font.bold: true
+        font.letterSpacing: 1.2
+    }
+
+    Item {
+        width: parent.width
+        height: Math.max(connectionCopy.implicitHeight, keepConnectedSwitch.implicitHeight)
+
+        Column {
+            id: connectionCopy
+            width: parent.width - keepConnectedSwitch.width - Style.space(12)
+            spacing: Style.space(3)
+
+            Text {
+                width: parent.width
+                text: "Keep phone connected"
+                color: root.foreground
+                font.family: Style.fontFamily
+                font.pixelSize: Style.fontBaseSize
+                font.bold: true
+                wrapMode: Text.Wrap
+            }
+
+            Text {
+                width: parent.width
+                text: "Keeps the private phone session running when this panel closes."
+                color: Qt.darker(root.foreground, 1.35)
+                font.family: Style.fontFamily
+                font.pixelSize: Style.fontBaseSize * 0.85
+                wrapMode: Text.Wrap
+            }
+        }
+
+        ToggleSwitch {
+            id: keepConnectedSwitch
+            objectName: "keepConnectedSwitch"
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            checked: root.keepConnected
+            foreground: root.foreground
+            onToggled: root.request(!root.keepConnected, root.previewScale,
+                                    root.videoQuality, root.quickActions)
+        }
     }
 
     NumberField {
@@ -47,7 +99,7 @@ Column {
         stepSize: 5
         foreground: root.foreground
         onModified: function(value) {
-            root.request(value, root.videoQuality, root.quickActions)
+            root.request(root.keepConnected, value, root.videoQuality, root.quickActions)
         }
     }
 
@@ -68,7 +120,7 @@ Column {
         options: root.qualityOptions
         foreground: root.foreground
         onChanged: function(value) {
-            root.request(root.previewScale, value, root.quickActions)
+            root.request(root.keepConnected, root.previewScale, value, root.quickActions)
         }
     }
 

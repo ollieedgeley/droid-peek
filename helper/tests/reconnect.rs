@@ -12,9 +12,7 @@ use std::{
 use omarchy_android_helper::{
     input::{AndroidKey, DisplayGeometry, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
-    preferences::{
-        FileRenderPreferenceStore, PreviewScale, QuickAction, RenderPreferences, VideoQuality,
-    },
+    preferences::{FilePreferenceStore, Preferences, PreviewScale, QuickAction, VideoQuality},
     process::{CancellationToken, CommandFailure, CommandOutput, CommandRequest, CommandRunner},
     protocol::{Event, FailureReason, PairingBackend},
     runtime::{ProtocolSink, RuntimePairingBackend},
@@ -441,7 +439,22 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
         1,
     );
 
-    let preferences = RenderPreferences {
+    let retained_preferences = Preferences {
+        keep_connected: true,
+        ..Preferences::default()
+    };
+    assert!(
+        !backend
+            .set_preferences(retained_preferences)
+            .expect("save keep-connected preference")
+    );
+    assert_eq!(
+        qualities.lock().expect("session qualities lock").as_slice(),
+        [VideoQuality::High]
+    );
+
+    let preferences = Preferences {
+        keep_connected: true,
         preview_scale: PreviewScale::new(150).expect("valid preview scale"),
         video_quality: VideoQuality::Low,
         quick_actions: [
@@ -452,7 +465,7 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
     };
     assert!(
         backend
-            .set_render_preferences(preferences)
+            .set_preferences(preferences)
             .expect("save and restart session")
     );
     sink.wait_for_count(
@@ -469,7 +482,7 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
     );
     assert!(stopped.load(Ordering::Acquire));
     assert_eq!(
-        FileRenderPreferenceStore::new(&state_directory)
+        FilePreferenceStore::new(&state_directory)
             .load()
             .expect("load saved preferences"),
         preferences

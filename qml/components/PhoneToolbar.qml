@@ -9,12 +9,14 @@ Item {
     id: root
 
     property var actions: ["back", "home", "recent-apps"]
+    property bool keepConnected: false
     property bool settingsOpen: false
     property bool controlsEnabled: true
     property color foreground: Color.foreground
 
     signal actionRequested(string action)
     signal settingsRequested()
+    signal keepConnectedRequested(bool keepConnected)
     signal backRequested()
 
     function actionLabel(action) {
@@ -54,7 +56,7 @@ Item {
 
         Text {
             visible: root.settingsOpen
-            text: "Render settings"
+            text: "Settings"
             color: root.foreground
             font.family: Style.fontFamily
             font.pixelSize: Style.fontBaseSize
@@ -82,11 +84,31 @@ Item {
         }
 
         PanelActionButton {
+            objectName: "keepConnectedButton"
+            visible: !root.settingsOpen
+            focusable: true
+            bordered: true
+            iconText: "󰌷"
+            tooltipText: root.keepConnected
+                         ? "Keep connected when panel closes: on"
+                         : "Keep connected when panel closes: off"
+            foreground: root.foreground
+            hoverColor: root.keepConnected ? Color.accent : root.foreground
+            color: root.keepConnected
+                   ? Style.selectedFillFor(root.foreground, Color.accent)
+                   : "transparent"
+            borderSpec: root.keepConnected
+                        ? Border.controlSpec("selected", root.foreground, Color.accent)
+                        : Border.controlSpec("normal", root.foreground, Color.accent)
+            onClicked: root.keepConnectedRequested(!root.keepConnected)
+        }
+
+        PanelActionButton {
             visible: !root.settingsOpen
             focusable: true
             bordered: true
             iconText: "󰒓"
-            tooltipText: "Render settings"
+            tooltipText: "Settings"
             foreground: root.foreground
             onClicked: root.settingsRequested()
         }

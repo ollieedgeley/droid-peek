@@ -34,6 +34,13 @@ TestCase {
         compare(keySpy.signalArguments[2][0], "app-switch")
     }
 
+    function test_toolbar_action_ids_map_to_protocol_keys() {
+        compare(router.quickActionKey("back"), "back")
+        compare(router.quickActionKey("home"), "home")
+        compare(router.quickActionKey("recent-apps"), "app-switch")
+        compare(router.quickActionKey("unknown"), "")
+    }
+
     function test_actions_do_not_steal_unfocused_omarchy_shortcuts() {
         router.sessionReady = true
         verify(!router.trigger("android-back"))

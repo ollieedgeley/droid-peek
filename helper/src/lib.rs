@@ -22,7 +22,7 @@ pub use protocol::PROTOCOL_VERSION;
 pub fn ready_event() -> String {
     protocol::Event::Ready {
         has_trusted_device: false,
-        preferences: preferences::RenderPreferences::default(),
+        preferences: preferences::Preferences::default(),
     }
     .to_line()
 }
@@ -36,7 +36,7 @@ mod tests {
         assert_eq!(
             ready_event(),
             format!(
-                r#"{{"version":{PROTOCOL_VERSION},"type":"ready","hasTrustedDevice":false,"preferences":{{"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}}}}"#
+                r#"{{"version":{PROTOCOL_VERSION},"type":"ready","hasTrustedDevice":false,"preferences":{{"keepConnected":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}}}}"#
             )
         );
         assert!(!ready_event().contains("secret"));

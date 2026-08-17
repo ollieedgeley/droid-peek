@@ -8,8 +8,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-const PREFERENCES_VERSION: u8 = 2;
-const PREFERENCES_FILE_NAME: &str = "render-preferences.json";
+const PREFERENCES_VERSION: u8 = 3;
+const PREFERENCES_FILE_NAME: &str = "preferences.json";
+const LEGACY_PREFERENCES_VERSION: u8 = 2;
+const LEGACY_PREFERENCES_FILE_NAME: &str = "render-preferences.json";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(try_from = "u8", into = "u8")]
@@ -73,15 +75,17 @@ pub enum QuickAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderPreferences {
+pub struct Preferences {
+    pub keep_connected: bool,
     pub preview_scale: PreviewScale,
     pub video_quality: VideoQuality,
     pub quick_actions: [QuickAction; 3],
 }
 
-impl Default for RenderPreferences {
+impl Default for Preferences {
     fn default() -> Self {
         Self {
+            keep_connected: false,
             preview_scale: PreviewScale::default(),
             video_quality: VideoQuality::High,
             quick_actions: [
@@ -94,11 +98,11 @@ impl Default for RenderPreferences {
 }
 
 #[derive(Clone)]
-pub struct FileRenderPreferenceStore {
+pub struct FilePreferenceStore {
     directory: PathBuf,
 }
 
-impl FileRenderPreferenceStore {
+impl FilePreferenceStore {
     #[must_use]
     pub fn new(directory: impl AsRef<Path>) -> Self {
         Self {
@@ -116,37 +120,56 @@ impl FileRenderPreferenceStore {
         self.directory.join(PREFERENCES_FILE_NAME)
     }
 
-    pub fn load(&self) -> io::Result<RenderPreferences> {
+    pub fn load(&self) -> io::Result<Preferences> {
         let path = self.path();
         let contents = match fs::read(&path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(RenderPreferences::default());
+                return self.load_legacy();
+            }
+            Err(error) => return Err(error),
+        };
+        let preferences = serde_json::from_slice::<StoredPreferences>(&contents)
+            .ok()
+            .filter(|stored| stored.version == PREFERENCES_VERSION)
+            .map(StoredPreferences::into_preferences);
+        match preferences {
+            Some(preferences) => Ok(preferences),
+            None => {
+                remove_if_present(&path)?;
+                Ok(Preferences::default())
+            }
+        }
+    }
+
+    fn load_legacy(&self) -> io::Result<Preferences> {
+        let legacy_path = self.directory.join(LEGACY_PREFERENCES_FILE_NAME);
+        let contents = match fs::read(&legacy_path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(Preferences::default());
             }
             Err(error) => return Err(error),
         };
         let preferences = serde_json::from_slice::<StoredRenderPreferences>(&contents)
             .ok()
-            .filter(|stored| stored.version == PREFERENCES_VERSION)
+            .filter(|stored| stored.version == LEGACY_PREFERENCES_VERSION)
             .map(StoredRenderPreferences::into_preferences);
-        match preferences {
-            Some(preferences) => Ok(preferences),
-            None => {
-                match fs::remove_file(path) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error),
-                }
-                Ok(RenderPreferences::default())
-            }
-        }
+        let Some(preferences) = preferences else {
+            remove_if_present(&legacy_path)?;
+            return Ok(Preferences::default());
+        };
+
+        self.save(&preferences)?;
+        remove_if_present(&legacy_path)?;
+        Ok(preferences)
     }
 
-    pub fn save(&self, preferences: &RenderPreferences) -> io::Result<()> {
+    pub fn save(&self, preferences: &Preferences) -> io::Result<()> {
         fs::create_dir_all(&self.directory)?;
         fs::set_permissions(&self.directory, fs::Permissions::from_mode(0o700))?;
 
-        let temporary_path = self.directory.join(".render-preferences.json.tmp");
+        let temporary_path = self.directory.join(".preferences.json.tmp");
         let mut temporary = OpenOptions::new()
             .write(true)
             .create(true)
@@ -154,7 +177,7 @@ impl FileRenderPreferenceStore {
             .mode(0o600)
             .open(&temporary_path)?;
         temporary.set_permissions(fs::Permissions::from_mode(0o600))?;
-        serde_json::to_writer(&mut temporary, &StoredRenderPreferences::from(*preferences))
+        serde_json::to_writer(&mut temporary, &StoredPreferences::from(*preferences))
             .map_err(io::Error::other)?;
         temporary.write_all(b"\n")?;
         temporary.sync_all()?;
@@ -164,17 +187,19 @@ impl FileRenderPreferenceStore {
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct StoredRenderPreferences {
+struct StoredPreferences {
     version: u8,
+    keep_connected: bool,
     preview_scale: PreviewScale,
     video_quality: VideoQuality,
     quick_actions: [QuickAction; 3],
 }
 
-impl From<RenderPreferences> for StoredRenderPreferences {
-    fn from(preferences: RenderPreferences) -> Self {
+impl From<Preferences> for StoredPreferences {
+    fn from(preferences: Preferences) -> Self {
         Self {
             version: PREFERENCES_VERSION,
+            keep_connected: preferences.keep_connected,
             preview_scale: preferences.preview_scale,
             video_quality: preferences.video_quality,
             quick_actions: preferences.quick_actions,
@@ -182,12 +207,41 @@ impl From<RenderPreferences> for StoredRenderPreferences {
     }
 }
 
-impl StoredRenderPreferences {
-    fn into_preferences(self) -> RenderPreferences {
-        RenderPreferences {
+impl StoredPreferences {
+    fn into_preferences(self) -> Preferences {
+        Preferences {
+            keep_connected: self.keep_connected,
             preview_scale: self.preview_scale,
             video_quality: self.video_quality,
             quick_actions: self.quick_actions,
         }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredRenderPreferences {
+    version: u8,
+    preview_scale: PreviewScale,
+    video_quality: VideoQuality,
+    quick_actions: [QuickAction; 3],
+}
+
+impl StoredRenderPreferences {
+    fn into_preferences(self) -> Preferences {
+        Preferences {
+            keep_connected: false,
+            preview_scale: self.preview_scale,
+            video_quality: self.video_quality,
+            quick_actions: self.quick_actions,
+        }
+    }
+}
+
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
     }
 }

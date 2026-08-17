@@ -15,7 +15,7 @@ use zeroize::Zeroizing;
 use crate::{
     input::{AdbInputAdapter, AndroidKey, DisplayGeometry, InputFailure, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
-    preferences::{FileRenderPreferenceStore, RenderPreferences},
+    preferences::{FilePreferenceStore, Preferences},
     process::{AdbCommandRunner, CancellationToken, CommandRunner},
     protocol::{Event, FailureReason, PairingBackend, PairingMethod, QrPresentation},
     qr::{QrCeremony, RuntimeQrRenderer, SystemClock, SystemEntropy},
@@ -150,8 +150,8 @@ pub struct RuntimePairingBackend<S> {
     session_cancellation: CancellationToken,
     pending: Option<PendingPairing>,
     store: FileTrustedDeviceStore,
-    preference_store: FileRenderPreferenceStore,
-    preferences: RenderPreferences,
+    preference_store: FilePreferenceStore,
+    preferences: Preferences,
     trusted_device: Arc<Mutex<Option<TrustedDevice>>>,
     pending_reconnect: Option<PendingReconnect>,
 }
@@ -278,7 +278,7 @@ where
         );
         let store = FileTrustedDeviceStore::new(&state_directory);
         let trusted_device = store.load()?;
-        let preference_store = FileRenderPreferenceStore::new(&state_directory);
+        let preference_store = FilePreferenceStore::new(&state_directory);
         let preferences = preference_store.load()?;
         if let Some(runner) = session.as_mut() {
             runner.set_quality(preferences.video_quality);
@@ -764,14 +764,11 @@ where
         self.run_input(|adapter, target| adapter.text(target, text))
     }
 
-    fn render_preferences(&self) -> RenderPreferences {
+    fn preferences(&self) -> Preferences {
         self.preferences
     }
 
-    fn set_render_preferences(
-        &mut self,
-        preferences: RenderPreferences,
-    ) -> Result<bool, FailureReason> {
+    fn set_preferences(&mut self, preferences: Preferences) -> Result<bool, FailureReason> {
         let quality_changed = preferences.video_quality != self.preferences.video_quality;
         let restart_target = quality_changed
             .then(|| {

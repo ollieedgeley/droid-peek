@@ -390,7 +390,7 @@ fn browser_adapter_uses_only_a_package_free_standard_intent() {
 }
 
 #[test]
-fn package_launch_adapter_uses_a_structured_launcher_intent() {
+fn package_launch_adapter_targets_one_launcher_activity_with_monkey() {
     let mut runner = FakeActionRunner::default();
     let cancellation = CancellationToken::new();
     let mut adapter = AdbActionAdapter::new(&mut runner, &cancellation);
@@ -407,15 +407,12 @@ fn package_launch_adapter_uses_a_structured_launcher_intent() {
             "-s",
             "device.local:38100",
             "shell",
-            "am",
-            "start",
-            "-W",
-            "-a",
-            "android.intent.action.MAIN",
+            "monkey",
+            "-p",
+            "com.example.notes",
             "-c",
             "android.intent.category.LAUNCHER",
-            "-p",
-            "com.example.notes"
+            "1"
         ]
     );
 }

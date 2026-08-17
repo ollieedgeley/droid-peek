@@ -28,23 +28,36 @@ Panel {
     implicitWidth: 320
     implicitHeight: 480
 
+    function horizontalPanelInset() {
+        return panel.padding * 2
+                + Border.left(panel.borderSpec)
+                + Border.right(panel.borderSpec)
+    }
+
     function desiredViewportSize(availableHeight) {
-        var maxWidth = Screen.width > 0
-                ? Math.max(1, Screen.width - Style.space(80))
-                : Style.space(320)
+        var horizontalInset = horizontalPanelInset()
+        var maxWidth = panel.availableCardWidth > 0
+                ? Math.max(1, panel.availableCardWidth - horizontalInset)
+                : Style.space(288)
         var maxHeight = availableHeight > 0
-                ? Math.max(1, availableHeight - phoneToolbar.implicitHeight
-                           - content.spacing)
-                : Style.space(560)
-        return PreviewGeometry.scaledViewportSize(
-                    Style.space(320), Style.space(560),
+                ? Math.max(1, availableHeight - panel.verticalContentInset
+                           - phoneToolbar.implicitHeight - content.spacing)
+                : Style.space(640)
+        var sourceWidth = phonePreview && phonePreview.displayWidth > 0
+                ? phonePreview.displayWidth : 9
+        var sourceHeight = phonePreview && phonePreview.displayHeight > 0
+                ? phonePreview.displayHeight : 16
+        var baseWidth = Math.max(1, Style.space(320) - horizontalInset)
+        return PreviewGeometry.scaledAspectSize(
+                    sourceWidth, sourceHeight, baseWidth,
                     maxWidth, maxHeight, pairingState.previewScale)
     }
 
     function desiredPanelWidth() {
         if (pairingState.sessionState === "ready" && !root.settingsOpen)
-            return Math.max(phoneToolbar.implicitWidth,
-                            desiredViewportSize(panel.availableCardHeight).width)
+            return horizontalPanelInset()
+                    + Math.max(phoneToolbar.implicitWidth,
+                               desiredViewportSize(panel.availableCardHeight).width)
         return Style.space(320)
     }
 

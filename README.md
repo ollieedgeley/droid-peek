@@ -22,14 +22,13 @@ through its fakeable ADB boundary. Production uses `/dev/video42` by default;
 
 The ready view includes Back, Home, and recent-apps controls plus an inline
 render-settings page. Preview scale accepts 50% through 150% and defaults to
-100%. The 100% embedded viewport is 320 by 560 logical pixels; scaling changes
-that viewport like a window-width setting while remaining bounded by the active
-output. Qt Multimedia centers the complete Android frame with
-`PreserveAspectFit`, and any letterbox area uses the active Omarchy panel
-background rather than a fixed color. Video quality selects a scrcpy profile
-and restarts only the active mirroring session; the trusted pairing and selected
-controls remain intact. Preferences are stored privately with the
-remembered-device record.
+100%. The embedded viewport follows Qt Multimedia's live decoded-frame aspect
+ratio, fills the panel width inside the current Omarchy popup gutter at 100%,
+and scales both dimensions uniformly while remaining bounded by the active
+output. `PreserveAspectFit` protects frame transitions and rotation without
+cropping. Video quality selects a scrcpy profile and restarts only the active
+mirroring session; the trusted pairing and selected controls remain intact.
+Preferences are stored privately with the remembered-device record.
 
 Phase 0 is complete for the V1 Android 16 target. The development machine proved
 synthetic 360×640 playback at 30 fps and clean stop/restart behavior with

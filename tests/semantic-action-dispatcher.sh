@@ -12,27 +12,36 @@ trap cleanup EXIT
 
 cat >"$test_root/omarchy-shell" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$#" != 5 || "$1" != "ollie.android" || "$2" != "action" ]]; then
+if [[ "$#" != 6 || "$1" != "ollie.android" || "$2" != "action" ]]; then
   printf 'unexpected IPC arguments:' >&2
   printf ' <%s>' "$@" >&2
   printf '\n' >&2
   exit 2
 fi
-printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" \
+printf '%s|%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5" "$6" \
   >>"$FAKE_IPC_ARGUMENT_LOG"
 action_id="$3"
-request_id="$4"
-expires_at_unix_ms="$5"
-if [[ "$action_id" != "omarchy-browser" ]]; then
-  printf 'unexpected action id: %s\n' "$action_id" >&2
-  exit 2
-fi
+action_argument="$4"
+request_id="$5"
+expires_at_unix_ms="$6"
+case "$action_id" in
+  omarchy-browser)
+    [[ -z "$action_argument" ]] || exit 2
+    ;;
+  android-launch-app)
+    [[ "$action_argument" == "com.example.notes" ]] || exit 2
+    ;;
+  *)
+    printf 'unexpected action id: %s\n' "$action_id" >&2
+    exit 2
+    ;;
+esac
 if [[ ! "$request_id" =~ ^[A-Za-z0-9-]{1,64}$ ]]; then
   printf 'unsafe request id: %s\n' "$request_id" >&2
   exit 2
 fi
 if [[ ! "$expires_at_unix_ms" =~ ^[0-9]+$ ]]; then
-  printf 'deadline is not a numeric third IPC argument: %s\n' "$expires_at_unix_ms" >&2
+  printf 'deadline is not a numeric IPC argument: %s\n' "$expires_at_unix_ms" >&2
   exit 2
 fi
 now_unix_ms="$(date +%s%3N)"
@@ -141,10 +150,10 @@ assert_timeout_process_stopped() {
 }
 
 assert_timeout_result_not_accepted() {
-  local ipc_app ipc_method ipc_action logged_request_id ipc_deadline
+  local ipc_app ipc_method ipc_action ipc_argument logged_request_id ipc_deadline
   local timeout_request_id=
-  while IFS=$'\t' read -r \
-    ipc_app ipc_method ipc_action logged_request_id ipc_deadline; do
+  while IFS='|' read -r \
+    ipc_app ipc_method ipc_action ipc_argument logged_request_id ipc_deadline; do
     timeout_request_id="$logged_request_id"
   done <"$FAKE_IPC_ARGUMENT_LOG"
 
@@ -193,31 +202,31 @@ assert_hard_ipc_wrapper() {
 }
 
 FAKE_ACCEPT_RESULT=true FAKE_FINAL_RESULT=true \
-  "$dispatcher" omarchy-browser fallback
+  "$dispatcher" omarchy-browser '' fallback
 assert_fallback_count 0
 assert_ipc_count 1
 
 FAKE_ACCEPT_RESULT=true FAKE_FINAL_RESULT=false \
-  "$dispatcher" omarchy-browser fallback
+  "$dispatcher" omarchy-browser '' fallback
 assert_fallback_count 1
 
 FAKE_ACCEPT_RESULT=true FAKE_FINAL_RESULT=unexpected \
-  "$dispatcher" omarchy-browser fallback
+  "$dispatcher" omarchy-browser '' fallback
 assert_fallback_count 2
 
-FAKE_ACCEPT_RESULT=false "$dispatcher" omarchy-browser fallback
+FAKE_ACCEPT_RESULT=false "$dispatcher" omarchy-browser '' fallback
 assert_fallback_count 3
 
 FAKE_ACCEPT_RESULT=true FAKE_ACTION_STATUS=1 \
-  "$dispatcher" omarchy-browser fallback
+  "$dispatcher" omarchy-browser '' fallback
 assert_fallback_count 4
 
-FAKE_ACCEPT_RESULT=true "$dispatcher" omarchy-browser fallback
+FAKE_ACCEPT_RESULT=true "$dispatcher" omarchy-browser '' fallback
 assert_fallback_count 5
 
 timeout_started_at_ms="$(date +%s%3N)"
 FAKE_IPC_TIMEOUT=true FAKE_ACCEPT_RESULT=true FAKE_FINAL_RESULT=true \
-  "$dispatcher" omarchy-browser fallback
+  "$dispatcher" omarchy-browser '' fallback
 timeout_finished_at_ms="$(date +%s%3N)"
 assert_fallback_count 6
 assert_ipc_count 7
@@ -226,9 +235,14 @@ assert_timeout_process_stopped
 assert_timeout_result_not_accepted
 assert_hard_ipc_wrapper
 
-if "$dispatcher" omarchy-browser 2>/dev/null; then
+FAKE_ACCEPT_RESULT=true FAKE_FINAL_RESULT=true \
+  "$dispatcher" android-launch-app com.example.notes fallback
+assert_fallback_count 6
+assert_ipc_count 8
+
+if "$dispatcher" omarchy-browser '' 2>/dev/null; then
   printf 'dispatcher accepted a missing fallback\n' >&2
   exit 1
 fi
 assert_fallback_count 6
-assert_ipc_count 7
+assert_ipc_count 8

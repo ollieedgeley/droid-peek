@@ -201,6 +201,7 @@ fn runtime_rejects_expired_actions_and_cancels_slow_accepted_actions() {
     assert_eq!(
         backend.semantic_action(
             SemanticAction::OmarchyBrowser,
+            None,
             "expired-action",
             unix_time_ms() - 1_000,
         ),
@@ -216,6 +217,7 @@ fn runtime_rejects_expired_actions_and_cancels_slow_accepted_actions() {
     assert_eq!(
         backend.semantic_action(
             SemanticAction::OmarchyBrowser,
+            None,
             "unreasonable-future-action",
             unix_time_ms() + 60_000,
         ),
@@ -232,6 +234,7 @@ fn runtime_rejects_expired_actions_and_cancels_slow_accepted_actions() {
     assert_eq!(
         backend.semantic_action(
             SemanticAction::OmarchyBrowser,
+            None,
             "slow-action",
             unix_time_ms() + 2_000,
         ),

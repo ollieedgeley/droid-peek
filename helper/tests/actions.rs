@@ -14,14 +14,14 @@ use omarchy_android_helper::{
 #[test]
 fn bundled_manifest_is_the_settled_android_16_default_profile() {
     let manifest = bundled_action_manifest().expect("valid bundled action manifest");
-    assert_eq!(manifest.schema_version(), 2);
+    assert_eq!(manifest.schema_version(), 3);
 
     let actions: HashMap<_, _> = manifest
         .actions()
         .iter()
         .map(|action| (action.id.as_str(), action))
         .collect();
-    assert_eq!(actions.len(), 9);
+    assert_eq!(actions.len(), 10);
 
     assert_eq!(
         actions["toggle-android-panel"].classification,
@@ -87,6 +87,15 @@ fn bundled_manifest_is_the_settled_android_16_default_profile() {
         [16]
     );
 
+    assert_eq!(
+        actions["android-launch-app"].result,
+        ActionResult::PackageLaunch {}
+    );
+    assert_eq!(
+        actions["android-launch-app"].verification.status,
+        VerificationStatus::AutomatedContract
+    );
+
     for id in ["android-back", "android-home", "android-recent-apps"] {
         assert_eq!(
             actions[id].classification,
@@ -132,7 +141,7 @@ fn version_one_manifest_is_rejected_instead_of_reinterpreting_legacy_search() {
 #[test]
 fn manifest_rejects_duplicate_ids_and_unverified_device_claims() {
     let duplicate_ids = r#"{
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "actions": [
             {
                 "id": "android-back",
@@ -175,7 +184,7 @@ fn manifest_rejects_duplicate_ids_and_unverified_device_claims() {
 fn only_manifest_declared_override_targets_can_replace_a_default() {
     let manifest = parse_action_manifest(
         r#"{
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "actions": [{
                 "id": "android-back",
                 "label": "Back",
@@ -195,13 +204,13 @@ fn only_manifest_declared_override_targets_can_replace_a_default() {
     .expect("valid test manifest");
     let profile = parse_action_profile(
         r#"{
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "overrides": [{"actionId": "android-back", "targetId": "home-instead"}]
         }"#,
     )
     .expect("valid profile");
 
-    assert_eq!(profile.schema_version(), 2);
+    assert_eq!(profile.schema_version(), 3);
     let resolved =
         resolve_action(&manifest, Some(&profile), "android-back").expect("known action resolves");
     assert_eq!(resolved.source, ActionSource::UserOverride);
@@ -218,7 +227,7 @@ fn stale_unknown_and_legacy_overrides_fail_closed() {
     let manifest = bundled_action_manifest().expect("valid bundled action manifest");
     let stale = parse_action_profile(
         r#"{
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "overrides": [{"actionId": "android-back", "targetId": "removed-target"}]
         }"#,
     )
@@ -236,7 +245,7 @@ fn stale_unknown_and_legacy_overrides_fail_closed() {
     assert!(resolve_action(&manifest, Some(&stale), "unknown-action").is_none());
 
     let legacy = r#"{
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "overrides": [{"actionId": "open-universal-search", "targetId": "anything"}]
     }"#;
     assert_eq!(
@@ -254,7 +263,7 @@ fn malformed_or_unsupported_profiles_are_rejected() {
     assert_eq!(
         parse_action_profile(
             r#"{
-                "schemaVersion": 2,
+                "schemaVersion": 3,
                 "overrides": [
                     {"actionId": "android-back", "targetId": "one"},
                     {"actionId": "android-back", "targetId": "two"}
@@ -264,7 +273,7 @@ fn malformed_or_unsupported_profiles_are_rejected() {
         Err(ActionProfileError::DuplicateActionId)
     );
     assert_eq!(
-        parse_action_profile(r#"{"schemaVersion": 2, "overrides": [], "chord": "Super+B"}"#),
+        parse_action_profile(r#"{"schemaVersion": 3, "overrides": [], "chord": "Super+B"}"#),
         Err(ActionProfileError::InvalidJson)
     );
 }
@@ -272,7 +281,7 @@ fn malformed_or_unsupported_profiles_are_rejected() {
 #[test]
 fn package_hard_codes_and_unverified_override_targets_are_rejected() {
     let package_target = r#"{
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "actions": [{
             "id": "omarchy-browser",
             "label": "Open phone browser",
@@ -293,7 +302,7 @@ fn package_hard_codes_and_unverified_override_targets_are_rejected() {
     );
 
     let unverified_target = r#"{
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "actions": [{
             "id": "android-back",
             "label": "Back",
@@ -377,6 +386,37 @@ fn browser_adapter_uses_only_a_package_free_standard_intent() {
             .arguments()
             .iter()
             .all(|argument| argument != "--package" && argument != "-n")
+    );
+}
+
+#[test]
+fn package_launch_adapter_uses_a_structured_launcher_intent() {
+    let mut runner = FakeActionRunner::default();
+    let cancellation = CancellationToken::new();
+    let mut adapter = AdbActionAdapter::new(&mut runner, &cancellation);
+
+    adapter
+        .launch_package("device.local:38100", "com.example.notes")
+        .expect("package launch succeeds");
+
+    assert_eq!(runner.requests.len(), 1);
+    assert_eq!(runner.requests[0].program(), "adb");
+    assert_eq!(
+        runner.requests[0].arguments(),
+        [
+            "-s",
+            "device.local:38100",
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "-p",
+            "com.example.notes"
+        ]
     );
 }
 

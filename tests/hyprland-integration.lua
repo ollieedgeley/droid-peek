@@ -170,9 +170,9 @@ assert(calls[8].description == nil, "nil panel description must be preserved")
 assert(calls[8].options == nil, "nil panel options must be preserved")
 
 assert(calls[9].keys == "SUPER + SHIFT + B")
-assert(calls[9].description == "Browser / Android browser")
+assert(calls[9].description == "Browser / Android default browser")
 assert(type(calls[9].dispatcher) == "string")
-assert(calls[9].dispatcher:match("omarchy%-android%-action' omarchy%-browser omarchy%-launch%-browser$"))
+assert(calls[9].dispatcher:match("omarchy%-android%-action' omarchy%-browser '' omarchy%-launch%-browser$"))
 assert(calls[9].options == browser_options)
 assert(calls[10].dispatcher == private_browser, "private browser must remain untouched")
 assert(calls[11].dispatcher == terminal, "unsupported bindings must remain untouched")
@@ -201,7 +201,8 @@ assert(#executed_commands == 1, "close must launch one semantic action")
 local expected_close_command = table.concat({
   "/usr/bin/timeout --signal=KILL 7",
   "'/home/test/.local/bin/omarchy-android-action'",
-  "omarchy-close-current-window",
+  "android-home",
+  "''",
   "/usr/bin/touch",
   "'" .. marker .. "'",
   "|| /usr/bin/touch",
@@ -212,7 +213,7 @@ assert(
   "close must use the exact absolute non-catchable KILL timeout wrapper"
 )
 assert(executed_commands[1]:find(
-  "'/home/test/.local/bin/omarchy-android-action' omarchy-close-current-window",
+  "'/home/test/.local/bin/omarchy-android-action' android-home ''",
   1,
   true
 ))

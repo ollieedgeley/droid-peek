@@ -2,14 +2,14 @@ use zeroize::Zeroizing;
 
 use crate::{
     action_results::validate_request_id,
-    actions::SemanticAction,
+    actions::{SemanticAction, valid_android_package},
     input::{AndroidKey, DisplayGeometry, NormalizedPoint},
     preferences::Preferences,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub const PROTOCOL_VERSION: u8 = 8;
+pub const PROTOCOL_VERSION: u8 = 9;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -75,6 +75,7 @@ pub trait PairingBackend {
     fn semantic_action(
         &mut self,
         _action: SemanticAction,
+        _action_argument: Option<&str>,
         _request_id: &str,
         _expires_at_unix_ms: u64,
     ) -> Result<bool, FailureReason> {
@@ -232,10 +233,13 @@ impl<B: PairingBackend> ProtocolEngine<B> {
             ),
             Command::SemanticAction {
                 action_id,
+                action_argument,
                 request_id,
                 expires_at_unix_ms,
             } => {
-                if validate_request_id(&request_id).is_err() {
+                let action_argument =
+                    validate_action_argument(action_id, action_argument.as_deref());
+                if validate_request_id(&request_id).is_err() || action_argument.is_none() {
                     return vec![
                         Event::ProtocolError {
                             reason: ProtocolErrorReason::InvalidCommand,
@@ -243,10 +247,12 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                         .to_line(),
                     ];
                 }
-                match self
-                    .backend
-                    .semantic_action(action_id, &request_id, expires_at_unix_ms)
-                {
+                match self.backend.semantic_action(
+                    action_id,
+                    action_argument.flatten(),
+                    &request_id,
+                    expires_at_unix_ms,
+                ) {
                     Ok(handled) => vec![
                         Event::ActionResult {
                             action_id,
@@ -326,6 +332,21 @@ fn validate_text(text: &str) -> Option<&str> {
         .then_some(text)
 }
 
+fn validate_action_argument(
+    action: SemanticAction,
+    argument: Option<&str>,
+) -> Option<Option<&str>> {
+    match action {
+        SemanticAction::AndroidLaunchApp => argument
+            .filter(|package| valid_android_package(package))
+            .map(Some),
+        _ => match argument {
+            None | Some("") => Some(None),
+            Some(_) => None,
+        },
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
 enum Command {
@@ -371,6 +392,8 @@ enum Command {
     SemanticAction {
         #[serde(rename = "actionId")]
         action_id: SemanticAction,
+        #[serde(rename = "actionArgument", default)]
+        action_argument: Option<String>,
         #[serde(rename = "requestId")]
         request_id: String,
         #[serde(rename = "expiresAtUnixMs")]

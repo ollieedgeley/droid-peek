@@ -3,7 +3,7 @@ import QtQuick
 QtObject {
     id: root
 
-    readonly property int protocolVersion: 8
+    readonly property int protocolVersion: 9
     property bool helperReady: false
     property bool automaticPairingEnabled: true
     property bool hasTrustedDevice: false
@@ -145,15 +145,26 @@ QtObject {
                 && expiresAtUnixMs > Date.now()
     }
 
-    function sendSemanticAction(actionId, requestId, expiresAtUnixMs) {
-        if ((actionId !== "omarchy-close-current-window"
-                && actionId !== "omarchy-browser")
+    function sendSemanticAction(actionId, requestId, expiresAtUnixMs, actionArgument) {
+        actionArgument = actionArgument || ""
+        var knownAction = actionId === "omarchy-close-current-window"
+                || actionId === "omarchy-browser"
+                || actionId === "omarchy-menu"
+                || actionId === "android-back"
+                || actionId === "android-home"
+                || actionId === "android-recent-apps"
+                || actionId === "android-launch-app"
+        var validArgument = actionId === "android-launch-app"
+                ? /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(actionArgument)
+                : actionArgument === ""
+        if (!knownAction || !validArgument
                 || !validActionRequestId(requestId)
                 || !validActionDeadline(expiresAtUnixMs))
             return false
         sendCommand({
                         type: "semantic-action",
                         actionId: actionId,
+                        actionArgument: actionArgument,
                         requestId: requestId,
                         expiresAtUnixMs: expiresAtUnixMs
                     })
@@ -394,7 +405,12 @@ QtObject {
             return
         case "action-result":
             if ((event.actionId !== "omarchy-close-current-window"
-                    && event.actionId !== "omarchy-browser")
+                    && event.actionId !== "omarchy-browser"
+                    && event.actionId !== "omarchy-menu"
+                    && event.actionId !== "android-back"
+                    && event.actionId !== "android-home"
+                    && event.actionId !== "android-recent-apps"
+                    && event.actionId !== "android-launch-app")
                     || !validActionRequestId(event.requestId)
                     || typeof event.handled !== "boolean") {
                 protocolFailure()

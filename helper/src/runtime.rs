@@ -855,6 +855,7 @@ where
     fn semantic_action(
         &mut self,
         action: SemanticAction,
+        action_argument: Option<&str>,
         request_id: &str,
         expires_at_unix_ms: u64,
     ) -> Result<bool, FailureReason> {
@@ -878,9 +879,10 @@ where
                     remaining_ms.min(MAX_SEMANTIC_EXECUTION_MS),
                 ));
 
-        enum Execution {
+        enum Execution<'a> {
             Key(AndroidKey),
             StandardBrowser,
+            LaunchPackage(&'a str),
             Unhandled,
         }
 
@@ -889,6 +891,9 @@ where
         {
             Some(ActionResult::KeyInput { key }) => Execution::Key(*key),
             Some(ActionResult::StandardBrowserIntent {}) => Execution::StandardBrowser,
+            Some(ActionResult::PackageLaunch {}) => action_argument
+                .map(Execution::LaunchPackage)
+                .unwrap_or(Execution::Unhandled),
             _ => Execution::Unhandled,
         };
 
@@ -901,6 +906,10 @@ where
             Execution::StandardBrowser => self
                 .run_action(&action_cancellation, |adapter, target| {
                     adapter.open_standard_browser(target)
+                }),
+            Execution::LaunchPackage(package) => self
+                .run_action(&action_cancellation, |adapter, target| {
+                    adapter.launch_package(target, package)
                 }),
             Execution::Unhandled => Ok(false),
         };

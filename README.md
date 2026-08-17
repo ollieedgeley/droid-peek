@@ -31,7 +31,7 @@ Opening a ready panel, or reaching Ready after reconnection, automatically
 focuses this input surface so keyboard control works without an extra click.
 
 Focused semantic action routing uses the bundled Android 16 profile through
-protocol v8. **Close current window** maps to Android Home, and **Open browser**
+protocol v9. **Close current window** maps to Android Home, and **Open browser**
 uses a package-free standard Android browser intent. An optional user-owned
 Hyprland loader recognizes the exact typed global panel-toggle declaration,
 supported typed Omarchy browser declarations, and verified opaque closures
@@ -155,64 +155,116 @@ command.
 
 ### Optional semantic binding integration
 
-One opt-in loader routes the exact typed global panel-toggle declaration,
-supported typed browser declarations, and recognized `hl.dsp.window.close()`
-factory results without per-chord overrides. Add this line to
-`~/.config/hypr/hyprland.lua` after the bootstrap `dofile(...)` and
-before `require("default.hypr.omarchy")`:
+The opt-in Hyprland integration routes reviewed Omarchy actions to Android
+without binding behavior to a particular chord. Copy the editable configuration
+once; later plugin updates must not overwrite it:
 
-```lua
-dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/ollie.android/integrations/hyprland.lua")
+```bash
+test -e "$HOME/.config/hypr/omarchy-android.lua" || \
+  install -m644 integrations/config.example.lua \
+    "$HOME/.config/hypr/omarchy-android.lua"
 ```
 
-To migrate an existing direct panel-toggle command, keep the user-owned chord
-and any binding options, and replace only its command action with this exact
-typed declaration:
+Load and configure the integration after Omarchy's bootstrap but before
+`require("default.hypr.omarchy")`:
 
 ```lua
-o.bind("SUPER + ALT + A", "Toggle Android panel", { omarchy = "toggle-android-panel" })
+local android = dofile(
+  os.getenv("HOME") .. "/.config/omarchy/plugins/ollie.android/integrations/hyprland.lua"
+)
+android.configure(dofile(os.getenv("HOME") .. "/.config/hypr/omarchy-android.lua"))
 ```
 
-The declaration directly invokes `omarchy-shell ollie.android toggle`, while
-preserving the chosen chord and options. It does not depend on phone focus and
-has no desktop fallback because toggle is the global panel lifecycle action.
-Only a table whose single key is this supported `omarchy` declaration is
-recognized; near matches, tables with extra fields, and unsupported
-declarations remain untouched. Browser and close behavior remain as documented
-below.
+After Omarchy defaults and the user's ordinary bindings have loaded, register
+any Android-only chords:
 
-The loader wraps the close factory before defaults load and recognizes only
-the exact opaque closures that factory returns. This covers active custom
-close-window declarations only when they are constructed through
-`hl.dsp.window.close()` after the loader is installed. It also intercepts
-allowlisted, typed Omarchy browser declarations while Hyprland evaluates
-them. It does not read or rewrite binding files, inspect labels, infer intent
-from chords or shell strings, or treat arbitrary functions and ambiguous
-overrides as semantic actions. The stock browser bindings, `SUPER + SHIFT + B`
-and `SUPER + SHIFT + RETURN`, are supported; unsupported arbitrary overrides
-remain unchanged.
+```lua
+android.install_custom_bindings()
+```
 
-Hyprland reloads the user configuration automatically. Validate it with
-`hyprctl reload` followed by `hyprctl configerrors`. The loader is only the
-desktop integration boundary; the global **Android-mode shortcuts** Settings
-switch remains the master control and defaults off. While that switch is on and
-the ready, visible, enabled phone preview owns focus, a recognized mapping runs
-its Android action. Turning the switch off is applied optimistically after QML
-validates the update and before the preference command is emitted, so the next
-semantic dispatch fails closed to desktop ownership without waiting for a
-session restart. Protocol-v8 semantic attempts carry an absolute expiry 2
-seconds after dispatch; IPC is bounded to 3 seconds, and the helper rejects
-deadlines more than 5 seconds ahead. Semantic ADB work is capped at 750 ms. On
-expiry, the helper kills and reaps that work before an unhandled result permits
-desktop fallback, so the phone cannot act after fallback. Close routing
-additionally has a 7-second outer execution guard and checks for its correlated
-result at most 160 times at 50 ms intervals.
+The configuration file returns one strict table:
 
-If Android rejects or cannot handle the action, the helper fails, or the request
-expires, browser routing invokes its direct packaged command fallback exactly
-once; close routing preserves the exact original Lua closure and asynchronously
-dispatches it once through `hl.dispatch`. Remove the one `dofile` line to
-disable semantic binding integration.
+```lua
+return {
+  smartDefaults = true,
+  routes = {
+    ["omarchy.browser"] = "android.browser.default",
+    ["omarchy.window.close"] = "android.navigate.back",
+    ["omarchy.menu"] = false,
+  },
+  customBindings = {
+    {
+      keys = "CTRL + ALT + SHIFT + P",
+      action = { type = "android.app.launch", package = "com.example.app" },
+    },
+  },
+}
+```
+
+`smartDefaults = true` installs the reviewed defaults. A route entry overrides
+one default; `false` disables Android interception for that source while
+preserving its original Omarchy behavior. Unknown fields, source IDs, target
+IDs, and malformed package names stop configuration with a precise error.
+Custom bindings are registered only in the second phase, after normal bindings,
+so collision handling remains Omarchy's. They have no desktop fallback because
+no pre-existing desktop action owns them.
+
+The bundled semantic action matrix uses schema version 3; the version bump adds
+the structured `android-launch-app` result rather than silently extending
+schema version 2.
+
+Available Omarchy source IDs:
+
+| Source ID | Existing Omarchy action |
+| --- | --- |
+| `omarchy.terminal` | Terminal |
+| `omarchy.browser` | Browser |
+| `omarchy.browser.private` | Private browser |
+| `omarchy.file-manager` | File manager |
+| `omarchy.file-manager.cwd` | File manager at current directory |
+| `omarchy.editor` | Editor |
+| `omarchy.terminal.tmux` | Tmux terminal |
+| `omarchy.terminal.herdr` | Herdr terminal |
+| `omarchy.spotify` | Spotify |
+| `omarchy.signal` | Signal |
+| `omarchy.passwords` | Password manager |
+| `omarchy.android.panel.toggle` | Android panel toggle |
+| `omarchy.window.close` | `hl.dsp.window.close()` |
+
+Available Android target IDs:
+
+| Target ID | Android behavior |
+| --- | --- |
+| `android.panel.toggle` | Open or close the Android panel |
+| `android.browser.default` | Open Android's default browser |
+| `android.launcher.search` | Open launcher search; currently unavailable pending capability proof |
+| `android.navigate.back` | Android Back |
+| `android.navigate.home` | Android Home |
+| `android.navigate.recent-apps` | Android recent apps |
+| `{ type = "android.app.launch", package = "com.example.app" }` | Launch one validated package |
+
+The reviewed smart defaults are
+`omarchy.android.panel.toggle` to `android.panel.toggle`,
+`omarchy.browser` to `android.browser.default`, and
+`omarchy.window.close` to `android.navigate.home`. Existing bindings retain
+their exact desktop dispatcher as fallback. The panel toggle is global and has
+no fallback. The loader matches only allowlisted typed Omarchy declarations and
+opaque closures returned by `hl.dsp.window.close()`; it never parses chords,
+labels, shell strings, or binding files.
+
+The global **Android-mode shortcuts** Settings switch remains the master
+control and defaults off. While enabled, a ready, visible, input-enabled phone
+preview must own keyboard focus before a focused-phone route can run. Protocol
+v9 carries the correlated request ID, absolute expiry, and optional validated
+action argument. IPC is bounded to 3 seconds; semantic ADB work is capped at
+750 ms and is killed and reaped before desktop fallback. Close routing also has
+a 7-second outer guard. Android rejection, disconnect, timeout, protocol
+mismatch, or an unhandled action invokes the original fallback exactly once.
+
+Hyprland reloads the user configuration automatically. Confirm it with
+`hyprctl reload` followed by `hyprctl configerrors`. Remove the integration
+loader/configure lines and the `install_custom_bindings()` call to disable the
+integration; the user-owned configuration file may remain.
 
 ## Remove
 

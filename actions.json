@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "actions": [
     {
       "id": "toggle-android-panel",
@@ -90,6 +90,16 @@
       "overridePolicy": "validated-manifest-action",
       "overrideTargets": [],
       "verification": { "status": "device-verified", "androidVersions": [16] }
+    },
+    {
+      "id": "android-launch-app",
+      "label": "Launch Android app",
+      "classification": "android-native-extension",
+      "scope": "focused-phone",
+      "result": { "kind": "package-launch" },
+      "overridePolicy": "not-allowed",
+      "overrideTargets": [],
+      "verification": { "status": "automated-contract", "androidVersions": [] }
     }
   ]
 }

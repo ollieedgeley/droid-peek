@@ -92,8 +92,8 @@ Panel {
         startOverDialog.forceActiveFocus();
     }
 
-    function triggerSemanticAction(actionId, requestId, expiresAtUnixMs) {
-        return semanticActionRouter.trigger(actionId, requestId, expiresAtUnixMs);
+    function triggerSemanticAction(actionId, requestId, expiresAtUnixMs, actionArgument) {
+        return semanticActionRouter.trigger(actionId, requestId, expiresAtUnixMs, actionArgument);
     }
 
     function activatePrimary() {
@@ -173,8 +173,8 @@ Panel {
         onKeyRequested: function (key) {
             pairingState.sendKeyInput(key);
         }
-        onSemanticActionRequested: function (actionId, requestId, expiresAtUnixMs) {
-            pairingState.sendSemanticAction(actionId, requestId, expiresAtUnixMs);
+        onSemanticActionRequested: function (actionId, requestId, expiresAtUnixMs, actionArgument) {
+            pairingState.sendSemanticAction(actionId, requestId, expiresAtUnixMs, actionArgument);
         }
     }
 

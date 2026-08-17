@@ -79,14 +79,16 @@ TestCase {
 
     function test_focused_ready_phone_receives_native_actions() {
         makeEligible()
+        var deadline = Date.now() + 2000
 
-        verify(router.trigger("android-back"))
-        verify(router.trigger("android-home"))
-        verify(router.trigger("android-recent-apps"))
-        compare(keySpy.count, 3)
-        compare(keySpy.signalArguments[0][0], "back")
-        compare(keySpy.signalArguments[1][0], "home")
-        compare(keySpy.signalArguments[2][0], "app-switch")
+        verify(router.trigger("android-back", "request-back", deadline))
+        verify(router.trigger("android-home", "request-home", deadline))
+        verify(router.trigger("android-recent-apps", "request-recent", deadline))
+        compare(keySpy.count, 0)
+        compare(actionSpy.count, 3)
+        compare(actionSpy.signalArguments[0][0], "android-back")
+        compare(actionSpy.signalArguments[1][0], "android-home")
+        compare(actionSpy.signalArguments[2][0], "android-recent-apps")
     }
 
     function test_focused_ready_phone_receives_correlated_omarchy_actions() {
@@ -129,17 +131,24 @@ TestCase {
         compare(actionSpy.count, 0)
     }
 
-    function test_unavailable_unknown_and_uncorrelated_actions_remain_unhandled() {
+    function test_catalogued_and_parameterized_actions_are_validated() {
         makeEligible()
         var deadline = Date.now() + 2000
 
-        verify(!router.trigger("omarchy-menu", "request-3", deadline))
+        verify(router.trigger("omarchy-menu", "request-3", deadline))
+        verify(router.trigger(
+                   "android-launch-app", "request-package", deadline,
+                   "com.example.notes"))
+        verify(!router.trigger(
+                   "android-launch-app", "request-bad-package", deadline,
+                   "bad package"))
         verify(!router.trigger("open-universal-search", "request-4", deadline))
         verify(!router.trigger("unknown-action", "request-5", deadline))
         verify(!router.trigger("omarchy-browser", "", deadline))
         verify(!router.trigger("omarchy-browser", "../unsafe", deadline))
         compare(keySpy.count, 0)
-        compare(actionSpy.count, 0)
+        compare(actionSpy.count, 2)
+        compare(actionSpy.signalArguments[1][3], "com.example.notes")
     }
 
     function test_semantic_actions_require_valid_future_integer_deadlines() {

@@ -15,7 +15,7 @@ QtObject {
                                                 && phoneVisible && phoneEnabled && phoneFocused
 
     signal keyRequested(string key)
-    signal semanticActionRequested(string actionId, string requestId, real expiresAtUnixMs)
+    signal semanticActionRequested(string actionId, string requestId, real expiresAtUnixMs, string actionArgument)
 
     function quickActionKey(actionId) {
         switch (actionId) {
@@ -39,28 +39,36 @@ QtObject {
                 && expiresAtUnixMs > Date.now()
     }
 
-    function trigger(actionId, requestId, expiresAtUnixMs) {
-        if (!actionEligible)
-            return false
+    function validPackage(packageName) {
+        return typeof packageName === "string"
+                && packageName.length > 0 && packageName.length <= 255
+                && /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(packageName)
+    }
+
+    function validSemanticAction(actionId, actionArgument) {
         switch (actionId) {
-        case "android-back":
-            keyRequested("back")
-            return true
-        case "android-home":
-            keyRequested("home")
-            return true
-        case "omarchy-close-current-window":
         case "omarchy-browser":
-            if (!validRequestId(requestId)
-                    || !validDeadline(expiresAtUnixMs))
-                return false
-            semanticActionRequested(actionId, requestId, expiresAtUnixMs)
-            return true
+        case "omarchy-close-current-window":
+        case "omarchy-menu":
+        case "android-back":
+        case "android-home":
         case "android-recent-apps":
-            keyRequested("app-switch")
-            return true
+            return actionArgument === ""
+        case "android-launch-app":
+            return validPackage(actionArgument)
         default:
             return false
         }
+    }
+
+    function trigger(actionId, requestId, expiresAtUnixMs, actionArgument) {
+        actionArgument = actionArgument || ""
+        if (!actionEligible
+                || !validSemanticAction(actionId, actionArgument)
+                || !validRequestId(requestId)
+                || !validDeadline(expiresAtUnixMs))
+            return false
+        semanticActionRequested(actionId, requestId, expiresAtUnixMs, actionArgument)
+        return true
     }
 }

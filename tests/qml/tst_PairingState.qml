@@ -73,7 +73,7 @@ TestCase {
     }
 
     function test_unpaired_is_the_safe_initial_state() {
-        compare(state.protocolVersion, 8)
+        compare(state.protocolVersion, 9)
         compare(state.sessionState, "unpaired")
         compare(state.pairingStage, "idle")
         verify(state.statusTitle.length > 0)
@@ -88,7 +88,7 @@ TestCase {
         compare(state.helperReady, true)
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 8)
+        compare(command.version, 9)
         compare(command.type, "start-qr-pairing")
     }
 
@@ -158,7 +158,7 @@ TestCase {
         state.submitManualCode("482913")
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 8)
+        compare(command.version, 9)
         compare(command.type, "submit-manual-code")
         compare(command.code, "482913")
         compare(state.statusDescription.indexOf("482913"), -1)
@@ -216,8 +216,21 @@ TestCase {
         compare(command.version, state.protocolVersion)
         compare(command.type, "semantic-action")
         compare(command.actionId, "omarchy-browser")
+        compare(command.actionArgument, "")
         compare(command.requestId, "request-123")
         compare(command.expiresAtUnixMs, expiresAtUnixMs)
+
+        verify(state.sendSemanticAction(
+                   "android-launch-app", "request-package", expiresAtUnixMs,
+                   "com.example.notes"))
+        compare(commandSpy.count, 2)
+        var packageCommand = JSON.parse(commandSpy.signalArguments[1][0])
+        compare(packageCommand.actionId, "android-launch-app")
+        compare(packageCommand.actionArgument, "com.example.notes")
+        verify(!state.sendSemanticAction(
+                   "android-launch-app", "request-bad-package", expiresAtUnixMs,
+                   "bad package"))
+        compare(commandSpy.count, 2)
 
         state.receiveLine(event("action-result", {
                                     actionId: "omarchy-browser",
@@ -257,7 +270,7 @@ TestCase {
         compare(state.statusTitle, "Starting over")
         compare(commandSpy.count, 1)
         compare(JSON.parse(commandSpy.signalArguments[0][0]),
-                { version: 8, type: "start-over" })
+                { version: 9, type: "start-over" })
 
         state.receiveLine(event("start-over-complete"))
 
@@ -298,7 +311,7 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "use-manual-code")
         compare(JSON.parse(commandSpy.signalArguments[2][0]).type, "cancel-pairing")
         compare(JSON.parse(commandSpy.signalArguments[3][0]).type, "stop-session")
-        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 8)
+        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 9)
     }
 
     function test_preferences_are_versioned_and_applied_immediately() {
@@ -313,7 +326,7 @@ TestCase {
         compare(androidModeShortcutsAtCommand, true)
         compare(commandSpy.count, 1)
         compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 8,
+                    version: 9,
                     type: "set-preferences",
                     keepConnected: true,
                     previewScale: 150,
@@ -528,7 +541,7 @@ TestCase {
 
         compare(commandSpy.count, 4)
         compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 8,
+                    version: 9,
                     type: "pointer-tap",
                     x: 0.25,
                     y: 0.75,
@@ -538,8 +551,8 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "pointer-swipe")
         compare(JSON.parse(commandSpy.signalArguments[1][0]).durationMs, 320)
         compare(JSON.parse(commandSpy.signalArguments[2][0]),
-                { version: 8, type: "key-input", key: "back" })
+                { version: 9, type: "key-input", key: "back" })
         compare(JSON.parse(commandSpy.signalArguments[3][0]),
-                { version: 8, type: "text-input", text: "a" })
+                { version: 9, type: "text-input", text: "a" })
     }
 }

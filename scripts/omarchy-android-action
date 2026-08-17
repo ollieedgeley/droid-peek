@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 set -u
 
-if [[ $# -lt 2 ]]; then
-  printf 'usage: %s <semantic-action-id> <fallback> [args...]\n' "${0##*/}" >&2
+if [[ $# -lt 3 ]]; then
+  printf 'usage: %s <semantic-action-id> <action-argument> <fallback> [args...]\n' "${0##*/}" >&2
   exit 64
 fi
 
 action_id="$1"
-shift
+action_argument="$2"
+shift 2
 
 case "$action_id" in
-  omarchy-browser | omarchy-close-current-window) ;;
+  omarchy-browser | omarchy-menu | android-back | android-home | android-recent-apps)
+    [[ -z "$action_argument" ]] || exit 64
+    ;;
+  android-launch-app)
+    [[ "$action_argument" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || exit 64
+    ;;
   *)
     printf 'unsupported semantic action: %s\n' "$action_id" >&2
     exit 64
@@ -28,7 +34,7 @@ fi
 now_unix_ms="$(date +%s%3N)"
 expires_at_unix_ms=$((now_unix_ms + 2000))
 
-if response="$(/usr/bin/timeout --signal=KILL 3 omarchy-shell ollie.android action "$action_id" "$request_id" "$expires_at_unix_ms" 2>/dev/null)" \
+if response="$(/usr/bin/timeout --signal=KILL 3 omarchy-shell ollie.android action "$action_id" "$action_argument" "$request_id" "$expires_at_unix_ms" 2>/dev/null)" \
   && [[ "$response" == "true" ]]; then
   for ((attempt = 0; attempt < poll_attempts; ++attempt)); do
     if [[ -f "$result_path" ]]; then

@@ -3,42 +3,206 @@ if o == nil then
 end
 
 local state = o.omarchy_android_hyprland
-if state == nil then
-  state = {
-    close_dispatchers = setmetatable({}, { __mode = "k" }),
-    fallback_counter = 0,
-  }
-  o.omarchy_android_hyprland = state
+if state ~= nil and state.api ~= nil then
+  state.bindings_seen = 0
+  state.custom_bindings_installed = false
+  o.bind = state.bind
+  return state.api
 end
 
-if state.close_factory == nil then
-  local original_close_factory = hl.dsp.window.close
-  state.close_factory = function(...)
-    local close_dispatcher = original_close_factory(...)
-    state.close_dispatchers[close_dispatcher] = true
-    return close_dispatcher
-  end
-  hl.dsp.window.close = state.close_factory
-end
+local source_path = debug.getinfo(1, "S").source
+local integration_path = source_path:sub(1, 1) == "@" and source_path:sub(2) or source_path
+local integration_directory = integration_path:match("^(.*)/[^/]+$") or "."
+local catalog = dofile(integration_directory .. "/action-catalog.lua")
 
-if o.bind == state.bind then
-  return
-end
+state = state or {}
+state.close_dispatchers = state.close_dispatchers or setmetatable({}, { __mode = "k" })
+state.fallback_counter = state.fallback_counter or 0
+state.bindings_seen = 0
+state.custom_bindings_installed = false
+o.omarchy_android_hyprland = state
 
 local original_bind = o.bind
 local dispatcher = o.shell_quote(os.getenv("HOME") .. "/.local/bin/omarchy-android-action")
-local mappings = {
-  ["toggle-android-panel"] = {
-    command = "omarchy-shell ollie.android toggle",
-  },
-  browser = {
-    action = "omarchy-browser",
-    fallback = "omarchy-launch-browser",
-    label = "Android browser",
-  },
-}
 
-local function close_with_android(fallback)
+local source_ids = { ["omarchy.window.close"] = true }
+for _, source_id in pairs(catalog.sources) do
+  source_ids[source_id] = true
+end
+
+local function fail(message)
+  error("Omarchy Android: " .. message, 3)
+end
+
+local function validate_keys(value, allowed, context)
+  if type(value) ~= "table" then
+    fail(context .. " must be a table")
+  end
+  for key in pairs(value) do
+    if not allowed[key] then
+      fail("unknown " .. context .. " field " .. tostring(key))
+    end
+  end
+end
+
+local function valid_package(package_name)
+  if type(package_name) ~= "string"
+      or #package_name == 0
+      or #package_name > 255
+      or package_name:sub(1, 1) == "."
+      or package_name:sub(-1) == "."
+      or package_name:find("..", 1, true) then
+    return false
+  end
+
+  local segments = 0
+  for segment in package_name:gmatch("[^.]+") do
+    if not segment:match("^[A-Za-z][A-Za-z0-9_]*$") then
+      return false
+    end
+    segments = segments + 1
+  end
+  return segments >= 2
+end
+
+local function normalize_target(value)
+  if type(value) == "string" then
+    local target = catalog.targets[value]
+    if target == nil then
+      fail("unknown Android target " .. string.format("%q", value))
+    end
+    return {
+      id = value,
+      label = target.label,
+      action_id = target.actionId,
+      argument = "",
+      direct_command = target.directCommand,
+      append_label = target.appendLabel,
+    }
+  end
+
+  validate_keys(value, { type = true, package = true }, "Android target")
+  if value.type ~= "android.app.launch" then
+    fail("unknown Android target " .. string.format("%q", tostring(value.type)))
+  end
+  if not valid_package(value.package) then
+    fail("invalid Android package " .. string.format("%q", tostring(value.package)))
+  end
+  return {
+    id = value.type,
+    label = "Android launch " .. value.package,
+    action_id = "android-launch-app",
+    argument = value.package,
+  }
+end
+
+local function default_routes()
+  local routes = {}
+  for source_id, target_id in pairs(catalog.smartDefaults) do
+    routes[source_id] = normalize_target(target_id)
+  end
+  return routes
+end
+
+local function is_array(value)
+  if type(value) ~= "table" then
+    return false
+  end
+  local count = 0
+  for key in pairs(value) do
+    if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then
+      return false
+    end
+    count = count + 1
+  end
+  return count == #value
+end
+
+local function validate_custom_binding(binding)
+  validate_keys(
+    binding,
+    { keys = true, action = true, description = true, options = true },
+    "custom binding"
+  )
+  if type(binding.keys) ~= "string" or binding.keys == "" then
+    fail("custom binding keys must be a non-empty string")
+  end
+  if binding.description ~= nil and type(binding.description) ~= "string" then
+    fail("custom binding description must be a string")
+  end
+  if binding.options ~= nil and type(binding.options) ~= "table" then
+    fail("custom binding options must be a table")
+  end
+  return {
+    keys = binding.keys,
+    target = normalize_target(binding.action),
+    description = binding.description,
+    options = binding.options,
+  }
+end
+
+local function configure(configuration)
+  if state.bindings_seen > 0 then
+    fail("configuration must be loaded before Omarchy bindings")
+  end
+  validate_keys(
+    configuration,
+    { smartDefaults = true, routes = true, customBindings = true },
+    "configuration"
+  )
+
+  local smart_defaults = configuration.smartDefaults
+  if smart_defaults == nil then
+    smart_defaults = true
+  elseif type(smart_defaults) ~= "boolean" then
+    fail("smartDefaults must be a boolean")
+  end
+
+  local configured_routes = configuration.routes or {}
+  if type(configured_routes) ~= "table" then
+    fail("routes must be a table")
+  end
+  local routes = smart_defaults and default_routes() or {}
+  for source_id, target in pairs(configured_routes) do
+    if type(source_id) ~= "string" or not source_ids[source_id] then
+      fail("unknown Omarchy source " .. string.format("%q", tostring(source_id)))
+    end
+    if target == false then
+      routes[source_id] = nil
+    else
+      routes[source_id] = normalize_target(target)
+    end
+  end
+
+  local configured_bindings = configuration.customBindings or {}
+  if not is_array(configured_bindings) then
+    fail("customBindings must be an array")
+  end
+  local custom_bindings = {}
+  for index, binding in ipairs(configured_bindings) do
+    custom_bindings[index] = validate_custom_binding(binding)
+  end
+
+  state.routes = routes
+  state.custom_bindings = custom_bindings
+end
+
+local function semantic_command(target, fallback)
+  return table.concat({
+    dispatcher,
+    target.action_id,
+    o.shell_quote(target.argument),
+    fallback,
+  }, " ")
+end
+local function routed_description(description, target)
+  if description == nil or target.append_label == false then
+    return description
+  end
+  return description .. " / " .. target.label
+end
+
+local function close_with_android(target, fallback)
   return function()
     local runtime_directory = os.getenv("XDG_RUNTIME_DIR")
     if runtime_directory == nil or runtime_directory == "" then
@@ -75,14 +239,12 @@ local function close_with_android(fallback)
       if finished then
         return
       end
-
       local fallback_marker = io.open(marker, "r")
       if fallback_marker ~= nil then
         fallback_marker:close()
         finish(true)
         return
       end
-
       polls = polls + 1
       if polls >= 160 then
         finish(false)
@@ -91,10 +253,7 @@ local function close_with_android(fallback)
 
     local command = table.concat({
       "/usr/bin/timeout --signal=KILL 7",
-      dispatcher,
-      "omarchy-close-current-window",
-      "/usr/bin/touch",
-      o.shell_quote(marker),
+      semantic_command(target, "/usr/bin/touch " .. o.shell_quote(marker)),
       "|| /usr/bin/touch",
       o.shell_quote(marker),
     }, " ")
@@ -105,53 +264,95 @@ local function close_with_android(fallback)
   end
 end
 
-local function mapped_semantic(binding)
-  if type(binding) ~= "table" then
-    return nil
-  end
-
-  local key, value = next(binding)
-  if key ~= "omarchy" or next(binding, key) ~= nil then
-    return nil
-  end
-  return mappings[value]
-end
-
 local function bind_with_android(keys, description, binding, options)
+  state.bindings_seen = state.bindings_seen + 1
+
   if binding ~= nil and state.close_dispatchers[binding] then
-    local close_description = description
-    if close_description ~= nil then
-      close_description = close_description .. " / Android close current window"
+    local target = state.routes["omarchy.window.close"]
+    if target == nil then
+      return original_bind(keys, description, binding, options)
+    end
+    if target.direct_command ~= nil then
+      return original_bind(
+        keys,
+        routed_description(description, target),
+        target.direct_command,
+        options
+      )
     end
     return original_bind(
       keys,
-      close_description,
-      close_with_android(binding),
+      routed_description(description, target),
+      close_with_android(target, binding),
       options
     )
   end
 
-  local semantic = mapped_semantic(binding)
-  if not semantic then
+  if type(binding) ~= "table" then
     return original_bind(keys, description, binding, options)
   end
-  if semantic.command ~= nil then
-    return original_bind(keys, description, semantic.command, options)
+  local key, value = next(binding)
+  if key ~= "omarchy" or type(value) ~= "string" or next(binding, key) ~= nil then
+    return original_bind(keys, description, binding, options)
   end
 
-
-  local command = table.concat({
-    dispatcher,
-    semantic.action,
-    semantic.fallback,
-  }, " ")
-  local mapped_description = description
-  if mapped_description ~= nil then
-    mapped_description = mapped_description .. " / " .. semantic.label
+  local source_id = catalog.sources[value]
+  local target = source_id and state.routes[source_id] or nil
+  if target == nil then
+    return original_bind(keys, description, binding, options)
   end
-  return original_bind(keys, mapped_description, command, options)
+  if target.direct_command ~= nil then
+    return original_bind(
+      keys,
+      routed_description(description, target),
+      target.direct_command,
+      options
+    )
+  end
+  return original_bind(
+    keys,
+    routed_description(description, target),
+    semantic_command(target, "omarchy-launch-" .. value),
+    options
+  )
 end
 
+local function install_custom_bindings()
+  if state.custom_bindings_installed then
+    fail("custom bindings already installed")
+  end
+  state.custom_bindings_installed = true
+  for _, binding in ipairs(state.custom_bindings) do
+    local target = binding.target
+    local command = target.direct_command
+      or semantic_command(target, "/usr/bin/true")
+    original_bind(
+      binding.keys,
+      binding.description or target.label,
+      command,
+      binding.options
+    )
+  end
+end
+
+if state.close_factory == nil then
+  local original_close_factory = hl.dsp.window.close
+  state.close_factory = function(...)
+    local close_dispatcher = original_close_factory(...)
+    state.close_dispatchers[close_dispatcher] = true
+    return close_dispatcher
+  end
+  hl.dsp.window.close = state.close_factory
+end
+
+state.routes = default_routes()
+state.custom_bindings = {}
 state.bind = bind_with_android
-o.omarchy_android_bind = bind_with_android
+state.api = {
+  configure = configure,
+  install_custom_bindings = install_custom_bindings,
+}
 o.bind = bind_with_android
+o.omarchy_android = state.api
+
+return state.api

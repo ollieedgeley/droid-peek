@@ -9,7 +9,7 @@ use crate::{
     process::{CancellationToken, CommandFailure, CommandRequest, CommandRunner},
 };
 
-pub const ACTION_SCHEMA_VERSION: u8 = 2;
+pub const ACTION_SCHEMA_VERSION: u8 = 3;
 const LEGACY_UNIVERSAL_SEARCH_ID: &str = "open-universal-search";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -24,10 +24,11 @@ pub enum SemanticAction {
     AndroidBack,
     AndroidHome,
     AndroidRecentApps,
+    AndroidLaunchApp,
 }
 
 impl SemanticAction {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::ToggleAndroidPanel,
         Self::PointerControl,
         Self::TypedInput,
@@ -37,6 +38,7 @@ impl SemanticAction {
         Self::AndroidBack,
         Self::AndroidHome,
         Self::AndroidRecentApps,
+        Self::AndroidLaunchApp,
     ];
 
     #[must_use]
@@ -51,8 +53,22 @@ impl SemanticAction {
             Self::AndroidBack => "android-back",
             Self::AndroidHome => "android-home",
             Self::AndroidRecentApps => "android-recent-apps",
+            Self::AndroidLaunchApp => "android-launch-app",
         }
     }
+}
+
+#[must_use]
+pub fn valid_android_package(package: &str) -> bool {
+    package.len() <= 255
+        && package.split('.').count() >= 2
+        && package.split('.').all(|segment| {
+            let mut characters = segment.chars();
+            characters
+                .next()
+                .is_some_and(|first| first.is_ascii_alphabetic())
+                && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
+        })
 }
 
 pub struct AdbActionAdapter<'a> {
@@ -84,6 +100,34 @@ impl<'a> AdbActionAdapter<'a> {
                         "android.intent.action.VIEW",
                         "-d",
                         "https://example.com",
+                    ]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+                ),
+                self.cancellation,
+            )
+            .map(|output| output.succeeded)
+    }
+
+    pub fn launch_package(&mut self, target: &str, package: &str) -> Result<bool, CommandFailure> {
+        self.runner
+            .run(
+                CommandRequest::new(
+                    "adb",
+                    [
+                        "-s",
+                        target,
+                        "shell",
+                        "am",
+                        "start",
+                        "-W",
+                        "-a",
+                        "android.intent.action.MAIN",
+                        "-c",
+                        "android.intent.category.LAUNCHER",
+                        "-p",
+                        package,
                     ]
                     .into_iter()
                     .map(str::to_owned)
@@ -171,6 +215,7 @@ pub enum ActionResult {
     Capability { capability: ActionCapability },
     StandardBrowserIntent {},
     Unavailable { reason: String },
+    PackageLaunch {},
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]

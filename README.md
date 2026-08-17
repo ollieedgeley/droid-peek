@@ -30,14 +30,19 @@ sink path.
 Opening a ready panel, or reaching Ready after reconnection, automatically
 focuses this input surface so keyboard control works without an extra click.
 
-Focused semantic action routing uses the bundled Android 16 profile through the
-versioned helper protocol. **Close current window** maps to Android Home, and
-**Open browser** uses a package-free standard Android browser intent. An
-optional user-owned Hyprland loader wraps supported typed Omarchy browser
-declarations before defaults load; it preserves each declaration's original
-desktop fallback and never reads or rewrites binding files. Unavailable,
-removed, and unknown semantic IDs remain unhandled. The plugin does not infer
-desktop chords or add per-device action profiles.
+Focused semantic action routing uses the bundled Android 16 profile through
+protocol v7. **Close current window** maps to Android Home, and **Open browser**
+uses a package-free standard Android browser intent. An optional user-owned
+Hyprland loader recognizes the exact typed global panel-toggle declaration,
+supported typed Omarchy browser declarations, and verified opaque closures
+returned by `hl.dsp.window.close()` after the loader is installed. A typed
+intent table is eligible only when `omarchy` is its sole key; declarations with
+extra fields remain unchanged. Browser and close routing preserve their
+documented desktop fallbacks; panel toggle directly invokes the global plugin
+lifecycle without a fallback. The loader never reads or rewrites binding files.
+Unavailable, removed, and unknown semantic IDs remain unhandled; arbitrary
+functions, ambiguous overrides, desktop chords, and per-device action profiles
+are not inferred.
 
 The ready view includes Back, Home, and recent-apps controls plus an inline
 Settings page. A chain-link toolbar button and the Settings toggle control the
@@ -136,28 +141,59 @@ command.
 
 ### Optional semantic binding integration
 
-One opt-in loader routes every supported stock Omarchy mapping without a
-per-chord override. Add this line to `~/.config/hypr/hyprland.lua` after the
-bootstrap `dofile(...)` and before `require("default.hypr.omarchy")`:
+One opt-in loader routes the exact typed global panel-toggle declaration,
+supported typed browser declarations, and recognized `hl.dsp.window.close()`
+factory results without per-chord overrides. Add this line to
+`~/.config/hypr/hyprland.lua` after the bootstrap `dofile(...)` and
+before `require("default.hypr.omarchy")`:
 
 ```lua
 dofile(os.getenv("HOME") .. "/.config/omarchy/plugins/ollie.android/integrations/hyprland.lua")
 ```
 
-The loader intercepts only allowlisted, typed Omarchy defaults while Hyprland
-evaluates them. It does not read or rewrite binding files, inspect labels, or
-infer intent from commands. The current allowlist covers the stock `browser`
-intent, so both `SUPER + SHIFT + B` and `SUPER + SHIFT + RETURN` route through
-the dispatcher. Unsupported and later user-overridden bindings remain
-unchanged.
+To migrate an existing direct panel-toggle command, keep the user-owned chord
+and any binding options, and replace only its command action with this exact
+typed declaration:
+
+```lua
+o.bind("SUPER + ALT + A", "Toggle Android panel", { omarchy = "toggle-android-panel" })
+```
+
+The declaration directly invokes `omarchy-shell ollie.android toggle`, while
+preserving the chosen chord and options. It does not depend on phone focus and
+has no desktop fallback because toggle is the global panel lifecycle action.
+Only a table whose single key is this supported `omarchy` declaration is
+recognized; near matches, tables with extra fields, and unsupported
+declarations remain untouched. Browser and close behavior remain as documented
+below.
+
+The loader wraps the close factory before defaults load and recognizes only
+the exact opaque closures that factory returns. This covers active custom
+close-window declarations only when they are constructed through
+`hl.dsp.window.close()` after the loader is installed. It also intercepts
+allowlisted, typed Omarchy browser declarations while Hyprland evaluates
+them. It does not read or rewrite binding files, inspect labels, infer intent
+from chords or shell strings, or treat arbitrary functions and ambiguous
+overrides as semantic actions. The stock browser bindings, `SUPER + SHIFT + B`
+and `SUPER + SHIFT + RETURN`, are supported; unsupported arbitrary overrides
+remain unchanged.
 
 Hyprland reloads the user configuration automatically. Validate it with
 `hyprctl reload` followed by `hyprctl configerrors`. While the ready, visible,
-enabled phone preview owns focus, an allowlisted chord runs its Android action.
-The dispatcher waits for the correlated helper result; rejection, an unhandled
-or malformed result, helper failure, and timeout each invoke the mapping's
-direct nonrecursive Omarchy fallback exactly once. Remove the one `dofile`
-line to disable semantic binding integration.
+enabled phone preview owns focus, a recognized mapping runs its Android action.
+Protocol-v7 semantic attempts carry an absolute expiry 2 seconds after dispatch;
+IPC is bounded to 3 seconds, and the helper rejects deadlines more than 5
+seconds ahead. Semantic ADB work is capped at 750 ms. On expiry, the helper
+kills and reaps that work before an unhandled result permits desktop fallback,
+so the phone cannot act after fallback. Close routing additionally has a
+7-second outer execution guard and checks for its correlated result at most
+160 times at 50 ms intervals.
+
+If Android rejects or cannot handle the action, the helper fails, or the request
+expires, browser routing invokes its direct packaged command fallback exactly
+once; close routing preserves the exact original Lua closure and asynchronously
+dispatches it once through `hl.dispatch`. Remove the one `dofile` line to
+disable semantic binding integration.
 
 ## Remove
 

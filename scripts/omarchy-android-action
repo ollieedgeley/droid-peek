@@ -25,7 +25,10 @@ if [[ ! "$poll_attempts" =~ ^[1-9][0-9]*$ ]]; then
   poll_attempts=100
 fi
 
-if response="$(omarchy-shell ollie.android action "$action_id" "$request_id" 2>/dev/null)" \
+now_unix_ms="$(date +%s%3N)"
+expires_at_unix_ms=$((now_unix_ms + 2000))
+
+if response="$(/usr/bin/timeout --signal=KILL 3 omarchy-shell ollie.android action "$action_id" "$request_id" "$expires_at_unix_ms" 2>/dev/null)" \
   && [[ "$response" == "true" ]]; then
   for ((attempt = 0; attempt < poll_attempts; ++attempt)); do
     if [[ -f "$result_path" ]]; then

@@ -9,7 +9,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub const PROTOCOL_VERSION: u8 = 6;
+pub const PROTOCOL_VERSION: u8 = 7;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -76,6 +76,7 @@ pub trait PairingBackend {
         &mut self,
         _action: SemanticAction,
         _request_id: &str,
+        _expires_at_unix_ms: u64,
     ) -> Result<bool, FailureReason> {
         Ok(false)
     }
@@ -232,6 +233,7 @@ impl<B: PairingBackend> ProtocolEngine<B> {
             Command::SemanticAction {
                 action_id,
                 request_id,
+                expires_at_unix_ms,
             } => {
                 if validate_request_id(&request_id).is_err() {
                     return vec![
@@ -241,7 +243,10 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                         .to_line(),
                     ];
                 }
-                match self.backend.semantic_action(action_id, &request_id) {
+                match self
+                    .backend
+                    .semantic_action(action_id, &request_id, expires_at_unix_ms)
+                {
                     Ok(handled) => vec![
                         Event::ActionResult {
                             action_id,
@@ -366,6 +371,8 @@ enum Command {
         action_id: SemanticAction,
         #[serde(rename = "requestId")]
         request_id: String,
+        #[serde(rename = "expiresAtUnixMs")]
+        expires_at_unix_ms: u64,
     },
     SetPreferences {
         #[serde(rename = "keepConnected")]

@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Mutex,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use omarchy_android_helper::{
@@ -63,24 +63,46 @@ fn adb_runner_uses_separated_arguments_and_discards_output() {
 }
 
 #[test]
-fn adb_runner_stops_a_cancelled_process() {
+fn adb_runner_deadline_kills_and_reaps_a_long_running_process() {
     let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
     let directory = tempfile::tempdir().expect("temporary directory");
-    let fake_adb = executable(directory.path(), "adb", "exec sleep 5");
+    let pid_file = directory.path().join("adb.pid");
+    let fake_adb = executable(
+        directory.path(),
+        "adb",
+        &format!(
+            "printf '%s\\n' \"$$\" > '{}'\nexec sleep 5",
+            pid_file.display()
+        ),
+    );
     let mut runner = AdbCommandRunner::new(fake_adb, Duration::from_millis(2));
-    let cancellation = CancellationToken::new();
-    let cancel_from_thread = cancellation.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(20));
-        cancel_from_thread.cancel();
-    });
+    let session_cancellation = CancellationToken::new();
+    let action_cancellation = session_cancellation.child_with_timeout(Duration::from_millis(500));
+    let started = Instant::now();
 
     assert_eq!(
         runner.run(
             CommandRequest::new("adb", vec!["connect".to_owned(), "phone:1".to_owned()]),
-            &cancellation,
+            &action_cancellation,
         ),
         Err(CommandFailure::Cancelled)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "deadline cancellation did not bound the ADB command"
+    );
+    assert!(
+        !session_cancellation.is_cancelled(),
+        "the child deadline must not cancel its session parent"
+    );
+
+    let pid = fs::read_to_string(&pid_file)
+        .expect("fake ADB recorded its pid")
+        .trim()
+        .to_owned();
+    assert!(
+        !Path::new("/proc").join(pid).exists(),
+        "cancelled ADB child was not killed and waited"
     );
 }
 

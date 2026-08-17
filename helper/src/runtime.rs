@@ -7,7 +7,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use zeroize::Zeroizing;
@@ -26,6 +26,9 @@ use crate::{
     session::{ScrcpySessionRunner, SessionExit, SessionFailure, SessionRunner},
     wireless::{AvahiDiscovery, PairingFlow, WirelessDiscovery},
 };
+
+const MAX_SEMANTIC_DEADLINE_AHEAD_MS: u64 = 5_000;
+const MAX_SEMANTIC_EXECUTION_MS: u64 = 750;
 
 pub trait ProtocolSink: Clone + Send + 'static {
     type Error;
@@ -337,6 +340,15 @@ where
         &mut self,
         operation: impl FnOnce(&mut AdbInputAdapter<'_>, &str) -> Result<(), InputFailure>,
     ) -> Result<(), FailureReason> {
+        let cancellation = self.session_cancellation.clone();
+        self.run_input_with_cancellation(&cancellation, operation)
+    }
+
+    fn run_input_with_cancellation(
+        &mut self,
+        cancellation: &CancellationToken,
+        operation: impl FnOnce(&mut AdbInputAdapter<'_>, &str) -> Result<(), InputFailure>,
+    ) -> Result<(), FailureReason> {
         let target = self
             .active_target
             .lock()
@@ -347,8 +359,7 @@ where
             .flow
             .lock()
             .map_err(|_| FailureReason::DependencyUnavailable)?;
-        let mut adapter =
-            AdbInputAdapter::new(flow.runner_mut().as_mut(), &self.session_cancellation);
+        let mut adapter = AdbInputAdapter::new(flow.runner_mut().as_mut(), cancellation);
         operation(&mut adapter, &target).map_err(|failure| match failure {
             InputFailure::DependencyUnavailable => FailureReason::DependencyUnavailable,
             InputFailure::Disconnected | InputFailure::Cancelled => FailureReason::Disconnected,
@@ -357,6 +368,7 @@ where
 
     fn run_action(
         &mut self,
+        cancellation: &CancellationToken,
         operation: impl FnOnce(&mut AdbActionAdapter<'_>, &str) -> Result<bool, CommandFailure>,
     ) -> Result<bool, FailureReason> {
         let target = self
@@ -369,8 +381,7 @@ where
             .flow
             .lock()
             .map_err(|_| FailureReason::DependencyUnavailable)?;
-        let mut adapter =
-            AdbActionAdapter::new(flow.runner_mut().as_mut(), &self.session_cancellation);
+        let mut adapter = AdbActionAdapter::new(flow.runner_mut().as_mut(), cancellation);
         operation(&mut adapter, &target).map_err(|failure| match failure {
             CommandFailure::DependencyUnavailable => FailureReason::DependencyUnavailable,
             CommandFailure::Unauthorized => FailureReason::Unauthorized,
@@ -844,7 +855,28 @@ where
         &mut self,
         action: SemanticAction,
         request_id: &str,
+        expires_at_unix_ms: u64,
     ) -> Result<bool, FailureReason> {
+        let remaining_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+            .and_then(|now_unix_ms| expires_at_unix_ms.checked_sub(now_unix_ms))
+            .filter(|remaining_ms| {
+                *remaining_ms > 0 && *remaining_ms <= MAX_SEMANTIC_DEADLINE_AHEAD_MS
+            });
+        let Some(remaining_ms) = remaining_ms else {
+            self.action_results
+                .publish(request_id, false)
+                .map_err(|_| FailureReason::DependencyUnavailable)?;
+            return Ok(false);
+        };
+        let action_cancellation =
+            self.session_cancellation
+                .child_with_timeout(Duration::from_millis(
+                    remaining_ms.min(MAX_SEMANTIC_EXECUTION_MS),
+                ));
+
         enum Execution {
             Key(AndroidKey),
             StandardBrowser,
@@ -860,11 +892,25 @@ where
         };
 
         let result = match execution {
-            Execution::Key(key) => self.key_input(key).map(|()| true),
-            Execution::StandardBrowser => {
-                self.run_action(|adapter, target| adapter.open_standard_browser(target))
-            }
+            Execution::Key(key) => self
+                .run_input_with_cancellation(&action_cancellation, |adapter, target| {
+                    adapter.key(target, key)
+                })
+                .map(|()| true),
+            Execution::StandardBrowser => self
+                .run_action(&action_cancellation, |adapter, target| {
+                    adapter.open_standard_browser(target)
+                }),
             Execution::Unhandled => Ok(false),
+        };
+        let result = match result {
+            Err(FailureReason::Disconnected)
+                if action_cancellation.is_cancelled()
+                    && !self.session_cancellation.is_cancelled() =>
+            {
+                Ok(false)
+            }
+            result => result,
         };
         self.action_results
             .publish(request_id, result.as_ref().copied().unwrap_or(false))

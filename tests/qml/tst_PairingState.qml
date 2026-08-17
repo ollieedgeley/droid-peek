@@ -70,7 +70,7 @@ TestCase {
         compare(state.helperReady, true)
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 6)
+        compare(command.version, 7)
         compare(command.type, "start-qr-pairing")
     }
 
@@ -136,7 +136,7 @@ TestCase {
         state.submitManualCode("482913")
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 6)
+        compare(command.version, 7)
         compare(command.type, "submit-manual-code")
         compare(command.code, "482913")
         compare(state.statusDescription.indexOf("482913"), -1)
@@ -185,7 +185,9 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "reconnect-trusted-device")
     }
     function test_semantic_action_commands_and_results_are_correlated() {
-        state.sendSemanticAction("omarchy-browser", "request-123")
+        var expiresAtUnixMs = Date.now() + 2000
+        verify(state.sendSemanticAction(
+                   "omarchy-browser", "request-123", expiresAtUnixMs))
 
         compare(commandSpy.count, 1)
         var command = JSON.parse(commandSpy.signalArguments[0][0])
@@ -193,6 +195,7 @@ TestCase {
         compare(command.type, "semantic-action")
         compare(command.actionId, "omarchy-browser")
         compare(command.requestId, "request-123")
+        compare(command.expiresAtUnixMs, expiresAtUnixMs)
 
         state.receiveLine(event("action-result", {
                                     actionId: "omarchy-browser",
@@ -203,6 +206,20 @@ TestCase {
         compare(actionCompletedSpy.signalArguments[0][0], "omarchy-browser")
         compare(actionCompletedSpy.signalArguments[0][1], "request-123")
         compare(actionCompletedSpy.signalArguments[0][2], true)
+    }
+
+    function test_semantic_actions_reject_invalid_deadlines_before_emitting_commands() {
+        verify(!state.sendSemanticAction(
+                   "omarchy-browser", "request-missing"))
+        verify(!state.sendSemanticAction(
+                   "omarchy-browser", "request-string", String(Date.now() + 2000)))
+        verify(!state.sendSemanticAction(
+                   "omarchy-browser", "request-fraction", Date.now() + 2000.5))
+        verify(!state.sendSemanticAction(
+                   "omarchy-browser", "request-expired", Date.now() - 1))
+        verify(!state.sendSemanticAction(
+                   "omarchy-browser", "request-invalid", NaN))
+        compare(commandSpy.count, 0)
     }
 
     function test_start_over_forgets_the_device_then_requests_fresh_qr() {
@@ -218,7 +235,7 @@ TestCase {
         compare(state.statusTitle, "Starting over")
         compare(commandSpy.count, 1)
         compare(JSON.parse(commandSpy.signalArguments[0][0]),
-                { version: 6, type: "start-over" })
+                { version: 7, type: "start-over" })
 
         state.receiveLine(event("start-over-complete"))
 
@@ -258,7 +275,7 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "use-manual-code")
         compare(JSON.parse(commandSpy.signalArguments[2][0]).type, "cancel-pairing")
         compare(JSON.parse(commandSpy.signalArguments[3][0]).type, "stop-session")
-        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 6)
+        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 7)
     }
 
     function test_preferences_are_versioned_and_applied_immediately() {
@@ -271,7 +288,7 @@ TestCase {
         compare(state.quickActions, ["home", "recent-apps", "back"])
         compare(commandSpy.count, 1)
         compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 6,
+                    version: 7,
                     type: "set-preferences",
                     keepConnected: true,
                     previewScale: 150,
@@ -360,7 +377,7 @@ TestCase {
 
         compare(commandSpy.count, 4)
         compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 6,
+                    version: 7,
                     type: "pointer-tap",
                     x: 0.25,
                     y: 0.75,
@@ -370,8 +387,8 @@ TestCase {
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "pointer-swipe")
         compare(JSON.parse(commandSpy.signalArguments[1][0]).durationMs, 320)
         compare(JSON.parse(commandSpy.signalArguments[2][0]),
-                { version: 6, type: "key-input", key: "back" })
+                { version: 7, type: "key-input", key: "back" })
         compare(JSON.parse(commandSpy.signalArguments[3][0]),
-                { version: 6, type: "text-input", text: "a" })
+                { version: 7, type: "text-input", text: "a" })
     }
 }

@@ -7,7 +7,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// A command expressed as an executable plus already-separated arguments.
@@ -55,12 +55,26 @@ pub enum CommandFailure {
 #[derive(Clone, Default)]
 pub struct CancellationToken {
     cancelled: Arc<AtomicBool>,
+    deadline: Option<Instant>,
 }
 
 impl CancellationToken {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[must_use]
+    pub fn child_with_timeout(&self, timeout: Duration) -> Self {
+        let now = Instant::now();
+        let child_deadline = now.checked_add(timeout).unwrap_or(now);
+        Self {
+            cancelled: Arc::clone(&self.cancelled),
+            deadline: Some(
+                self.deadline
+                    .map_or(child_deadline, |deadline| deadline.min(child_deadline)),
+            ),
+        }
     }
 
     pub fn cancel(&self) {
@@ -70,6 +84,9 @@ impl CancellationToken {
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+            || self
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
     }
 }
 

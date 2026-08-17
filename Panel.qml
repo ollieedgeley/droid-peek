@@ -92,8 +92,8 @@ Panel {
         startOverDialog.forceActiveFocus();
     }
 
-    function triggerSemanticAction(actionId, requestId) {
-        return semanticActionRouter.trigger(actionId, requestId);
+    function triggerSemanticAction(actionId, requestId, expiresAtUnixMs) {
+        return semanticActionRouter.trigger(actionId, requestId, expiresAtUnixMs);
     }
 
     function activatePrimary() {
@@ -172,8 +172,8 @@ Panel {
         onKeyRequested: function (key) {
             pairingState.sendKeyInput(key);
         }
-        onSemanticActionRequested: function (actionId, requestId) {
-            pairingState.sendSemanticAction(actionId, requestId);
+        onSemanticActionRequested: function (actionId, requestId, expiresAtUnixMs) {
+            pairingState.sendSemanticAction(actionId, requestId, expiresAtUnixMs);
         }
     }
 

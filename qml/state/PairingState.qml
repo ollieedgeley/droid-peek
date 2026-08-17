@@ -3,7 +3,7 @@ import QtQuick
 QtObject {
     id: root
 
-    readonly property int protocolVersion: 6
+    readonly property int protocolVersion: 7
     property bool helperReady: false
     property bool automaticPairingEnabled: true
     property bool hasTrustedDevice: false
@@ -135,15 +135,25 @@ QtObject {
                 && /^[A-Za-z0-9-]{1,64}$/.test(requestId)
     }
 
-    function sendSemanticAction(actionId, requestId) {
+    function validActionDeadline(expiresAtUnixMs) {
+        return typeof expiresAtUnixMs === "number"
+                && isFinite(expiresAtUnixMs)
+                && expiresAtUnixMs > 0
+                && Math.floor(expiresAtUnixMs) === expiresAtUnixMs
+                && expiresAtUnixMs > Date.now()
+    }
+
+    function sendSemanticAction(actionId, requestId, expiresAtUnixMs) {
         if ((actionId !== "omarchy-close-current-window"
                 && actionId !== "omarchy-browser")
-                || !validActionRequestId(requestId))
+                || !validActionRequestId(requestId)
+                || !validActionDeadline(expiresAtUnixMs))
             return false
         sendCommand({
                         type: "semantic-action",
                         actionId: actionId,
-                        requestId: requestId
+                        requestId: requestId,
+                        expiresAtUnixMs: expiresAtUnixMs
                     })
         return true
     }

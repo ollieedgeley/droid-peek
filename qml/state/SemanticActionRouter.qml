@@ -13,7 +13,7 @@ QtObject {
                                                 && phoneVisible && phoneEnabled && phoneFocused
 
     signal keyRequested(string key)
-    signal semanticActionRequested(string actionId, string requestId)
+    signal semanticActionRequested(string actionId, string requestId, real expiresAtUnixMs)
 
     function quickActionKey(actionId) {
         switch (actionId) {
@@ -29,7 +29,15 @@ QtObject {
                 && /^[A-Za-z0-9-]{1,64}$/.test(requestId)
     }
 
-    function trigger(actionId, requestId) {
+    function validDeadline(expiresAtUnixMs) {
+        return typeof expiresAtUnixMs === "number"
+                && isFinite(expiresAtUnixMs)
+                && expiresAtUnixMs > 0
+                && Math.floor(expiresAtUnixMs) === expiresAtUnixMs
+                && expiresAtUnixMs > Date.now()
+    }
+
+    function trigger(actionId, requestId, expiresAtUnixMs) {
         if (!actionEligible)
             return false
         switch (actionId) {
@@ -41,9 +49,10 @@ QtObject {
             return true
         case "omarchy-close-current-window":
         case "omarchy-browser":
-            if (!validRequestId(requestId))
+            if (!validRequestId(requestId)
+                    || !validDeadline(expiresAtUnixMs))
                 return false
-            semanticActionRequested(actionId, requestId)
+            semanticActionRequested(actionId, requestId, expiresAtUnixMs)
             return true
         case "android-recent-apps":
             keyRequested("app-switch")

@@ -119,15 +119,12 @@ impl<'a> AdbActionAdapter<'a> {
                         "-s",
                         target,
                         "shell",
-                        "am",
-                        "start",
-                        "-W",
-                        "-a",
-                        "android.intent.action.MAIN",
-                        "-c",
-                        "android.intent.category.LAUNCHER",
+                        "monkey",
                         "-p",
                         package,
+                        "-c",
+                        "android.intent.category.LAUNCHER",
+                        "1",
                     ]
                     .into_iter()
                     .map(str::to_owned)

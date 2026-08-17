@@ -5,7 +5,7 @@ import QtQuick.Layouts
 import qs.Commons
 import qs.Ui
 
-Item {
+NestedEscapeScope {
     id: root
 
     property var actions: ["back", "home", "recent-apps"]
@@ -15,26 +15,41 @@ Item {
     property color foreground: Color.foreground
 
     signal actionRequested(string action)
-    signal settingsRequested()
+    signal settingsRequested
     signal keepConnectedRequested(bool keepConnected)
-    signal backRequested()
+    signal backRequested
+
+    escapeEnabled: settingsOpen
+    onEscapeRequested: root.backRequested()
 
     function actionLabel(action) {
         switch (action) {
-        case "back": return "Back"
-        case "home": return "Home"
-        case "recent-apps": return "Recent apps"
-        default: return "Android action"
+        case "back":
+            return "Back";
+        case "home":
+            return "Home";
+        case "recent-apps":
+            return "Recent apps";
+        default:
+            return "Android action";
         }
     }
 
     function actionIcon(action) {
         switch (action) {
-        case "back": return "󰁍"
-        case "home": return "󰋜"
-        case "recent-apps": return "󰒍"
-        default: return "󰄜"
+        case "back":
+            return "󰁍";
+        case "home":
+            return "󰋜";
+        case "recent-apps":
+            return "󰒍";
+        default:
+            return "󰄜";
         }
+    }
+
+    function forceSettingsFocus() {
+        settingsBackButton.forceActiveFocus();
     }
 
     implicitHeight: toolbar.implicitHeight
@@ -45,6 +60,8 @@ Item {
         spacing: Style.space(6)
 
         PanelActionButton {
+            id: settingsBackButton
+            objectName: "settingsBackButton"
             visible: root.settingsOpen
             focusable: true
             bordered: true
@@ -89,17 +106,11 @@ Item {
             focusable: true
             bordered: true
             iconText: "󰌷"
-            tooltipText: root.keepConnected
-                         ? "Keep connected when panel closes: on"
-                         : "Keep connected when panel closes: off"
+            tooltipText: root.keepConnected ? "Keep connected when panel closes: on" : "Keep connected when panel closes: off"
             foreground: root.foreground
             hoverColor: root.keepConnected ? Color.accent : root.foreground
-            color: root.keepConnected
-                   ? Style.selectedFillFor(root.foreground, Color.accent)
-                   : "transparent"
-            borderSpec: root.keepConnected
-                        ? Border.controlSpec("selected", root.foreground, Color.accent)
-                        : Border.controlSpec("normal", root.foreground, Color.accent)
+            color: root.keepConnected ? Style.selectedFillFor(root.foreground, Color.accent) : "transparent"
+            borderSpec: root.keepConnected ? Border.controlSpec("selected", root.foreground, Color.accent) : Border.controlSpec("normal", root.foreground, Color.accent)
             onClicked: root.keepConnectedRequested(!root.keepConnected)
         }
 

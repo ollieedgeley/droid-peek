@@ -30,152 +30,143 @@ Panel {
     implicitHeight: 480
 
     function horizontalPanelInset() {
-        return panel.padding * 2
-                + Border.left(panel.borderSpec)
-                + Border.right(panel.borderSpec)
+        return panel.padding * 2 + Border.left(panel.borderSpec) + Border.right(panel.borderSpec);
     }
 
     function desiredViewportSize(availableHeight) {
-        var horizontalInset = horizontalPanelInset()
-        var maxWidth = panel.availableCardWidth > 0
-                ? Math.max(1, panel.availableCardWidth - horizontalInset)
-                : Style.space(288)
-        var maxHeight = availableHeight > 0
-                ? Math.max(1, availableHeight - panel.verticalContentInset
-                           - phoneToolbar.implicitHeight - content.spacing)
-                : Style.space(640)
-        var sourceWidth = phonePreview && phonePreview.displayWidth > 0
-                ? phonePreview.displayWidth : 9
-        var sourceHeight = phonePreview && phonePreview.displayHeight > 0
-                ? phonePreview.displayHeight : 16
-        var baseWidth = Math.max(1, Style.space(320) - horizontalInset)
-        return PreviewGeometry.scaledAspectSize(
-                    sourceWidth, sourceHeight, baseWidth,
-                    maxWidth, maxHeight, pairingState.previewScale)
+        var horizontalInset = horizontalPanelInset();
+        var maxWidth = panel.availableCardWidth > 0 ? Math.max(1, panel.availableCardWidth - horizontalInset) : Style.space(288);
+        var maxHeight = availableHeight > 0 ? Math.max(1, availableHeight - panel.verticalContentInset - phoneToolbar.implicitHeight - content.spacing) : Style.space(640);
+        var sourceWidth = phonePreview && phonePreview.displayWidth > 0 ? phonePreview.displayWidth : 9;
+        var sourceHeight = phonePreview && phonePreview.displayHeight > 0 ? phonePreview.displayHeight : 16;
+        var baseWidth = Math.max(1, Style.space(320) - horizontalInset);
+        return PreviewGeometry.scaledAspectSize(sourceWidth, sourceHeight, baseWidth, maxWidth, maxHeight, pairingState.previewScale);
     }
 
     function desiredPanelWidth() {
-        if (pairingState.sessionState === "ready" && !root.settingsOpen)
-            return horizontalPanelInset()
-                    + Math.max(phoneToolbar.implicitWidth,
-                               desiredViewportSize(panel.availableCardHeight).width)
-        return Style.space(320)
+        if (pairingState.sessionState === "ready") {
+            if (root.settingsOpen)
+                return Style.space(400);
+            return horizontalPanelInset() + Math.max(phoneToolbar.implicitWidth, desiredViewportSize(panel.availableCardHeight).width);
+        }
+        return Style.space(320);
     }
 
     function desiredPreviewHeight(availableHeight) {
-        return desiredViewportSize(availableHeight).height
+        return desiredViewportSize(availableHeight).height;
+    }
+
+    function openSettings() {
+        settingsOpen = true;
+        Qt.callLater(function () {
+            phoneToolbar.forceSettingsFocus();
+        });
+    }
+
+    function closeSettings() {
+        settingsOpen = false;
     }
 
     function runQuickAction(action) {
-        var key = semanticActionRouter.quickActionKey(action)
+        var key = semanticActionRouter.quickActionKey(action);
         if (key === "")
-            return
-        pairingState.sendKeyInput(key)
+            return;
+        pairingState.sendKeyInput(key);
         if (phonePreview) {
-            Qt.callLater(function() {
+            Qt.callLater(function () {
                 if (root.phonePreview)
-                    root.phonePreview.forceActiveFocus()
-            })
+                    root.phonePreview.forceActiveFocus();
+            });
         }
     }
 
     function updatePreferences(keepConnected, scale, quality, actions) {
-        pairingState.setPreferences(keepConnected, scale, quality, actions)
+        pairingState.setPreferences(keepConnected, scale, quality, actions);
     }
 
     function requestStartOver() {
-        if (!pairingState.helperReady || !pairingState.hasTrustedDevice
-                || pairingState.startOverPending)
-            return
-        startOverDialog.selectedIndex = 0
-        startOverDialog.opened = true
-        startOverDialog.forceActiveFocus()
+        if (!pairingState.helperReady || !pairingState.hasTrustedDevice || pairingState.startOverPending)
+            return;
+        startOverDialog.selectedIndex = 0;
+        startOverDialog.opened = true;
+        startOverDialog.forceActiveFocus();
     }
 
     function triggerSemanticAction(actionId) {
-        return semanticActionRouter.trigger(actionId)
+        return semanticActionRouter.trigger(actionId);
     }
 
     function activatePrimary() {
         if (pairingState.pairingStage !== "manual-code")
-            return
-
-        var code = manualCode.text
-        manualCode.text = ""
-        pairingState.submitManualCode(code)
+            return;
+        var code = manualCode.text;
+        manualCode.text = "";
+        pairingState.submitManualCode(code);
     }
 
     function finishHelperShutdown() {
         if (!helperShutdownPending)
-            return
-
-        helperShutdownPending = false
-        helperStopTimer.stop()
-        helperProcess.running = false
+            return;
+        helperShutdownPending = false;
+        helperStopTimer.stop();
+        helperProcess.running = false;
         if (pairingState.sessionState !== "ready")
-            pairingState.reset()
+            pairingState.reset();
     }
 
     onOpenedChanged: {
         if (opened) {
-            helperShutdownPending = false
-            helperStopTimer.stop()
-            helperProcess.running = true
-            pairingState.automaticPairingEnabled = true
+            helperShutdownPending = false;
+            helperStopTimer.stop();
+            helperProcess.running = true;
+            pairingState.automaticPairingEnabled = true;
             if (pairingState.helperReady && pairingState.sessionState === "unpaired")
-                pairingState.startQrPairing()
+                pairingState.startQrPairing();
         } else {
-            manualCode.text = ""
-            startOverDialog.opened = false
-            pairingState.automaticPairingEnabled = false
-            var closeAction = PanelLifecycle.closeAction(
-                        pairingState.keepConnected,
-                        pairingState.sessionState,
-                        pairingState.pairingStage,
-                        helperProcess.running)
+            manualCode.text = "";
+            startOverDialog.opened = false;
+            pairingState.automaticPairingEnabled = false;
+            var closeAction = PanelLifecycle.closeAction(pairingState.keepConnected, pairingState.sessionState, pairingState.pairingStage, helperProcess.running);
             if (closeAction === "stop-session" || closeAction === "cancel-pairing") {
-                helperShutdownPending = true
+                helperShutdownPending = true;
                 if (closeAction === "stop-session")
-                    pairingState.stopSession()
+                    pairingState.stopSession();
                 else
-                    pairingState.cancelPairing()
-                helperStopTimer.restart()
+                    pairingState.cancelPairing();
+                helperStopTimer.restart();
             }
-            settingsOpen = false
+            settingsOpen = false;
         }
     }
 
     PairingState {
         id: pairingState
-        onCommandRequested: function(command) {
+        onCommandRequested: function (command) {
             if (!helperProcess.running) {
-                pairingState.protocolFailure()
-                return
+                pairingState.protocolFailure();
+                return;
             }
-            helperProcess.write(command + "\n")
+            helperProcess.write(command + "\n");
         }
         onPairingCancellationConfirmed: {
             if (root.helperShutdownPending) {
-                root.finishHelperShutdown()
-            } else if (root.opened && pairingState.helperReady
-                       && pairingState.sessionState === "unpaired") {
-                pairingState.startQrPairing()
+                root.finishHelperShutdown();
+            } else if (root.opened && pairingState.helperReady && pairingState.sessionState === "unpaired") {
+                pairingState.startQrPairing();
             }
         }
         onSessionStopConfirmed: {
             if (root.helperShutdownPending)
-                root.finishHelperShutdown()
+                root.finishHelperShutdown();
         }
     }
 
     SemanticActionRouter {
         id: semanticActionRouter
         sessionReady: pairingState.sessionState === "ready"
-        phoneFocused: root.opened && !root.settingsOpen
-                      && root.phonePreview !== null
-                      && root.phonePreview.inputFocused
-        onKeyRequested: function(key) {
-            pairingState.sendKeyInput(key)
+        phoneFocused: root.opened && !root.settingsOpen && root.phonePreview !== null && root.phonePreview.inputFocused
+        onKeyRequested: function (key) {
+            pairingState.sendKeyInput(key);
         }
     }
 
@@ -189,9 +180,7 @@ Panel {
     Timer {
         interval: 1000
         repeat: true
-        running: root.opened
-                 && pairingState.pairingStage === "qr-waiting"
-                 && pairingState.qrExpiresInSeconds > 0
+        running: root.opened && pairingState.pairingStage === "qr-waiting" && pairingState.qrExpiresInSeconds > 0
         onTriggered: pairingState.tickQrExpiry()
     }
 
@@ -201,13 +190,13 @@ Panel {
         stdinEnabled: true
         running: false
         stdout: SplitParser {
-            onRead: function(line) {
-                pairingState.receiveLine(line)
+            onRead: function (line) {
+                pairingState.receiveLine(line);
             }
         }
         onRunningChanged: {
             if (!running && root.opened)
-                pairingState.protocolFailure()
+                pairingState.protocolFailure();
         }
     }
 
@@ -224,15 +213,11 @@ Panel {
         PanelKeyCatcher {
             id: keyCatcher
             anchors.fill: parent
-            blocked: root.settingsOpen
-                     || startOverDialog.opened
-                     || manualCode.activeFocus
-                     || (root.phonePreview !== null
-                         && root.phonePreview.inputFocused)
+            blocked: root.settingsOpen || startOverDialog.opened || manualCode.activeFocus || (root.phonePreview !== null && root.phonePreview.inputFocused)
             onActivateRequested: root.activatePrimary()
             onCloseRequested: root.close()
-            onTextKey: function(text) {
-                pairingState.sendTextInput(text)
+            onTextKey: function (text) {
+                pairingState.sendTextInput(text);
             }
 
             Column {
@@ -267,16 +252,13 @@ Panel {
                     settingsOpen: root.settingsOpen
                     controlsEnabled: pairingState.sessionState === "ready"
                     foreground: root.contentForeground
-                    onActionRequested: function(action) {
-                        root.runQuickAction(action)
+                    onActionRequested: function (action) {
+                        root.runQuickAction(action);
                     }
-                    onSettingsRequested: root.settingsOpen = true
-                    onBackRequested: root.settingsOpen = false
-                    onKeepConnectedRequested: function(keepConnected) {
-                        root.updatePreferences(keepConnected,
-                                               pairingState.previewScale,
-                                               pairingState.videoQuality,
-                                               pairingState.quickActions)
+                    onSettingsRequested: root.openSettings()
+                    onBackRequested: root.closeSettings()
+                    onKeepConnectedRequested: function (keepConnected) {
+                        root.updatePreferences(keepConnected, pairingState.previewScale, pairingState.videoQuality, pairingState.quickActions);
                     }
                 }
 
@@ -295,16 +277,16 @@ Panel {
                         active: parent.visible && root.opened
                         source: Qt.resolvedUrl("qml/components/PhonePreview.qml")
                         onLoaded: {
-                            item.background = Qt.binding(function() {
-                                return root.contentBackground
-                            })
-                            item.foreground = Qt.binding(function() {
-                                return root.contentForeground
-                            })
-                            item.captureRequested = true
-                            item.inputEnabled = Qt.binding(function() {
-                                return root.opened && !root.settingsOpen
-                            })
+                            item.background = Qt.binding(function () {
+                                return root.contentBackground;
+                            });
+                            item.foreground = Qt.binding(function () {
+                                return root.contentForeground;
+                            });
+                            item.captureRequested = true;
+                            item.inputEnabled = Qt.binding(function () {
+                                return root.opened && !root.settingsOpen;
+                            });
                         }
                     }
 
@@ -312,40 +294,39 @@ Panel {
                         target: phonePreviewLoader.item
                         enabled: target !== null
                         function onTapRequested(x, y, displayWidth, displayHeight) {
-                            pairingState.sendPointerTap(x, y, displayWidth, displayHeight)
+                            pairingState.sendPointerTap(x, y, displayWidth, displayHeight);
                         }
-                        function onSwipeRequested(startX, startY, endX, endY,
-                                                  displayWidth, displayHeight, durationMs) {
-                            pairingState.sendPointerSwipe(startX, startY, endX, endY,
-                                                         displayWidth, displayHeight, durationMs)
+                        function onSwipeRequested(startX, startY, endX, endY, displayWidth, displayHeight, durationMs) {
+                            pairingState.sendPointerSwipe(startX, startY, endX, endY, displayWidth, displayHeight, durationMs);
                         }
                         function onKeyRequested(key) {
-                            pairingState.sendKeyInput(key)
+                            pairingState.sendKeyInput(key);
                         }
                         function onTextRequested(text) {
-                            pairingState.sendTextInput(text)
+                            pairingState.sendTextInput(text);
                         }
                     }
                 }
 
                 Settings {
+                    id: settingsView
                     width: parent.width
+                    maximumHeight: Math.max(1, panel.availableCardHeight - panel.verticalContentInset - phoneToolbar.implicitHeight - content.spacing)
                     visible: pairingState.sessionState === "ready" && root.settingsOpen
                     keepConnected: pairingState.keepConnected
                     previewScale: pairingState.previewScale
                     videoQuality: pairingState.videoQuality
                     quickActions: pairingState.quickActions
                     foreground: root.contentForeground
-                    onPreferencesRequested: function(keepConnected, scale, quality, actions) {
-                        root.updatePreferences(keepConnected, scale, quality, actions)
+                    onBackRequested: root.closeSettings()
+                    onPreferencesRequested: function (keepConnected, scale, quality, actions) {
+                        root.updatePreferences(keepConnected, scale, quality, actions);
                     }
                     onStartOverRequested: root.requestStartOver()
                 }
 
-
                 Rectangle {
-                    visible: pairingState.pairingStage === "qr-waiting"
-                             && pairingState.qrArtifact !== ""
+                    visible: pairingState.pairingStage === "qr-waiting" && pairingState.qrArtifact !== ""
                     width: Math.min(parent.width, Style.space(240))
                     height: width
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -355,9 +336,7 @@ Panel {
                     Image {
                         anchors.fill: parent
                         anchors.margins: Style.space(10)
-                        source: pairingState.qrArtifact === ""
-                                ? ""
-                                : "file://" + pairingState.qrArtifact
+                        source: pairingState.qrArtifact === "" ? "" : "file://" + pairingState.qrArtifact
                         cache: false
                         fillMode: Image.PreserveAspectFit
                         smooth: false
@@ -365,12 +344,9 @@ Panel {
                 }
 
                 Text {
-                    visible: pairingState.pairingStage === "qr-waiting"
-                             && pairingState.qrArtifact !== ""
+                    visible: pairingState.pairingStage === "qr-waiting" && pairingState.qrArtifact !== ""
                     width: parent.width
-                    text: pairingState.qrExpiresInSeconds === 1
-                          ? "Expires in 1 second"
-                          : "Expires in " + pairingState.qrExpiresInSeconds + " seconds"
+                    text: pairingState.qrExpiresInSeconds === 1 ? "Expires in 1 second" : "Expires in " + pairingState.qrExpiresInSeconds + " seconds"
                     color: Qt.darker(root.contentForeground, 1.4)
                     font.family: Style.fontFamily
                     font.pixelSize: Style.fontBaseSize
@@ -390,8 +366,7 @@ Panel {
                     anchors.horizontalCenter: parent.horizontalCenter
                     spacing: Style.space(8)
                     Button {
-                        visible: pairingState.sessionState === "qr-waiting"
-                                 && pairingState.pairingStage !== "manual-code"
+                        visible: pairingState.sessionState === "qr-waiting" && pairingState.pairingStage !== "manual-code"
                         text: "Pair by code"
                         onClicked: pairingState.useManualCode()
                     }
@@ -408,15 +383,10 @@ Panel {
                         onClicked: pairingState.reconnectTrustedDevice()
                     }
                     Button {
-                        visible: pairingState.helperReady
-                                 && pairingState.hasTrustedDevice
-                                 && pairingState.sessionState !== "ready"
-                                 && !pairingState.startOverPending
-                        text: pairingState.pairingStage === "start-over-failed"
-                              ? "Retry start over" : "Start over"
+                        visible: pairingState.helperReady && pairingState.hasTrustedDevice && pairingState.sessionState !== "ready" && !pairingState.startOverPending
+                        text: pairingState.pairingStage === "start-over-failed" ? "Retry start over" : "Start over"
                         onClicked: root.requestStartOver()
                     }
-
                 }
             }
 
@@ -424,30 +394,27 @@ Panel {
                 id: startOverDialog
                 anchors.fill: parent
                 z: 10
-                message: "Start over with a new phone?\n\n"
-                         + "This stops the current session and forgets this phone "
-                         + "on this computer. It does not remove this computer "
-                         + "from Android’s Paired devices list."
+                message: "Start over with a new phone?\n\n" + "This stops the current session and forgets this phone " + "on this computer. It does not remove this computer " + "from Android’s Paired devices list."
                 cancelText: "Cancel"
                 confirmText: "Start over"
                 background: root.contentBackground
                 foreground: root.contentForeground
                 focus: opened
 
-                Keys.onPressed: function(event) {
+                Keys.onPressed: function (event) {
                     if (handleKey(event))
-                        event.accepted = true
+                        event.accepted = true;
                 }
 
                 onCanceled: {
-                    opened = false
-                    keyCatcher.forceActiveFocus()
+                    opened = false;
+                    keyCatcher.forceActiveFocus();
                 }
                 onConfirmed: {
-                    opened = false
-                    root.settingsOpen = false
-                    pairingState.startOver()
-                    keyCatcher.forceActiveFocus()
+                    opened = false;
+                    root.settingsOpen = false;
+                    pairingState.startOver();
+                    keyCatcher.forceActiveFocus();
                 }
             }
         }

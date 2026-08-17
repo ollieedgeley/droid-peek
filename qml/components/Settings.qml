@@ -1,10 +1,11 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls as Controls
 import qs.Commons
 import qs.Ui
 
-Column {
+NestedEscapeScope {
     id: root
 
     property bool keepConnected: false
@@ -12,189 +13,317 @@ Column {
     property string videoQuality: "high"
     property var quickActions: ["back", "home", "recent-apps"]
     property color foreground: Color.foreground
+    property real maximumHeight: Number.POSITIVE_INFINITY
 
+    signal backRequested
     signal preferencesRequested(bool keepConnected, int previewScale, string videoQuality, var quickActions)
-    signal startOverRequested()
+    signal startOverRequested
 
     readonly property var qualityOptions: [
-        { value: "low", label: "Low" },
-        { value: "medium", label: "Medium" },
-        { value: "high", label: "High" }
+        {
+            value: "low",
+            label: "Low"
+        },
+        {
+            value: "medium",
+            label: "Medium"
+        },
+        {
+            value: "high",
+            label: "High"
+        }
     ]
     readonly property var actionOptions: [
-        { value: "back", label: "Back" },
-        { value: "home", label: "Home" },
-        { value: "recent-apps", label: "Recent apps" }
+        {
+            value: "back",
+            label: "Back"
+        },
+        {
+            value: "home",
+            label: "Home"
+        },
+        {
+            value: "recent-apps",
+            label: "Recent apps"
+        }
     ]
 
-    spacing: Style.space(12)
+    implicitWidth: Style.space(360)
+    implicitHeight: Math.min(settingsContent.implicitHeight, maximumHeight)
 
     function request(keepConnectedValue, scale, quality, actions) {
-        preferencesRequested(keepConnectedValue, scale, quality, actions.slice())
+        preferencesRequested(keepConnectedValue, scale, quality, actions.slice());
     }
 
     function replaceAction(index, action) {
-        var actions = quickActions.slice()
-        actions[index] = action
-        request(keepConnected, previewScale, videoQuality, actions)
+        var actions = quickActions.slice();
+        actions[index] = action;
+        request(keepConnected, previewScale, videoQuality, actions);
     }
 
-    Text {
-        width: parent.width
-        text: "CONNECTION"
-        color: Qt.darker(root.foreground, 1.35)
-        font.family: Style.fontFamily
-        font.pixelSize: Style.fontBaseSize * 0.85
-        font.bold: true
-        font.letterSpacing: 1.2
+    function qualityLabel(value) {
+        for (var index = 0; index < qualityOptions.length; ++index) {
+            if (qualityOptions[index].value === value)
+                return qualityOptions[index].label;
+        }
+        return value;
     }
 
-    Item {
-        width: parent.width
-        height: Math.max(connectionCopy.implicitHeight, keepConnectedSwitch.implicitHeight)
+    function setPreviewScale(value) {
+        var next = Math.max(50, Math.min(150, Math.round(value / 5) * 5));
+        if (next !== previewScale)
+            request(keepConnected, next, videoQuality, quickActions);
+    }
+
+    onEscapeRequested: root.backRequested()
+
+    Controls.ScrollView {
+        id: settingsScroll
+        anchors.fill: parent
+        clip: true
+        contentWidth: availableWidth
+        contentHeight: settingsContent.implicitHeight
+        Controls.ScrollBar.horizontal.policy: Controls.ScrollBar.AlwaysOff
+        Controls.ScrollBar.vertical.policy: Controls.ScrollBar.AsNeeded
 
         Column {
-            id: connectionCopy
-            width: parent.width - keepConnectedSwitch.width - Style.space(12)
-            spacing: Style.space(3)
+            id: settingsContent
+            width: settingsScroll.availableWidth
+            spacing: Style.space(12)
 
-            Text {
+            PanelSectionHeader {
                 width: parent.width
-                text: "Keep phone connected"
-                color: root.foreground
-                font.family: Style.fontFamily
-                font.pixelSize: Style.fontBaseSize
-                font.bold: true
-                wrapMode: Text.Wrap
+                text: "CONNECTION"
+                foreground: root.foreground
             }
 
-            Text {
+            Toggle {
+                id: keepConnectedControl
+                objectName: "keepConnectedControl"
                 width: parent.width
-                text: "Keeps the private phone session running when this panel closes."
-                color: Qt.darker(root.foreground, 1.35)
-                font.family: Style.fontFamily
-                font.pixelSize: Style.fontBaseSize * 0.85
-                wrapMode: Text.Wrap
-            }
-        }
+                label: "Keep phone connected"
+                checked: root.keepConnected
+                foreground: root.foreground
+                onClicked: root.request(!root.keepConnected, root.previewScale, root.videoQuality, root.quickActions)
 
-        ToggleSwitch {
-            id: keepConnectedSwitch
-            objectName: "keepConnectedSwitch"
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            checked: root.keepConnected
-            foreground: root.foreground
-            onToggled: root.request(!root.keepConnected, root.previewScale,
-                                    root.videoQuality, root.quickActions)
-        }
-    }
+                property bool pointerHovered: false
+                onHovered: function (isHovered) {
+                    pointerHovered = isHovered;
+                }
 
-    Item {
-        width: parent.width
-        height: Math.max(startOverCopy.implicitHeight, startOverButton.implicitHeight)
-
-        Column {
-            id: startOverCopy
-            width: parent.width - startOverButton.width - Style.space(12)
-            spacing: Style.space(3)
-
-            Text {
-                width: parent.width
-                text: "Pair a different phone"
-                color: root.foreground
-                font.family: Style.fontFamily
-                font.pixelSize: Style.fontBaseSize
-                font.bold: true
-                wrapMode: Text.Wrap
+                PanelToolTip {
+                    visible: keepConnectedControl.pointerHovered || keepConnectedControl.activeFocus
+                    text: "Keep the phone session running when this panel closes."
+                }
             }
 
-            Text {
-                width: parent.width
-                text: "Stops this session and forgets this phone on this computer."
-                color: Qt.darker(root.foreground, 1.35)
-                font.family: Style.fontFamily
-                font.pixelSize: Style.fontBaseSize * 0.85
-                wrapMode: Text.Wrap
+            PanelSeparator {
+                foreground: root.foreground
             }
-        }
 
-        Button {
-            id: startOverButton
-            objectName: "startOverButton"
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            text: "Start over"
-            onClicked: root.startOverRequested()
-        }
-    }
+            PanelSectionHeader {
+                width: parent.width
+                text: "VIDEO"
+                foreground: root.foreground
+            }
 
-    NumberField {
-        objectName: "previewScaleField"
-        width: parent.width
-        label: "Preview scale (%)"
-        value: root.previewScale
-        from: 50
-        to: 150
-        stepSize: 5
-        foreground: root.foreground
-        onModified: function(value) {
-            root.request(root.keepConnected, value, root.videoQuality, root.quickActions)
-        }
-    }
+            Column {
+                width: parent.width
+                spacing: Style.space(6)
 
-    Text {
-        width: parent.width
-        text: "The embedded viewport follows this width scale. "
-              + "The phone image is centered and fitted without cropping."
-        color: Qt.darker(root.foreground, 1.35)
-        font.family: Style.fontFamily
-        font.pixelSize: Style.fontBaseSize * 0.85
-        wrapMode: Text.Wrap
-    }
+                Row {
+                    width: parent.width
 
-    Dropdown {
-        width: parent.width
-        label: "Video quality"
-        value: root.videoQuality
-        options: root.qualityOptions
-        foreground: root.foreground
-        onChanged: function(value) {
-            root.request(root.keepConnected, root.previewScale, value, root.quickActions)
-        }
-    }
+                    Text {
+                        width: parent.width - previewScaleValue.width
+                        text: "Preview scale"
+                        color: root.foreground
+                        font.family: Style.fontFamily
+                        font.pixelSize: Style.fontBaseSize
+                        font.bold: true
+                    }
 
-    Text {
-        width: parent.width
-        text: "Quality changes restart the private phone stream. Pairing remains intact."
-        color: Qt.darker(root.foreground, 1.35)
-        font.family: Style.fontFamily
-        font.pixelSize: Style.fontBaseSize * 0.85
-        wrapMode: Text.Wrap
-    }
+                    Text {
+                        id: previewScaleValue
+                        text: Math.round(previewScaleSlider.liveValue) + "%"
+                        color: Qt.darker(root.foreground, 1.25)
+                        font.family: Style.fontFamily
+                        font.pixelSize: Style.fontBaseSize
+                    }
+                }
 
-    Text {
-        width: parent.width
-        text: "QUICK ACTIONS"
-        color: Qt.darker(root.foreground, 1.35)
-        font.family: Style.fontFamily
-        font.pixelSize: Style.fontBaseSize * 0.85
-        font.bold: true
-        font.letterSpacing: 1.2
-    }
+                BorderSurface {
+                    id: previewScaleControl
+                    objectName: "previewScaleControl"
+                    width: parent.width
+                    height: previewScaleSlider.implicitHeight + Style.space(8)
+                    radius: Style.cornerRadius
+                    activeFocusOnTab: true
+                    color: Style.controlFill(activeFocus, previewScaleHover.hovered, root.foreground, Color.accent)
+                    borderSpec: Border.controlSpec(activeFocus ? "focus" : (previewScaleHover.hovered ? "hover-cursor" : "normal"), root.foreground, Color.accent)
 
-    Repeater {
-        model: 3
+                    function moveBy(delta) {
+                        root.setPreviewScale(root.previewScale + delta);
+                    }
 
-        Dropdown {
-            required property int index
-            width: root.width
-            label: "Slot " + (index + 1)
-            value: root.quickActions[index]
-            options: root.actionOptions
-            foreground: root.foreground
-            onChanged: function(value) {
-                root.replaceAction(index, value)
+                    Keys.onPressed: function (event) {
+                        if (event.isAutoRepeat) {
+                            event.accepted = true;
+                            return;
+                        }
+                        if (event.key === Qt.Key_Left) {
+                            moveBy(-5);
+                            event.accepted = true;
+                        } else if (event.key === Qt.Key_Right) {
+                            moveBy(5);
+                            event.accepted = true;
+                        } else if (event.key === Qt.Key_Home) {
+                            root.setPreviewScale(50);
+                            event.accepted = true;
+                        } else if (event.key === Qt.Key_End) {
+                            root.setPreviewScale(150);
+                            event.accepted = true;
+                        }
+                    }
+
+                    HoverHandler {
+                        id: previewScaleHover
+                    }
+
+                    PanelSlider {
+                        id: previewScaleSlider
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: Style.space(8)
+                        anchors.rightMargin: Style.space(8)
+                        value: root.previewScale
+                        minimum: 50
+                        maximum: 150
+                        step: 5
+                        integer: true
+                        tickCount: 5
+                        fillColor: root.foreground
+                        knobColor: root.foreground
+                        onReleased: function (value) {
+                            root.setPreviewScale(value);
+                        }
+                    }
+
+                    PanelToolTip {
+                        visible: previewScaleHover.hovered || previewScaleControl.activeFocus
+                        text: "Changes the embedded phone preview size."
+                    }
+                }
+            }
+
+            Column {
+                width: parent.width
+                spacing: Style.space(6)
+
+                Row {
+                    width: parent.width
+
+                    Text {
+                        width: parent.width - qualityValue.width
+                        text: "Quality"
+                        color: root.foreground
+                        font.family: Style.fontFamily
+                        font.pixelSize: Style.fontBaseSize
+                        font.bold: true
+                    }
+
+                    Text {
+                        id: qualityValue
+                        text: root.qualityLabel(root.videoQuality)
+                        color: Qt.darker(root.foreground, 1.25)
+                        font.family: Style.fontFamily
+                        font.pixelSize: Style.fontBaseSize
+                    }
+                }
+
+                Row {
+                    id: qualityButtons
+                    width: parent.width
+                    spacing: Style.space(6)
+
+                    Repeater {
+                        model: root.qualityOptions
+
+                        Button {
+                            required property var modelData
+                            width: (qualityButtons.width - qualityButtons.spacing * 2) / 3
+                            text: modelData.label
+                            selected: root.videoQuality === modelData.value
+                            bordered: true
+                            focusable: true
+                            foreground: root.foreground
+                            tooltipText: "Restarts mirroring; pairing stays intact."
+                            onClicked: root.request(root.keepConnected, root.previewScale, modelData.value, root.quickActions)
+                        }
+                    }
+                }
+            }
+
+            PanelSeparator {
+                foreground: root.foreground
+            }
+
+            PanelSectionHeader {
+                width: parent.width
+                text: "QUICK ACTIONS"
+                foreground: root.foreground
+            }
+
+            Repeater {
+                model: 3
+
+                Dropdown {
+                    required property int index
+                    width: root.width
+                    label: "Slot " + (index + 1)
+                    value: root.quickActions[index]
+                    options: root.actionOptions
+                    foreground: root.foreground
+                    onChanged: function (value) {
+                        root.replaceAction(index, value);
+                    }
+                }
+            }
+
+            PanelSeparator {
+                foreground: root.foreground
+            }
+
+            PanelSectionHeader {
+                width: parent.width
+                text: "PHONE"
+                foreground: root.foreground
+            }
+
+            Column {
+                width: parent.width
+                spacing: Style.space(6)
+
+                Text {
+                    width: parent.width
+                    text: "Pair a different phone"
+                    color: root.foreground
+                    font.family: Style.fontFamily
+                    font.pixelSize: Style.fontBaseSize
+                    font.bold: true
+                }
+
+                Button {
+                    objectName: "startOverButton"
+                    width: parent.width
+                    text: "Start over"
+                    bordered: true
+                    focusable: true
+                    foreground: root.foreground
+                    tooltipText: "Stops this session and forgets this phone on this computer."
+                    onClicked: root.startOverRequested()
+                }
             }
         }
     }

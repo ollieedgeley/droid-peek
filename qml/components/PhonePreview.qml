@@ -21,8 +21,7 @@ Item {
     readonly property int displayHeight: Math.round(videoOutput.sourceRect.height)
 
     signal tapRequested(real x, real y, int displayWidth, int displayHeight)
-    signal swipeRequested(real startX, real startY, real endX, real endY,
-                          int displayWidth, int displayHeight, int durationMs)
+    signal swipeRequested(real startX, real startY, real endX, real endY, int displayWidth, int displayHeight, int durationMs)
     signal keyRequested(string key)
     signal textRequested(string text)
 
@@ -34,90 +33,102 @@ Item {
     function findDeviceIndex(inputs, description) {
         for (var index = 0; index < inputs.length; ++index) {
             if (inputs[index].description === description)
-                return index
+                return index;
         }
-        return -1
+        return -1;
     }
 
     function fittedSize(maxWidth, maxHeight, sourceWidth, sourceHeight) {
-        var boundedWidth = Math.max(1, maxWidth)
-        var boundedHeight = Math.max(1, maxHeight)
-        var contentWidth = sourceWidth > 0 ? sourceWidth : 9
-        var contentHeight = sourceHeight > 0 ? sourceHeight : 20
-        var scale = Math.min(boundedWidth / contentWidth,
-                             boundedHeight / contentHeight)
-        return Qt.size(Math.max(1, Math.round(contentWidth * scale)),
-                       Math.max(1, Math.round(contentHeight * scale)))
+        var boundedWidth = Math.max(1, maxWidth);
+        var boundedHeight = Math.max(1, maxHeight);
+        var contentWidth = sourceWidth > 0 ? sourceWidth : 9;
+        var contentHeight = sourceHeight > 0 ? sourceHeight : 20;
+        var scale = Math.min(boundedWidth / contentWidth, boundedHeight / contentHeight);
+        return Qt.size(Math.max(1, Math.round(contentWidth * scale)), Math.max(1, Math.round(contentHeight * scale)));
     }
 
     function normalizedPoint(x, y, contentRect) {
-        if (contentRect.width <= 0 || contentRect.height <= 0
-                || x < contentRect.x || y < contentRect.y
-                || x > contentRect.x + contentRect.width
-                || y > contentRect.y + contentRect.height)
-            return null
-        return Qt.point((x - contentRect.x) / contentRect.width,
-                        (y - contentRect.y) / contentRect.height)
+        if (contentRect.width <= 0 || contentRect.height <= 0 || x < contentRect.x || y < contentRect.y || x > contentRect.x + contentRect.width || y > contentRect.y + contentRect.height)
+            return null;
+        return Qt.point((x - contentRect.x) / contentRect.width, (y - contentRect.y) / contentRect.height);
     }
 
-    function dispatchPointer(startX, startY, endX, endY, durationMs,
-                             contentRect, sourceWidth, sourceHeight) {
+    function dispatchPointer(startX, startY, endX, endY, durationMs, contentRect, sourceWidth, sourceHeight) {
         if (sourceWidth <= 0 || sourceHeight <= 0)
-            return false
-        var start = normalizedPoint(startX, startY, contentRect)
-        var end = normalizedPoint(endX, endY, contentRect)
+            return false;
+        var start = normalizedPoint(startX, startY, contentRect);
+        var end = normalizedPoint(endX, endY, contentRect);
         if (start === null || end === null)
-            return false
-        var distance = Math.hypot(endX - startX, endY - startY)
+            return false;
+        var distance = Math.hypot(endX - startX, endY - startY);
         if (distance <= 8) {
-            tapRequested(end.x, end.y, sourceWidth, sourceHeight)
+            tapRequested(end.x, end.y, sourceWidth, sourceHeight);
         } else {
-            swipeRequested(start.x, start.y, end.x, end.y,
-                           sourceWidth, sourceHeight,
-                           Math.max(1, Math.min(60000, Math.round(durationMs))))
+            swipeRequested(start.x, start.y, end.x, end.y, sourceWidth, sourceHeight, Math.max(1, Math.min(60000, Math.round(durationMs))));
         }
-        return true
+        return true;
     }
 
     function androidKeyForQtKey(key) {
         switch (key) {
-        case Qt.Key_Escape: return "back"
-        case Qt.Key_Home: return "home"
+        case Qt.Key_Escape:
+            return "back";
+        case Qt.Key_Home:
+            return "home";
         case Qt.Key_Return:
-        case Qt.Key_Enter: return "enter"
+        case Qt.Key_Enter:
+            return "enter";
         case Qt.Key_Backspace:
-        case Qt.Key_Delete: return "delete"
-        case Qt.Key_Up: return "arrow-up"
-        case Qt.Key_Down: return "arrow-down"
-        case Qt.Key_Left: return "arrow-left"
-        case Qt.Key_Right: return "arrow-right"
+        case Qt.Key_Delete:
+            return "delete";
+        case Qt.Key_Up:
+            return "arrow-up";
+        case Qt.Key_Down:
+            return "arrow-down";
+        case Qt.Key_Left:
+            return "arrow-left";
+        case Qt.Key_Right:
+            return "arrow-right";
         case Qt.Key_Tab:
-        case Qt.Key_Backtab: return "tab"
-        case Qt.Key_Space: return "space"
-        default: return ""
+        case Qt.Key_Backtab:
+            return "tab";
+        case Qt.Key_Space:
+            return "space";
+        default:
+            return "";
         }
     }
+    function applyInputFocus(active) {
+        if (active)
+            forceActiveFocus();
+        else
+            focus = false;
+    }
 
-    Keys.onPressed: function(event) {
+    Keys.onPressed: function (event) {
         if (!root.inputActive)
-            return
-        var key = root.androidKeyForQtKey(event.key)
+            return;
+        var key = root.androidKeyForQtKey(event.key);
         if (key !== "") {
-            root.keyRequested(key)
-            event.accepted = true
-            return
+            root.keyRequested(key);
+            event.accepted = true;
+            return;
         }
-        var blockedModifiers = Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier
-        if (!(event.modifiers & blockedModifiers)
-                && event.text !== "" && event.text.length <= 2) {
-            root.textRequested(event.text)
-            event.accepted = true
+        var blockedModifiers = Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier;
+        if (!(event.modifiers & blockedModifiers) && event.text !== "" && event.text.length <= 2) {
+            root.textRequested(event.text);
+            event.accepted = true;
         }
     }
 
     onInputActiveChanged: {
-        if (!inputActive)
-            focus = false
+        if (!inputActive) {
+            applyInputFocus(false);
+            return;
+        }
+        Qt.callLater(function () {
+            root.applyInputFocus(root.inputActive);
+        });
     }
 
     onCaptureRequestedChanged: frameCount = 0
@@ -129,9 +140,7 @@ Item {
     CaptureSession {
         camera: Camera {
             id: camera
-            cameraDevice: root.deviceAvailable
-                          ? mediaDevices.videoInputs[root.deviceIndex]
-                          : mediaDevices.defaultVideoInput
+            cameraDevice: root.deviceAvailable ? mediaDevices.videoInputs[root.deviceIndex] : mediaDevices.defaultVideoInput
             active: root.captureRequested && root.deviceAvailable
         }
         videoOutput: videoOutput
@@ -158,25 +167,21 @@ Item {
         property real pressY: 0
         property double pressedAt: 0
 
-        onPressed: function(mouse) {
-            root.forceActiveFocus()
-            pressX = mouse.x
-            pressY = mouse.y
-            pressedAt = Date.now()
+        onPressed: function (mouse) {
+            root.forceActiveFocus();
+            pressX = mouse.x;
+            pressY = mouse.y;
+            pressedAt = Date.now();
         }
-        onReleased: function(mouse) {
-            root.dispatchPointer(pressX, pressY, mouse.x, mouse.y,
-                                 Date.now() - pressedAt,
-                                 root.displayedContent,
-                                 root.displayWidth,
-                                 root.displayHeight)
+        onReleased: function (mouse) {
+            root.dispatchPointer(pressX, pressY, mouse.x, mouse.y, Date.now() - pressedAt, root.displayedContent, root.displayWidth, root.displayHeight);
         }
     }
 
     Connections {
         target: videoOutput.videoSink
         function onVideoFrameChanged() {
-            root.frameCount += 1
+            root.frameCount += 1;
         }
     }
 

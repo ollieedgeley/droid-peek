@@ -5,6 +5,14 @@ import "../../qml/PreviewGeometry.js" as PreviewGeometry
 
 TestCase {
     name: "PhonePreview"
+    when: windowShown
+    width: 320
+    height: 480
+
+    Item {
+        id: fallbackFocus
+        focus: true
+    }
 
     PhonePreview {
         id: preview
@@ -23,115 +31,125 @@ TestCase {
         signalName: "swipeRequested"
     }
     function init() {
-        preview.captureRequested = false
-        preview.deviceDescription = "Omarchy Android"
-        preview.frameCount = 0
-        tapSpy.clear()
-        swipeSpy.clear()
+        preview.captureRequested = false;
+        preview.deviceDescription = "Omarchy Android";
+        preview.frameCount = 0;
+        tapSpy.clear();
+        swipeSpy.clear();
+        fallbackFocus.forceActiveFocus();
+        wait(0);
     }
-
 
     function test_target_device_selection_is_exact() {
         var inputs = [
-            { description: "USB Camera" },
-            { description: "Omarchy Android" },
-            { description: "Omarchy Android Backup" }
-        ]
+            {
+                description: "USB Camera"
+            },
+            {
+                description: "Omarchy Android"
+            },
+            {
+                description: "Omarchy Android Backup"
+            }
+        ];
 
-        compare(preview.findDeviceIndex(inputs, "Omarchy Android"), 1)
-        compare(preview.findDeviceIndex(inputs, "Missing device"), -1)
-        compare(preview.findDeviceIndex([], "Omarchy Android"), -1)
+        compare(preview.findDeviceIndex(inputs, "Omarchy Android"), 1);
+        compare(preview.findDeviceIndex(inputs, "Missing device"), -1);
+        compare(preview.findDeviceIndex([], "Omarchy Android"), -1);
     }
 
     function test_capture_is_off_until_requested() {
-        compare(preview.captureRequested, false)
-        compare(preview.active, false)
-        compare(preview.frameCount, 0)
+        compare(preview.captureRequested, false);
+        compare(preview.active, false);
+        compare(preview.frameCount, 0);
+    }
+    function test_input_activation_claims_keyboard_focus() {
+        verify(fallbackFocus.activeFocus);
+
+        preview.applyInputFocus(true);
+
+        tryCompare(preview, "inputFocused", true);
     }
 
     function test_stopping_capture_clears_ephemeral_frame_state() {
-        preview.deviceDescription = "Missing test device"
-        preview.captureRequested = true
-        preview.frameCount = 7
-        preview.captureRequested = false
+        preview.deviceDescription = "Missing test device";
+        preview.captureRequested = true;
+        preview.frameCount = 7;
+        preview.captureRequested = false;
 
-        compare(preview.active, false)
-        compare(preview.frameCount, 0)
+        compare(preview.active, false);
+        compare(preview.frameCount, 0);
     }
 
     function test_pointer_mapping_excludes_letterbox_and_normalizes_content() {
-        var topLeft = preview.normalizedPoint(20, 40, Qt.rect(20, 40, 200, 400))
-        verify(topLeft !== null)
-        compare(topLeft.x, 0)
-        compare(topLeft.y, 0)
+        var topLeft = preview.normalizedPoint(20, 40, Qt.rect(20, 40, 200, 400));
+        verify(topLeft !== null);
+        compare(topLeft.x, 0);
+        compare(topLeft.y, 0);
 
-        var center = preview.normalizedPoint(120, 240, Qt.rect(20, 40, 200, 400))
-        verify(center !== null)
-        compare(center.x, 0.5)
-        compare(center.y, 0.5)
+        var center = preview.normalizedPoint(120, 240, Qt.rect(20, 40, 200, 400));
+        verify(center !== null);
+        compare(center.x, 0.5);
+        compare(center.y, 0.5);
 
-        compare(preview.normalizedPoint(10, 240, Qt.rect(20, 40, 200, 400)), null)
-        compare(preview.normalizedPoint(120, 500, Qt.rect(20, 40, 200, 400)), null)
+        compare(preview.normalizedPoint(10, 240, Qt.rect(20, 40, 200, 400)), null);
+        compare(preview.normalizedPoint(120, 500, Qt.rect(20, 40, 200, 400)), null);
     }
 
     function test_live_frame_ratio_defines_the_viewport() {
-        var portrait = PreviewGeometry.scaledAspectSize(
-                    1080, 2392, 288, 1000, 1000, 100)
-        compare(portrait.width, 288)
-        verify(Math.abs(portrait.height - 637.8666667) < 0.001)
-        verify(Math.abs(portrait.width / portrait.height - 1080 / 2392) < 0.000001)
+        var portrait = PreviewGeometry.scaledAspectSize(1080, 2392, 288, 1000, 1000, 100);
+        compare(portrait.width, 288);
+        verify(Math.abs(portrait.height - 637.8666667) < 0.001);
+        verify(Math.abs(portrait.width / portrait.height - 1080 / 2392) < 0.000001);
 
-        var landscape = PreviewGeometry.scaledAspectSize(
-                    2392, 1080, 288, 1000, 1000, 100)
-        compare(landscape.width, 288)
-        verify(Math.abs(landscape.width / landscape.height - 2392 / 1080) < 0.000001)
+        var landscape = PreviewGeometry.scaledAspectSize(2392, 1080, 288, 1000, 1000, 100);
+        compare(landscape.width, 288);
+        verify(Math.abs(landscape.width / landscape.height - 2392 / 1080) < 0.000001);
     }
 
     function test_frame_derived_viewport_scales_and_stays_output_bounded() {
-        var half = PreviewGeometry.scaledAspectSize(
-                    1080, 2392, 288, 1000, 1000, 50)
-        compare(half.width, 144)
-        verify(Math.abs(half.height - 318.9333333) < 0.001)
+        var half = PreviewGeometry.scaledAspectSize(1080, 2392, 288, 1000, 1000, 50);
+        compare(half.width, 144);
+        verify(Math.abs(half.height - 318.9333333) < 0.001);
 
-        var bounded = PreviewGeometry.scaledAspectSize(
-                    1080, 2392, 288, 400, 700, 150)
-        compare(bounded.height, 700)
-        verify(bounded.width <= 400)
-        verify(Math.abs(bounded.width / bounded.height - 1080 / 2392) < 0.000001)
+        var bounded = PreviewGeometry.scaledAspectSize(1080, 2392, 288, 400, 700, 150);
+        compare(bounded.height, 700);
+        verify(bounded.width <= 400);
+        verify(Math.abs(bounded.width / bounded.height - 1080 / 2392) < 0.000001);
     }
 
     function test_preserve_aspect_fit_remains_a_safe_fallback() {
-        var portrait = preview.fittedSize(288, 638, 1080, 2392)
-        compare(portrait.width, 288)
-        compare(portrait.height, 638)
+        var portrait = preview.fittedSize(288, 638, 1080, 2392);
+        compare(portrait.width, 288);
+        compare(portrait.height, 638);
     }
 
     function test_pointer_release_distinguishes_taps_and_swipes() {
-        var content = Qt.rect(20, 40, 200, 400)
-        verify(preview.dispatchPointer(120, 240, 122, 242, 80, content, 1080, 2400))
-        compare(tapSpy.count, 1)
-        compare(swipeSpy.count, 0)
-        compare(tapSpy.signalArguments[0][0], 0.51)
-        compare(tapSpy.signalArguments[0][1], 0.505)
-        compare(tapSpy.signalArguments[0][2], 1080)
-        compare(tapSpy.signalArguments[0][3], 2400)
+        var content = Qt.rect(20, 40, 200, 400);
+        verify(preview.dispatchPointer(120, 240, 122, 242, 80, content, 1080, 2400));
+        compare(tapSpy.count, 1);
+        compare(swipeSpy.count, 0);
+        compare(tapSpy.signalArguments[0][0], 0.51);
+        compare(tapSpy.signalArguments[0][1], 0.505);
+        compare(tapSpy.signalArguments[0][2], 1080);
+        compare(tapSpy.signalArguments[0][3], 2400);
 
-        verify(preview.dispatchPointer(40, 80, 200, 400, 320, content, 1080, 2400))
-        compare(tapSpy.count, 1)
-        compare(swipeSpy.count, 1)
-        compare(swipeSpy.signalArguments[0][0], 0.1)
-        compare(swipeSpy.signalArguments[0][1], 0.1)
-        compare(swipeSpy.signalArguments[0][2], 0.9)
-        compare(swipeSpy.signalArguments[0][3], 0.9)
-        compare(swipeSpy.signalArguments[0][6], 320)
+        verify(preview.dispatchPointer(40, 80, 200, 400, 320, content, 1080, 2400));
+        compare(tapSpy.count, 1);
+        compare(swipeSpy.count, 1);
+        compare(swipeSpy.signalArguments[0][0], 0.1);
+        compare(swipeSpy.signalArguments[0][1], 0.1);
+        compare(swipeSpy.signalArguments[0][2], 0.9);
+        compare(swipeSpy.signalArguments[0][3], 0.9);
+        compare(swipeSpy.signalArguments[0][6], 320);
     }
 
     function test_keyboard_mapping_is_semantic_and_bounded() {
-        compare(preview.androidKeyForQtKey(Qt.Key_Escape), "back")
-        compare(preview.androidKeyForQtKey(Qt.Key_Home), "home")
-        compare(preview.androidKeyForQtKey(Qt.Key_Return), "enter")
-        compare(preview.androidKeyForQtKey(Qt.Key_Backspace), "delete")
-        compare(preview.androidKeyForQtKey(Qt.Key_Left), "arrow-left")
-        compare(preview.androidKeyForQtKey(Qt.Key_A), "")
+        compare(preview.androidKeyForQtKey(Qt.Key_Escape), "back");
+        compare(preview.androidKeyForQtKey(Qt.Key_Home), "home");
+        compare(preview.androidKeyForQtKey(Qt.Key_Return), "enter");
+        compare(preview.androidKeyForQtKey(Qt.Key_Backspace), "delete");
+        compare(preview.androidKeyForQtKey(Qt.Key_Left), "arrow-left");
+        compare(preview.androidKeyForQtKey(Qt.Key_A), "");
     }
 }

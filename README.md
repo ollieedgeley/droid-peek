@@ -27,6 +27,8 @@ into versioned helper commands; the helper validates them and runs targeted
 Android `input` commands through its fakeable ADB boundary. Production uses
 `/dev/video42` by default; `OMARCHY_ANDROID_V4L2_SINK` overrides the private
 sink path.
+Opening a ready panel, or reaching Ready after reconnection, automatically
+focuses this input surface so keyboard control works without an extra click.
 
 The ready view includes Back, Home, and recent-apps controls plus an inline
 Settings page. A chain-link toolbar button and the Settings toggle control the
@@ -39,6 +41,10 @@ and rotation without cropping. Video quality selects a scrcpy profile and
 restarts only the active mirroring session; trusted pairing and other
 preferences remain intact. Preferences are stored privately beside the
 remembered-device record.
+
+Settings is keyboard navigable. Opening it focuses the Back control; Tab and
+Shift+Tab traverse its controls, while Escape closes an open selector or
+confirmation before returning from Settings to the focused phone view.
 
 Phase 0 is complete for the V1 Android 16 target. The development machine proved
 synthetic 360×640 playback at 30 fps and clean stop/restart behavior with

@@ -74,23 +74,36 @@ TestCase {
         compare(preview.normalizedPoint(120, 500, Qt.rect(20, 40, 200, 400)), null)
     }
 
-    function test_letterbox_viewport_scales_like_a_window_width() {
-        compare(PreviewGeometry.scaledViewportSize(320, 560, 1000, 1000, 50),
-                Qt.size(160, 280))
-        compare(PreviewGeometry.scaledViewportSize(320, 560, 1000, 1000, 100),
-                Qt.size(320, 560))
-        compare(PreviewGeometry.scaledViewportSize(320, 560, 430, 700, 150),
-                Qt.size(400, 700))
+    function test_live_frame_ratio_defines_the_viewport() {
+        var portrait = PreviewGeometry.scaledAspectSize(
+                    1080, 2392, 288, 1000, 1000, 100)
+        compare(portrait.width, 288)
+        verify(Math.abs(portrait.height - 637.8666667) < 0.001)
+        verify(Math.abs(portrait.width / portrait.height - 1080 / 2392) < 0.000001)
+
+        var landscape = PreviewGeometry.scaledAspectSize(
+                    2392, 1080, 288, 1000, 1000, 100)
+        compare(landscape.width, 288)
+        verify(Math.abs(landscape.width / landscape.height - 2392 / 1080) < 0.000001)
     }
 
-    function test_letterbox_content_preserves_android_aspect_ratio() {
-        var portrait = preview.fittedSize(320, 560, 1080, 2392)
-        compare(portrait.width, 253)
-        compare(portrait.height, 560)
+    function test_frame_derived_viewport_scales_and_stays_output_bounded() {
+        var half = PreviewGeometry.scaledAspectSize(
+                    1080, 2392, 288, 1000, 1000, 50)
+        compare(half.width, 144)
+        verify(Math.abs(half.height - 318.9333333) < 0.001)
 
-        var landscape = preview.fittedSize(320, 560, 2392, 1080)
-        compare(landscape.width, 320)
-        compare(landscape.height, 144)
+        var bounded = PreviewGeometry.scaledAspectSize(
+                    1080, 2392, 288, 400, 700, 150)
+        compare(bounded.height, 700)
+        verify(bounded.width <= 400)
+        verify(Math.abs(bounded.width / bounded.height - 1080 / 2392) < 0.000001)
+    }
+
+    function test_preserve_aspect_fit_remains_a_safe_fallback() {
+        var portrait = preview.fittedSize(288, 638, 1080, 2392)
+        compare(portrait.width, 288)
+        compare(portrait.height, 638)
     }
 
     function test_pointer_release_distinguishes_taps_and_swipes() {

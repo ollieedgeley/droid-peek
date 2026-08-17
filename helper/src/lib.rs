@@ -37,7 +37,7 @@ mod tests {
         assert_eq!(
             ready_event(),
             format!(
-                r#"{{"version":{PROTOCOL_VERSION},"type":"ready","hasTrustedDevice":false,"preferences":{{"keepConnected":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}}}}"#
+                r#"{{"version":{PROTOCOL_VERSION},"type":"ready","hasTrustedDevice":false,"preferences":{{"keepConnected":false,"androidModeShortcuts":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}}}}"#
             )
         );
         assert!(!ready_event().contains("secret"));

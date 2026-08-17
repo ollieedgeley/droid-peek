@@ -80,8 +80,8 @@ Panel {
         }
     }
 
-    function updatePreferences(keepConnected, scale, quality, actions) {
-        pairingState.setPreferences(keepConnected, scale, quality, actions);
+    function updatePreferences(keepConnected, scale, quality, actions, androidModeShortcuts) {
+        pairingState.setPreferences(keepConnected, scale, quality, actions, androidModeShortcuts);
     }
 
     function requestStartOver() {
@@ -163,6 +163,7 @@ Panel {
 
     SemanticActionRouter {
         id: semanticActionRouter
+        semanticIntegrationEnabled: pairingState.androidModeShortcuts
         sessionReady: pairingState.sessionState === "ready"
         panelOpen: root.opened
         settingsOpen: root.settingsOpen
@@ -265,7 +266,7 @@ Panel {
                     onSettingsRequested: root.openSettings()
                     onBackRequested: root.closeSettings()
                     onKeepConnectedRequested: function (keepConnected) {
-                        root.updatePreferences(keepConnected, pairingState.previewScale, pairingState.videoQuality, pairingState.quickActions);
+                        root.updatePreferences(keepConnected, pairingState.previewScale, pairingState.videoQuality, pairingState.quickActions, pairingState.androidModeShortcuts);
                     }
                 }
 
@@ -324,10 +325,11 @@ Panel {
                     previewScale: pairingState.previewScale
                     videoQuality: pairingState.videoQuality
                     quickActions: pairingState.quickActions
+                    androidModeShortcuts: pairingState.androidModeShortcuts
                     foreground: root.contentForeground
                     onBackRequested: root.closeSettings()
-                    onPreferencesRequested: function (keepConnected, scale, quality, actions) {
-                        root.updatePreferences(keepConnected, scale, quality, actions);
+                    onPreferencesRequested: function (keepConnected, scale, quality, actions, androidModeShortcuts) {
+                        root.updatePreferences(keepConnected, scale, quality, actions, androidModeShortcuts);
                     }
                     onStartOverRequested: root.requestStartOver()
                 }

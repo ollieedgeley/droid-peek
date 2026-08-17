@@ -8,7 +8,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-const PREFERENCES_VERSION: u8 = 3;
+const PREFERENCES_VERSION: u8 = 4;
+const PREVIOUS_PREFERENCES_VERSION: u8 = 3;
 const PREFERENCES_FILE_NAME: &str = "preferences.json";
 const LEGACY_PREFERENCES_VERSION: u8 = 2;
 const LEGACY_PREFERENCES_FILE_NAME: &str = "render-preferences.json";
@@ -77,6 +78,7 @@ pub enum QuickAction {
 #[serde(rename_all = "camelCase")]
 pub struct Preferences {
     pub keep_connected: bool,
+    pub android_mode_shortcuts: bool,
     pub preview_scale: PreviewScale,
     pub video_quality: VideoQuality,
     pub quick_actions: [QuickAction; 3],
@@ -86,6 +88,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             keep_connected: false,
+            android_mode_shortcuts: false,
             preview_scale: PreviewScale::default(),
             video_quality: VideoQuality::High,
             quick_actions: [
@@ -129,17 +132,25 @@ impl FilePreferenceStore {
             }
             Err(error) => return Err(error),
         };
-        let preferences = serde_json::from_slice::<StoredPreferences>(&contents)
+        if let Some(preferences) = serde_json::from_slice::<StoredPreferences>(&contents)
             .ok()
             .filter(|stored| stored.version == PREFERENCES_VERSION)
-            .map(StoredPreferences::into_preferences);
-        match preferences {
-            Some(preferences) => Ok(preferences),
-            None => {
-                remove_if_present(&path)?;
-                Ok(Preferences::default())
-            }
+            .map(StoredPreferences::into_preferences)
+        {
+            return Ok(preferences);
         }
+
+        let migrated_preferences = serde_json::from_slice::<StoredPreferencesV3>(&contents)
+            .ok()
+            .filter(|stored| stored.version == PREVIOUS_PREFERENCES_VERSION)
+            .map(StoredPreferencesV3::into_preferences);
+        let Some(preferences) = migrated_preferences else {
+            remove_if_present(&path)?;
+            return Ok(Preferences::default());
+        };
+
+        self.save(&preferences)?;
+        Ok(preferences)
     }
 
     fn load_legacy(&self) -> io::Result<Preferences> {
@@ -190,6 +201,7 @@ impl FilePreferenceStore {
 struct StoredPreferences {
     version: u8,
     keep_connected: bool,
+    android_mode_shortcuts: bool,
     preview_scale: PreviewScale,
     video_quality: VideoQuality,
     quick_actions: [QuickAction; 3],
@@ -200,6 +212,7 @@ impl From<Preferences> for StoredPreferences {
         Self {
             version: PREFERENCES_VERSION,
             keep_connected: preferences.keep_connected,
+            android_mode_shortcuts: preferences.android_mode_shortcuts,
             preview_scale: preferences.preview_scale,
             video_quality: preferences.video_quality,
             quick_actions: preferences.quick_actions,
@@ -211,9 +224,32 @@ impl StoredPreferences {
     fn into_preferences(self) -> Preferences {
         Preferences {
             keep_connected: self.keep_connected,
+            android_mode_shortcuts: self.android_mode_shortcuts,
             preview_scale: self.preview_scale,
             video_quality: self.video_quality,
             quick_actions: self.quick_actions,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredPreferencesV3 {
+    version: u8,
+    keep_connected: bool,
+    preview_scale: PreviewScale,
+    video_quality: VideoQuality,
+    quick_actions: [QuickAction; 3],
+}
+
+impl StoredPreferencesV3 {
+    fn into_preferences(self) -> Preferences {
+        Preferences {
+            keep_connected: self.keep_connected,
+            preview_scale: self.preview_scale,
+            video_quality: self.video_quality,
+            quick_actions: self.quick_actions,
+            android_mode_shortcuts: false,
         }
     }
 }
@@ -234,6 +270,7 @@ impl StoredRenderPreferences {
             preview_scale: self.preview_scale,
             video_quality: self.video_quality,
             quick_actions: self.quick_actions,
+            android_mode_shortcuts: false,
         }
     }
 }

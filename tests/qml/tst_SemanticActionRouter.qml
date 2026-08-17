@@ -22,6 +22,7 @@ TestCase {
     }
 
     function makeEligible() {
+        router.semanticIntegrationEnabled = true
         router.sessionReady = true
         router.panelOpen = true
         router.settingsOpen = false
@@ -31,6 +32,7 @@ TestCase {
     }
 
     function init() {
+        router.semanticIntegrationEnabled = false
         router.sessionReady = false
         router.panelOpen = false
         router.settingsOpen = false
@@ -39,6 +41,40 @@ TestCase {
         router.phoneFocused = false
         keySpy.clear()
         actionSpy.clear()
+    }
+
+    function test_preference_off_refuses_routed_actions_under_valid_focus() {
+        makeEligible()
+        router.semanticIntegrationEnabled = false
+        var deadline = Date.now() + 2000
+
+        compare(router.actionEligible, false)
+        verify(!router.trigger(
+                   "omarchy-close-current-window", "request-off-close", deadline))
+        verify(!router.trigger(
+                   "omarchy-browser", "request-off-browser", deadline))
+        compare(keySpy.count, 0)
+        compare(actionSpy.count, 0)
+        compare(router.quickActionKey("back"), "back")
+        compare(router.quickActionKey("home"), "home")
+        compare(router.quickActionKey("recent-apps"), "app-switch")
+    }
+
+    function test_disabling_preference_applies_before_the_next_trigger() {
+        makeEligible()
+        var deadline = Date.now() + 2000
+        verify(router.trigger(
+                   "omarchy-close-current-window", "request-enabled", deadline))
+        compare(actionSpy.count, 1)
+
+        router.semanticIntegrationEnabled = false
+
+        compare(router.actionEligible, false)
+        verify(!router.trigger(
+                   "omarchy-browser", "request-disabled", deadline))
+        compare(actionSpy.count, 1)
+        compare(keySpy.count, 0)
+        compare(router.quickActionKey("back"), "back")
     }
 
     function test_focused_ready_phone_receives_native_actions() {

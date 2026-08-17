@@ -9,7 +9,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub const PROTOCOL_VERSION: u8 = 7;
+pub const PROTOCOL_VERSION: u8 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -271,12 +271,14 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                 preview_scale,
                 video_quality,
                 quick_actions,
+                android_mode_shortcuts,
             } => vec![
                 match self.backend.set_preferences(Preferences {
                     keep_connected,
                     preview_scale,
                     video_quality,
                     quick_actions,
+                    android_mode_shortcuts,
                 }) {
                     Ok(session_restarted) => Event::PreferencesUpdated {
                         preferences: self.backend.preferences(),
@@ -383,6 +385,8 @@ enum Command {
         video_quality: crate::preferences::VideoQuality,
         #[serde(rename = "quickActions")]
         quick_actions: [crate::preferences::QuickAction; 3],
+        #[serde(rename = "androidModeShortcuts")]
+        android_mode_shortcuts: bool,
     },
 }
 

@@ -31,7 +31,7 @@ Opening a ready panel, or reaching Ready after reconnection, automatically
 focuses this input surface so keyboard control works without an extra click.
 
 Focused semantic action routing uses the bundled Android 16 profile through
-protocol v7. **Close current window** maps to Android Home, and **Open browser**
+protocol v8. **Close current window** maps to Android Home, and **Open browser**
 uses a package-free standard Android browser intent. An optional user-owned
 Hyprland loader recognizes the exact typed global panel-toggle declaration,
 supported typed Omarchy browser declarations, and verified opaque closures
@@ -43,6 +43,14 @@ lifecycle without a fallback. The loader never reads or rewrites binding files.
 Unavailable, removed, and unknown semantic IDs remain unhandled; arbitrary
 functions, ambiguous overrides, desktop chords, and per-device action profiles
 are not inferred.
+
+Settings exposes the global master switch **Android-mode shortcuts**. Its copy
+explains focused-phone first refusal and desktop fallback. It defaults off and
+persists privately as a global preference, not a per-device profile. Enabling
+it allows semantic first refusal only under the complete focused-phone
+predicate. Disabling it takes effect before the next dispatch and fails closed
+to each mapping's desktop fallback without disabling quick actions, pointer
+input, key input, or text input. **Start over** preserves this global value.
 
 The ready view includes Back, Home, and recent-apps controls plus an inline
 Settings page. A chain-link toolbar button and the Settings toggle control the
@@ -66,9 +74,15 @@ recovered cleanly across stop/restart with `v4l2loopback` 0.15.4. A physical
 CPH2719 running OxygenOS 16 / Android 16 proved real 1080×2392 QML playback,
 session and capture restart, pointer input, Back, Home, recent apps, typed
 input, focused semantic routing, fail-closed desktop fallback, and lifecycle
-recovery. QR pairing, six-digit fallback, and cancel/retry had already passed
-on the same platform. This evidence completes the current compatibility slice,
-not the full V1 acceptance contract.
+recovery. The Stage 7 run also proved private v3-to-v4 preference migration
+with the new switch off, visible Settings control, keyboard persistence to
+true without a session restart, and same-cycle focused routing changing from
+accepted while enabled to rejected immediately after disabling. A browser
+backend attempt returned unhandled and correctly used desktop fallback; this
+run does not claim that every Android action was handled. QR pairing,
+six-digit fallback, and cancel/retry had already passed on the same platform.
+This evidence completes the current compatibility slice, not the full V1
+acceptance contract.
 
 Other Android versions remain unsupported until they receive explicit emulator
 and physical-device evidence. The project does not install or load system
@@ -179,15 +193,20 @@ and `SUPER + SHIFT + RETURN`, are supported; unsupported arbitrary overrides
 remain unchanged.
 
 Hyprland reloads the user configuration automatically. Validate it with
-`hyprctl reload` followed by `hyprctl configerrors`. While the ready, visible,
-enabled phone preview owns focus, a recognized mapping runs its Android action.
-Protocol-v7 semantic attempts carry an absolute expiry 2 seconds after dispatch;
-IPC is bounded to 3 seconds, and the helper rejects deadlines more than 5
-seconds ahead. Semantic ADB work is capped at 750 ms. On expiry, the helper
-kills and reaps that work before an unhandled result permits desktop fallback,
-so the phone cannot act after fallback. Close routing additionally has a
-7-second outer execution guard and checks for its correlated result at most
-160 times at 50 ms intervals.
+`hyprctl reload` followed by `hyprctl configerrors`. The loader is only the
+desktop integration boundary; the global **Android-mode shortcuts** Settings
+switch remains the master control and defaults off. While that switch is on and
+the ready, visible, enabled phone preview owns focus, a recognized mapping runs
+its Android action. Turning the switch off is applied optimistically after QML
+validates the update and before the preference command is emitted, so the next
+semantic dispatch fails closed to desktop ownership without waiting for a
+session restart. Protocol-v8 semantic attempts carry an absolute expiry 2
+seconds after dispatch; IPC is bounded to 3 seconds, and the helper rejects
+deadlines more than 5 seconds ahead. Semantic ADB work is capped at 750 ms. On
+expiry, the helper kills and reaps that work before an unhandled result permits
+desktop fallback, so the phone cannot act after fallback. Close routing
+additionally has a 7-second outer execution guard and checks for its correlated
+result at most 160 times at 50 ms intervals.
 
 If Android rejects or cannot handle the action, the helper fails, or the request
 expires, browser routing invokes its direct packaged command fallback exactly

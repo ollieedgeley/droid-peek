@@ -6,11 +6,12 @@ use omarchy_android_helper::preferences::{
 use tempfile::tempdir;
 
 #[test]
-fn defaults_disconnect_on_close_with_100_percent_high_quality_and_native_actions() {
+fn defaults_disable_android_mode_shortcuts_and_keep_existing_defaults() {
     assert_eq!(
         Preferences::default(),
         Preferences {
             keep_connected: false,
+            android_mode_shortcuts: false,
             preview_scale: PreviewScale::default(),
             video_quality: VideoQuality::High,
             quick_actions: [
@@ -29,6 +30,7 @@ fn preferences_round_trip_in_private_versioned_state() {
     let store = FilePreferenceStore::new(directory.path().join("omarchy-android"));
     let preferences = Preferences {
         keep_connected: true,
+        android_mode_shortcuts: true,
         preview_scale: PreviewScale::new(150).expect("valid preview scale"),
         video_quality: VideoQuality::Low,
         quick_actions: [
@@ -44,7 +46,7 @@ fn preferences_round_trip_in_private_versioned_state() {
     let contents = fs::read_to_string(store.path()).expect("read preferences state");
     assert_eq!(
         contents,
-        "{\"version\":3,\"keepConnected\":true,\"previewScale\":150,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n"
+        "{\"version\":4,\"keepConnected\":true,\"androidModeShortcuts\":true,\"previewScale\":150,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n"
     );
     assert_eq!(
         fs::metadata(store.path())
@@ -54,24 +56,67 @@ fn preferences_round_trip_in_private_versioned_state() {
             & 0o777,
         0o600
     );
+    assert_eq!(
+        fs::metadata(store.directory())
+            .expect("preference directory metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
 }
 
 #[test]
-fn malformed_preferences_are_removed_and_reset_to_defaults() {
+fn malformed_or_incomplete_preferences_are_removed_and_reset_to_defaults() {
+    let directory = tempdir().expect("temporary state directory");
+    let store = FilePreferenceStore::new(directory.path().join("omarchy-android"));
+    fs::create_dir_all(store.directory()).expect("create state directory");
+
+    for contents in [
+        r#"{"version":4,"keepConnected":false,"androidModeShortcuts":false,"previewScale":151,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":4,"keepConnected":false,"androidModeShortcuts":"yes","previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":4,"keepConnected":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+    ] {
+        fs::write(store.path(), contents).expect("write invalid preferences");
+
+        assert_eq!(
+            store.load().expect("load preferences"),
+            Preferences::default()
+        );
+        assert!(!store.path().exists());
+    }
+}
+
+#[test]
+fn version_three_preferences_migrate_in_place_without_enabling_android_mode_shortcuts() {
     let directory = tempdir().expect("temporary state directory");
     let store = FilePreferenceStore::new(directory.path().join("omarchy-android"));
     fs::create_dir_all(store.directory()).expect("create state directory");
     fs::write(
         store.path(),
-        b"{\"version\":3,\"keepConnected\":false,\"previewScale\":151,\"videoQuality\":\"high\",\"quickActions\":[\"back\",\"home\",\"recent-apps\"]}\n",
+        b"{\"version\":3,\"keepConnected\":true,\"previewScale\":125,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n",
     )
-    .expect("write malformed preferences");
+    .expect("write version-three preferences");
 
     assert_eq!(
-        store.load().expect("load preferences"),
-        Preferences::default()
+        store.load().expect("migrate preferences"),
+        Preferences {
+            keep_connected: true,
+            android_mode_shortcuts: false,
+            preview_scale: PreviewScale::new(125).expect("valid preview scale"),
+            video_quality: VideoQuality::Low,
+            quick_actions: [
+                QuickAction::Home,
+                QuickAction::RecentApps,
+                QuickAction::Back,
+            ],
+        }
     );
-    assert!(!store.path().exists());
+    assert_eq!(
+        fs::read_to_string(store.path()).expect("read migrated preferences"),
+        "{\"version\":4,\"keepConnected\":true,\"androidModeShortcuts\":false,\"previewScale\":125,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n"
+    );
+    assert!(!store.directory().join(".preferences.json.tmp").exists());
 }
 
 #[test]
@@ -91,6 +136,7 @@ fn version_two_render_preferences_migrate_without_enabling_keep_connected() {
         store.load().expect("migrate preferences"),
         Preferences {
             keep_connected: false,
+            android_mode_shortcuts: false,
             preview_scale: PreviewScale::new(150).expect("valid preview scale"),
             video_quality: VideoQuality::Low,
             quick_actions: [
@@ -102,6 +148,10 @@ fn version_two_render_preferences_migrate_without_enabling_keep_connected() {
     );
     assert!(store.path().exists());
     assert!(!legacy_path.exists());
+    assert_eq!(
+        fs::read_to_string(store.path()).expect("read migrated preferences"),
+        "{\"version\":4,\"keepConnected\":false,\"androidModeShortcuts\":false,\"previewScale\":150,\"videoQuality\":\"low\",\"quickActions\":[\"home\",\"recent-apps\",\"back\"]}\n"
+    );
 }
 
 #[test]

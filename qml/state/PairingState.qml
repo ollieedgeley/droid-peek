@@ -3,7 +3,7 @@ import QtQuick
 QtObject {
     id: root
 
-    readonly property int protocolVersion: 7
+    readonly property int protocolVersion: 8
     property bool helperReady: false
     property bool automaticPairingEnabled: true
     property bool hasTrustedDevice: false
@@ -18,6 +18,7 @@ QtObject {
     property int previewScale: 100
     property string videoQuality: "high"
     property var quickActions: ["back", "home", "recent-apps"]
+    property bool androidModeShortcuts: false
 
     signal commandRequested(string command)
     signal pairingCancellationConfirmed()
@@ -37,6 +38,7 @@ QtObject {
         previewScale = 100
         videoQuality = "high"
         quickActions = ["back", "home", "recent-apps"]
+        androidModeShortcuts = false
         clearQrPresentation()
     }
 
@@ -172,6 +174,7 @@ QtObject {
     function applyPreferences(preferences) {
         if (!preferences
                 || typeof preferences.keepConnected !== "boolean"
+                || typeof preferences.androidModeShortcuts !== "boolean"
                 || !validPreviewScale(preferences.previewScale)
                 || !validPreference(preferences.videoQuality, ["low", "medium", "high"])
                 || !Array.isArray(preferences.quickActions)
@@ -187,15 +190,17 @@ QtObject {
         previewScale = preferences.previewScale
         videoQuality = preferences.videoQuality
         quickActions = preferences.quickActions.slice()
+        androidModeShortcuts = preferences.androidModeShortcuts
         return true
     }
 
-    function setPreferences(keepConnectedValue, scale, quality, actions) {
+    function setPreferences(keepConnectedValue, scale, quality, actions, androidModeShortcutsValue) {
         var preferences = {
             keepConnected: keepConnectedValue,
             previewScale: scale,
             videoQuality: quality,
-            quickActions: actions
+            quickActions: actions,
+            androidModeShortcuts: androidModeShortcutsValue
         }
         if (!applyPreferences(preferences))
             return false
@@ -204,7 +209,8 @@ QtObject {
             keepConnected: keepConnected,
             previewScale: previewScale,
             videoQuality: videoQuality,
-            quickActions: quickActions
+            quickActions: quickActions,
+            androidModeShortcuts: androidModeShortcuts
         })
         return true
     }
@@ -280,8 +286,8 @@ QtObject {
                 startQrPairing()
             return
         case "preferences-updated":
-            if (!applyPreferences(event)
-                    || typeof event.sessionRestarted !== "boolean") {
+            if (typeof event.sessionRestarted !== "boolean"
+                    || !applyPreferences(event)) {
                 protocolFailure()
                 return
             }

@@ -3,13 +3,15 @@ import QtQuick
 QtObject {
     id: root
 
+    property bool semanticIntegrationEnabled: false
     property bool sessionReady: false
     property bool panelOpen: false
     property bool settingsOpen: false
     property bool phoneVisible: false
     property bool phoneEnabled: false
     property bool phoneFocused: false
-    readonly property bool actionEligible: sessionReady && panelOpen && !settingsOpen
+    readonly property bool actionEligible: semanticIntegrationEnabled
+                                                && sessionReady && panelOpen && !settingsOpen
                                                 && phoneVisible && phoneEnabled && phoneFocused
 
     signal keyRequested(string key)

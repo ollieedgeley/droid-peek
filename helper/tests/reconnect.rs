@@ -393,7 +393,7 @@ fn runtime_starts_scrcpy_after_reconnect_and_stops_it_before_confirmation() {
 }
 
 #[test]
-fn start_over_stops_the_session_forgets_the_device_and_preserves_preferences() {
+fn start_over_preserves_enabled_global_preference_across_a_different_device_reload() {
     let directory = tempfile::tempdir().expect("temporary runtime");
     let state_directory = directory.path().join("state");
     FileTrustedDeviceStore::new(&state_directory)
@@ -401,6 +401,7 @@ fn start_over_stops_the_session_forgets_the_device_and_preserves_preferences() {
         .expect("seed trusted-device state");
     let preferences = Preferences {
         keep_connected: true,
+        android_mode_shortcuts: true,
         preview_scale: PreviewScale::new(125).expect("valid preview scale"),
         ..Preferences::default()
     };
@@ -436,6 +437,7 @@ fn start_over_stops_the_session_forgets_the_device_and_preserves_preferences() {
         },
     )
     .expect("runtime backend");
+    assert_eq!(backend.preferences(), preferences);
 
     backend
         .reconnect_trusted_device()
@@ -471,6 +473,30 @@ fn start_over_stops_the_session_forgets_the_device_and_preserves_preferences() {
         requests[1].arguments(),
         ["disconnect", "192.168.50.4:37123"]
     );
+    drop(requests);
+    drop(backend);
+
+    FileTrustedDeviceStore::new(&state_directory)
+        .save(&TrustedDevice::new("adb-SECONDDEVICE123").expect("replacement trusted device"))
+        .expect("seed replacement trusted-device state");
+    let reloaded_backend = RuntimePairingBackend::with_adapters_and_store(
+        directory.path().join("reloaded-runtime"),
+        &state_directory,
+        Duration::from_secs(1),
+        MemorySink::default(),
+        FakeDiscovery {
+            trusted_result: Err(DiscoveryFailure::NetworkUnavailable),
+            requested_devices: Vec::new(),
+        },
+        FakeRunner {
+            outputs: VecDeque::new(),
+            requests: Vec::new(),
+        },
+    )
+    .expect("reloaded runtime backend");
+
+    assert!(reloaded_backend.has_trusted_device());
+    assert_eq!(reloaded_backend.preferences(), preferences);
 }
 
 #[test]
@@ -536,6 +562,7 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
 
     let preferences = Preferences {
         keep_connected: true,
+        android_mode_shortcuts: false,
         preview_scale: PreviewScale::new(150).expect("valid preview scale"),
         video_quality: VideoQuality::Low,
         quick_actions: [

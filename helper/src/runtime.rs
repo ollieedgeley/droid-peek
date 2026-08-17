@@ -815,6 +815,7 @@ where
         if let Ok(mut ceremony) = self.ceremony.lock() {
             ceremony.cancel();
         }
+        // Start Over forgets the trusted device but intentionally retains global preferences.
         self.store
             .remove()
             .map_err(|_| FailureReason::DependencyUnavailable)?;

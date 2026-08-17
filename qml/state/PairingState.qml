@@ -138,13 +138,11 @@ QtObject {
                 || !validPhysicalDimension(physicalDisplayHeightMm))
             return Qt.size(0, 0)
 
-        var widthMm = physicalDisplayWidthMm
-        var heightMm = physicalDisplayHeightMm
-        if ((sourceWidth > sourceHeight) !== (widthMm > heightMm)) {
-            var swapped = widthMm
-            widthMm = heightMm
-            heightMm = swapped
-        }
+        var sourceRatio = sourceWidth / sourceHeight
+        var physicalDiagonalMm = Math.hypot(physicalDisplayWidthMm,
+                                            physicalDisplayHeightMm)
+        var heightMm = physicalDiagonalMm / Math.sqrt(1 + sourceRatio * sourceRatio)
+        var widthMm = heightMm * sourceRatio
         var scale = logicalPixelsPerMm * percent / 100
         return Qt.size(Math.max(1, Math.round(widthMm * scale)),
                        Math.max(1, Math.round(heightMm * scale)))

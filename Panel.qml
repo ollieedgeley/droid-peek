@@ -60,38 +60,30 @@ Panel {
                 ? physical : fallbackPreviewSize(percent)
     }
 
-    function previewViewportSize(availableHeight) {
-        var maximum = rawPreviewSize(150)
-        var maxWidth = Screen.width > 0
-                ? Math.max(Style.space(280), Screen.width - Style.space(80))
-                : maximum.width
-        var maxHeight = availableHeight > 0
-                ? Math.max(Style.space(210), availableHeight - Style.space(120))
-                : maximum.height
-        var fit = Math.min(1, maxWidth / maximum.width, maxHeight / maximum.height)
-        return Qt.size(Math.max(1, Math.round(maximum.width * fit)),
-                       Math.max(1, Math.round(maximum.height * fit)))
-    }
-
     function desiredPreviewSize(availableHeight) {
         var current = rawPreviewSize(pairingState.previewScale)
-        var maximum = rawPreviewSize(150)
-        var viewport = previewViewportSize(availableHeight)
-        var fit = Math.min(viewport.width / maximum.width,
-                           viewport.height / maximum.height)
+        var maxWidth = Screen.width > 0
+                ? Math.max(1, Screen.width - Style.space(80))
+                : current.width
+        var maxHeight = availableHeight > 0
+                ? Math.max(1, availableHeight - phoneToolbar.implicitHeight
+                           - content.spacing)
+                : current.height
+        var fit = Math.min(1, maxWidth / current.width,
+                           maxHeight / current.height)
         return Qt.size(Math.max(1, Math.round(current.width * fit)),
                        Math.max(1, Math.round(current.height * fit)))
     }
 
     function desiredPanelWidth() {
-        if (pairingState.sessionState === "ready")
-            return Math.max(Style.space(280),
-                            previewViewportSize(panel.availableCardHeight).width)
+        if (pairingState.sessionState === "ready" && !root.settingsOpen)
+            return Math.max(phoneToolbar.implicitWidth,
+                            desiredPreviewSize(panel.availableCardHeight).width)
         return Style.space(320)
     }
 
     function desiredPreviewHeight(availableHeight) {
-        return previewViewportSize(availableHeight).height
+        return desiredPreviewSize(availableHeight).height
     }
 
     function runQuickAction(action) {
@@ -238,7 +230,8 @@ Panel {
         PanelKeyCatcher {
             id: keyCatcher
             anchors.fill: parent
-            blocked: manualCode.activeFocus
+            blocked: root.settingsOpen
+                     || manualCode.activeFocus
                      || (root.phonePreview !== null
                          && root.phonePreview.inputFocused)
             onActivateRequested: root.activatePrimary()
@@ -271,6 +264,7 @@ Panel {
                     wrapMode: Text.Wrap
                 }
                 PhoneToolbar {
+                    id: phoneToolbar
                     width: parent.width
                     visible: pairingState.sessionState === "ready"
                     actions: pairingState.quickActions

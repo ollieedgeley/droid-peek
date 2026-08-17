@@ -17,6 +17,8 @@ use omarchy_android_helper::{
 };
 use tempfile::tempdir;
 
+static PROCESS_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 #[derive(Clone, Copy)]
 struct NoDisplayProbe;
 
@@ -40,6 +42,7 @@ fn fake_executable(directory: &Path, body: &str) -> PathBuf {
 
 #[test]
 fn scrcpy_uses_a_private_headless_v4l2_command() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
     let directory = tempdir().expect("temporary directory");
     let arguments_file = directory.path().join("arguments");
     let executable = fake_executable(
@@ -71,6 +74,7 @@ fn scrcpy_uses_a_private_headless_v4l2_command() {
 
 #[test]
 fn scrcpy_applies_the_selected_video_quality_profile() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
     let expected = [
         (
             VideoQuality::Low,
@@ -111,6 +115,7 @@ fn scrcpy_applies_the_selected_video_quality_profile() {
 
 #[test]
 fn scrcpy_reports_start_then_stops_its_child_on_cancellation() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
     let directory = tempdir().expect("temporary directory");
     let readiness_file = directory.path().join("state");
     fs::write(&readiness_file, "capture\n").expect("write ready sink state");
@@ -147,6 +152,7 @@ fn scrcpy_reports_start_then_stops_its_child_on_cancellation() {
 
 #[test]
 fn scrcpy_reports_started_only_after_the_sink_is_capture_ready() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
     let directory = tempdir().expect("temporary directory");
     let readiness_file = directory.path().join("state");
     fs::write(&readiness_file, "output\n").expect("write initial sink state");
@@ -184,6 +190,7 @@ fn scrcpy_reports_started_only_after_the_sink_is_capture_ready() {
 
 #[test]
 fn scrcpy_failures_are_fixed_categories() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
     let directory = tempdir().expect("temporary directory");
     let executable = fake_executable(directory.path(), "exit 1");
     let mut runner = ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2))

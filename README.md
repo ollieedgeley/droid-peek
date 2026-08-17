@@ -22,9 +22,10 @@ through its fakeable ADB boundary. Production uses `/dev/video42` by default;
 
 The ready view includes Back, Home, and recent-apps controls plus an inline
 render-settings page. Preview scale accepts 50% through 150% and defaults to
-100%. The helper requests the connected phone's physical display metrics; 100%
-matches that reported physical size on the current monitor, while scaling
-changes only the aspect-correct phone frame inside a stable panel viewport.
+100%. The helper derives the connected phone's physical display diagonal from
+its active resolution and physical X/Y DPI; the live frame preserves the
+captured Android aspect ratio exactly. The ready panel follows the scaled frame
+instead of retaining an empty maximum-size viewport.
 Video quality selects a scrcpy profile and restarts only the active mirroring
 session; the trusted pairing and selected controls remain intact. Preferences
 are stored privately with the remembered-device record.

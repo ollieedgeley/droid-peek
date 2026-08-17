@@ -10,6 +10,7 @@ Column {
     property int previewScale: 100
     property string videoQuality: "high"
     property var quickActions: ["back", "home", "recent-apps"]
+    property bool exactPhysicalScale: false
     property color foreground: Color.foreground
 
     signal preferencesRequested(int previewScale, string videoQuality, var quickActions)
@@ -49,6 +50,17 @@ Column {
         onModified: function(value) {
             root.request(value, root.videoQuality, root.quickActions)
         }
+    }
+
+    Text {
+        width: parent.width
+        text: root.exactPhysicalScale
+              ? "100% matches the phone's reported physical screen size."
+              : "Physical screen size was unavailable; 100% is estimated."
+        color: Qt.darker(root.foreground, 1.35)
+        font.family: Style.fontFamily
+        font.pixelSize: Style.fontBaseSize * 0.85
+        wrapMode: Text.Wrap
     }
 
     Dropdown {

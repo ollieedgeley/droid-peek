@@ -367,7 +367,12 @@ pub enum Event {
     Connecting,
     Connected,
     SessionStarting,
-    SessionStarted,
+    SessionStarted {
+        #[serde(rename = "physicalWidthMm", skip_serializing_if = "Option::is_none")]
+        physical_width_mm: Option<u16>,
+        #[serde(rename = "physicalHeightMm", skip_serializing_if = "Option::is_none")]
+        physical_height_mm: Option<u16>,
+    },
     SessionEnded,
     SessionStopped,
     PreferencesUpdated {

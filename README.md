@@ -21,11 +21,13 @@ through its fakeable ADB boundary. Production uses `/dev/video42` by default;
 `OMARCHY_ANDROID_V4L2_SINK` overrides the private sink path.
 
 The ready view includes Back, Home, and recent-apps controls plus an inline
-render-settings page. Preview scale accepts 50% through 150%, defaults to 100%,
-and changes the anchored panel immediately. Video quality selects a scrcpy
-profile and restarts only the active mirroring session; the trusted pairing
-and selected controls remain intact. Preferences are stored privately with the
-remembered-device record.
+render-settings page. Preview scale accepts 50% through 150% and defaults to
+100%. The helper requests the connected phone's physical display metrics; 100%
+matches that reported physical size on the current monitor, while scaling
+changes only the aspect-correct phone frame inside a stable panel viewport.
+Video quality selects a scrcpy profile and restarts only the active mirroring
+session; the trusted pairing and selected controls remain intact. Preferences
+are stored privately with the remembered-device record.
 
 Phase 0 is complete for the V1 Android 16 target. The development machine proved
 synthetic 360×640 playback at 30 fps and clean stop/restart behavior with

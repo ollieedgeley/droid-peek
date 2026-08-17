@@ -10,9 +10,25 @@ use std::{
 use omarchy_android_helper::{
     preferences::VideoQuality,
     process::CancellationToken,
-    session::{ScrcpySessionRunner, SessionExit, SessionFailure, SessionRunner},
+    session::{
+        PhysicalDisplayProbe, PhysicalDisplaySize, ScrcpySessionRunner, SessionExit,
+        SessionFailure, SessionRunner,
+    },
 };
 use tempfile::tempdir;
+
+#[derive(Clone, Copy)]
+struct NoDisplayProbe;
+
+impl PhysicalDisplayProbe for NoDisplayProbe {
+    fn probe(
+        &mut self,
+        _target: &str,
+        _cancellation: &CancellationToken,
+    ) -> Option<PhysicalDisplaySize> {
+        None
+    }
+}
 
 fn fake_executable(directory: &Path, body: &str) -> PathBuf {
     let path = directory.join("fake-scrcpy");
@@ -30,8 +46,9 @@ fn scrcpy_uses_a_private_headless_v4l2_command() {
         directory.path(),
         &format!("printf '%s\\n' \"$@\" > '{}'", arguments_file.display()),
     );
-    let mut runner = ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2));
-    let mut started = || {};
+    let mut runner = ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2))
+        .with_display_probe(NoDisplayProbe);
+    let mut started = |_| {};
 
     assert_eq!(
         runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut started,),
@@ -77,11 +94,12 @@ fn scrcpy_applies_the_selected_video_quality_profile() {
             &format!("printf '%s\\n' \"$@\" > '{}'", arguments_file.display()),
         );
         let mut runner =
-            ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2));
+            ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2))
+                .with_display_probe(NoDisplayProbe);
         runner.set_quality(quality);
 
         assert_eq!(
-            runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut || {}),
+            runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {}),
             Ok(SessionExit::Ended)
         );
         let arguments = fs::read_to_string(arguments_file).expect("captured arguments");
@@ -99,23 +117,25 @@ fn scrcpy_reports_start_then_stops_its_child_on_cancellation() {
     let executable = fake_executable(directory.path(), "exec sleep 30");
     let runner = Arc::new(Mutex::new(
         ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2))
-            .with_readiness_path(&readiness_file),
+            .with_readiness_path(&readiness_file)
+            .with_display_probe(NoDisplayProbe),
     ));
     let cancellation = CancellationToken::new();
     let worker_runner = Arc::clone(&runner);
     let worker_cancellation = cancellation.clone();
-    let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let worker_started = Arc::clone(&started);
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
 
     let worker = thread::spawn(move || {
         worker_runner.lock().expect("runner lock").run(
             "192.0.2.20:38100",
             &worker_cancellation,
-            &mut || worker_started.store(true, std::sync::atomic::Ordering::Release),
+            &mut |_| started_tx.send(()).expect("signal session start"),
         )
     });
-    while !started.load(std::sync::atomic::Ordering::Acquire) {
-        thread::sleep(Duration::from_millis(2));
+    if let Err(error) = started_rx.recv_timeout(Duration::from_secs(1)) {
+        cancellation.cancel();
+        let session_result = worker.join().expect("session worker");
+        panic!("session did not start: {error}; runner returned {session_result:?}");
     }
     cancellation.cancel();
 
@@ -133,7 +153,8 @@ fn scrcpy_reports_started_only_after_the_sink_is_capture_ready() {
     let executable = fake_executable(directory.path(), "exec sleep 30");
     let runner = Arc::new(Mutex::new(
         ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2))
-            .with_readiness_path(&readiness_file),
+            .with_readiness_path(&readiness_file)
+            .with_display_probe(NoDisplayProbe),
     ));
     let cancellation = CancellationToken::new();
     let worker_runner = Arc::clone(&runner);
@@ -144,7 +165,7 @@ fn scrcpy_reports_started_only_after_the_sink_is_capture_ready() {
         worker_runner.lock().expect("runner lock").run(
             "192.0.2.20:38100",
             &worker_cancellation,
-            &mut || started_tx.send(()).expect("signal session start"),
+            &mut |_| started_tx.send(()).expect("signal session start"),
         )
     });
     assert!(started_rx.recv_timeout(Duration::from_millis(20)).is_err());
@@ -165,10 +186,11 @@ fn scrcpy_reports_started_only_after_the_sink_is_capture_ready() {
 fn scrcpy_failures_are_fixed_categories() {
     let directory = tempdir().expect("temporary directory");
     let executable = fake_executable(directory.path(), "exit 1");
-    let mut runner = ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2));
+    let mut runner = ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2))
+        .with_display_probe(NoDisplayProbe);
 
     assert_eq!(
-        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut || {},),
+        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {},),
         Err(SessionFailure::Disconnected)
     );
     let mut missing = ScrcpySessionRunner::new(
@@ -176,8 +198,9 @@ fn scrcpy_failures_are_fixed_categories() {
         "/dev/video42",
         Duration::from_millis(2),
     );
+    missing = missing.with_display_probe(NoDisplayProbe);
     assert_eq!(
-        missing.run("192.0.2.20:38100", &CancellationToken::new(), &mut || {},),
+        missing.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {},),
         Err(SessionFailure::DependencyUnavailable)
     );
 }

@@ -385,11 +385,15 @@ where
                             return;
                         }
                         let _ = sink.emit_event(&Event::SessionStarting);
-                        runner.run(&target, &cancellation, &mut || {
+                        runner.run(&target, &cancellation, &mut |physical_display| {
                             if !cancellation.is_cancelled()
                                 && generation.load(Ordering::Acquire) == expected_generation
                             {
-                                let _ = sink.emit_event(&Event::SessionStarted);
+                                let _ = sink.emit_event(&Event::SessionStarted {
+                                    physical_width_mm: physical_display.map(|size| size.width_mm()),
+                                    physical_height_mm: physical_display
+                                        .map(|size| size.height_mm()),
+                                });
                             }
                         })
                     }

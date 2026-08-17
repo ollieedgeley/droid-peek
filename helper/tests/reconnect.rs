@@ -218,14 +218,14 @@ impl SessionRunner for BlockingSession {
         &mut self,
         target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(),
+        on_started: &mut dyn FnMut(Option<omarchy_android_helper::session::PhysicalDisplaySize>),
     ) -> Result<SessionExit, SessionFailure> {
         self.qualities
             .lock()
             .expect("session qualities lock")
             .push(self.quality);
         *self.target.lock().expect("session target lock") = Some(target.to_owned());
-        on_started();
+        on_started(None);
         while !cancellation.is_cancelled() {
             thread::sleep(Duration::from_millis(2));
         }
@@ -322,7 +322,13 @@ fn runtime_starts_scrcpy_after_reconnect_and_stops_it_before_confirmation() {
         .reconnect_trusted_device()
         .expect("queue trusted reconnect");
     backend.response_emitted();
-    sink.wait_for(&Event::SessionStarted.to_line());
+    sink.wait_for(
+        &Event::SessionStarted {
+            physical_width_mm: None,
+            physical_height_mm: None,
+        }
+        .to_line(),
+    );
     assert_eq!(
         target.lock().expect("session target lock").as_deref(),
         Some("192.168.50.4:37123")
@@ -426,7 +432,14 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
         .reconnect_trusted_device()
         .expect("queue trusted reconnect");
     backend.response_emitted();
-    sink.wait_for_count(&Event::SessionStarted.to_line(), 1);
+    sink.wait_for_count(
+        &Event::SessionStarted {
+            physical_width_mm: None,
+            physical_height_mm: None,
+        }
+        .to_line(),
+        1,
+    );
 
     let preferences = RenderPreferences {
         preview_scale: PreviewScale::new(150).expect("valid preview scale"),
@@ -442,7 +455,14 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
             .set_render_preferences(preferences)
             .expect("save and restart session")
     );
-    sink.wait_for_count(&Event::SessionStarted.to_line(), 2);
+    sink.wait_for_count(
+        &Event::SessionStarted {
+            physical_width_mm: None,
+            physical_height_mm: None,
+        }
+        .to_line(),
+        2,
+    );
     assert_eq!(
         qualities.lock().expect("session qualities lock").as_slice(),
         [VideoQuality::High, VideoQuality::Low]

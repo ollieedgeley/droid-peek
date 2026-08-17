@@ -1,5 +1,7 @@
 import QtQuick
+import QtQuick.Window
 import Quickshell.Io
+import Quickshell.Hyprland
 import qs.Commons
 import qs.Ui
 import "qml/state"
@@ -21,43 +23,75 @@ Panel {
     readonly property string sessionState: pairingState.sessionState
     readonly property color contentForeground: root.barForeground
     readonly property var phonePreview: phonePreviewLoader.item
+    readonly property var outputMonitor: panel.screen
+                                         ? Hyprland.monitorFor(panel.screen)
+                                         : null
+    readonly property real outputScale: outputMonitor && outputMonitor.scale > 0
+                                        ? outputMonitor.scale
+                                        : Screen.devicePixelRatio
+    readonly property real logicalPixelsPerMm: outputScale > 0
+                                                ? Screen.pixelDensity / outputScale
+                                                : 0
 
     implicitWidth: 320
     implicitHeight: 480
 
-    function previewBounds(availableHeight) {
-        var scale = pairingState.previewScale / 100
-        var width = Style.space(360) * scale
-        var height = Style.space(420) * scale
-        if (availableHeight > 0) {
-            height = Math.min(height,
-                              Math.max(Style.space(210),
-                                       availableHeight - Style.space(120)))
-        }
-        return Qt.size(Math.round(width), Math.round(height))
+    function sourceDimensions() {
+        return Qt.size(phonePreview && phonePreview.displayWidth > 0
+                       ? phonePreview.displayWidth : 9,
+                       phonePreview && phonePreview.displayHeight > 0
+                       ? phonePreview.displayHeight : 20)
+    }
+
+    function fallbackPreviewSize(percent) {
+        var source = sourceDimensions()
+        var width = Style.space(360) * percent / 100
+        var height = Style.space(420) * percent / 100
+        var fit = Math.min(width / source.width, height / source.height)
+        return Qt.size(Math.max(1, Math.round(source.width * fit)),
+                       Math.max(1, Math.round(source.height * fit)))
+    }
+
+    function rawPreviewSize(percent) {
+        var source = sourceDimensions()
+        var physical = pairingState.physicalPreviewSize(
+                    root.logicalPixelsPerMm, source.width, source.height, percent)
+        return physical.width > 0 && physical.height > 0
+                ? physical : fallbackPreviewSize(percent)
+    }
+
+    function previewViewportSize(availableHeight) {
+        var maximum = rawPreviewSize(150)
+        var maxWidth = Screen.width > 0
+                ? Math.max(Style.space(280), Screen.width - Style.space(80))
+                : maximum.width
+        var maxHeight = availableHeight > 0
+                ? Math.max(Style.space(210), availableHeight - Style.space(120))
+                : maximum.height
+        var fit = Math.min(1, maxWidth / maximum.width, maxHeight / maximum.height)
+        return Qt.size(Math.max(1, Math.round(maximum.width * fit)),
+                       Math.max(1, Math.round(maximum.height * fit)))
     }
 
     function desiredPreviewSize(availableHeight) {
-        var bounds = previewBounds(availableHeight)
-        var sourceWidth = phonePreview && phonePreview.displayWidth > 0
-                        ? phonePreview.displayWidth : 9
-        var sourceHeight = phonePreview && phonePreview.displayHeight > 0
-                         ? phonePreview.displayHeight : 20
-        var scale = Math.min(Math.max(1, bounds.width) / sourceWidth,
-                             Math.max(1, bounds.height) / sourceHeight)
-        return Qt.size(Math.max(1, Math.round(sourceWidth * scale)),
-                       Math.max(1, Math.round(sourceHeight * scale)))
+        var current = rawPreviewSize(pairingState.previewScale)
+        var maximum = rawPreviewSize(150)
+        var viewport = previewViewportSize(availableHeight)
+        var fit = Math.min(viewport.width / maximum.width,
+                           viewport.height / maximum.height)
+        return Qt.size(Math.max(1, Math.round(current.width * fit)),
+                       Math.max(1, Math.round(current.height * fit)))
     }
 
     function desiredPanelWidth() {
-        if (pairingState.sessionState === "ready" && !settingsOpen)
-            return desiredPreviewSize(panel.availableCardHeight).width
-        return Math.max(Style.space(280),
-                        previewBounds(panel.availableCardHeight).width)
+        if (pairingState.sessionState === "ready")
+            return Math.max(Style.space(280),
+                            previewViewportSize(panel.availableCardHeight).width)
+        return Style.space(320)
     }
 
     function desiredPreviewHeight(availableHeight) {
-        return desiredPreviewSize(availableHeight).height
+        return previewViewportSize(availableHeight).height
     }
 
     function runQuickAction(action) {
@@ -254,12 +288,14 @@ Panel {
                     visible: pairingState.sessionState === "ready" && !root.settingsOpen
                     width: parent.width
                     height: root.desiredPreviewHeight(panel.availableCardHeight)
-                    color: "black"
+                    color: "transparent"
                     radius: Style.cornerRadius
                     clip: true
                     Loader {
                         id: phonePreviewLoader
-                        anchors.fill: parent
+                        anchors.centerIn: parent
+                        width: root.desiredPreviewSize(panel.availableCardHeight).width
+                        height: root.desiredPreviewSize(panel.availableCardHeight).height
                         active: parent.visible && root.opened
                         source: Qt.resolvedUrl("qml/components/PhonePreview.qml")
                         onLoaded: {
@@ -299,6 +335,8 @@ Panel {
                     visible: pairingState.sessionState === "ready" && root.settingsOpen
                     previewScale: pairingState.previewScale
                     videoQuality: pairingState.videoQuality
+                    exactPhysicalScale: pairingState.physicalDisplayWidthMm > 0
+                                        && pairingState.physicalDisplayHeightMm > 0
                     quickActions: pairingState.quickActions
                     foreground: root.contentForeground
                     onPreferencesRequested: function(scale, quality, actions) {

@@ -15,8 +15,6 @@ QtObject {
     property int previewScale: 100
     property string videoQuality: "high"
     property var quickActions: ["back", "home", "recent-apps"]
-    property int physicalDisplayWidthMm: 0
-    property int physicalDisplayHeightMm: 0
 
     signal commandRequested(string command)
     signal pairingCancellationConfirmed()
@@ -31,8 +29,6 @@ QtObject {
         previewScale = 100
         videoQuality = "high"
         quickActions = ["back", "home", "recent-apps"]
-        physicalDisplayWidthMm = 0
-        physicalDisplayHeightMm = 0
         clearQrPresentation()
     }
 
@@ -124,29 +120,6 @@ QtObject {
                 && Math.floor(value) === value
     }
 
-    function validPhysicalDimension(value) {
-        return typeof value === "number"
-                && value >= 20 && value <= 1000
-                && Math.floor(value) === value
-    }
-
-    function physicalPreviewSize(logicalPixelsPerMm, sourceWidth, sourceHeight, percent) {
-        if (!(logicalPixelsPerMm > 0)
-                || !(sourceWidth > 0) || !(sourceHeight > 0)
-                || !validPreviewScale(percent)
-                || !validPhysicalDimension(physicalDisplayWidthMm)
-                || !validPhysicalDimension(physicalDisplayHeightMm))
-            return Qt.size(0, 0)
-
-        var sourceRatio = sourceWidth / sourceHeight
-        var physicalDiagonalMm = Math.hypot(physicalDisplayWidthMm,
-                                            physicalDisplayHeightMm)
-        var heightMm = physicalDiagonalMm / Math.sqrt(1 + sourceRatio * sourceRatio)
-        var widthMm = heightMm * sourceRatio
-        var scale = logicalPixelsPerMm * percent / 100
-        return Qt.size(Math.max(1, Math.round(widthMm * scale)),
-                       Math.max(1, Math.round(heightMm * scale)))
-    }
 
     function applyPreferences(preferences) {
         if (!preferences
@@ -323,14 +296,6 @@ QtObject {
             statusDescription = "Preparing the private scrcpy video session."
             return
         case "session-started":
-            if (validPhysicalDimension(event.physicalWidthMm)
-                    && validPhysicalDimension(event.physicalHeightMm)) {
-                physicalDisplayWidthMm = event.physicalWidthMm
-                physicalDisplayHeightMm = event.physicalHeightMm
-            } else {
-                physicalDisplayWidthMm = 0
-                physicalDisplayHeightMm = 0
-            }
             sessionState = "ready"
             pairingStage = "session-started"
             statusTitle = "Phone connected"

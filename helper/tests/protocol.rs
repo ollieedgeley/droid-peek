@@ -2,7 +2,7 @@ use std::io::Write;
 
 use omarchy_android_helper::input::{AndroidKey, DisplayGeometry, NormalizedPoint};
 use omarchy_android_helper::preferences::{
-    PreviewSize, QuickAction, RenderPreferences, VideoQuality,
+    PreviewScale, QuickAction, RenderPreferences, VideoQuality,
 };
 use omarchy_android_helper::protocol::{
     FailureReason, PROTOCOL_VERSION, PairingBackend, ProtocolEngine, QrPresentation,
@@ -178,10 +178,10 @@ fn render_preferences_are_validated_forwarded_and_echoed() {
 
     assert_eq!(
         engine.handle_line(
-            r#"{"version":1,"type":"set-render-preferences","previewSize":"large","videoQuality":"low","quickActions":["home","recent-apps","back"]}"#,
+            r#"{"version":2,"type":"set-render-preferences","previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"]}"#,
         ),
         [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"preferences-updated","previewSize":"large","videoQuality":"low","quickActions":["home","recent-apps","back"],"sessionRestarted":true}}"#
+            r#"{{"version":{PROTOCOL_VERSION},"type":"preferences-updated","previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"],"sessionRestarted":true}}"#
         )]
     );
 
@@ -189,7 +189,7 @@ fn render_preferences_are_validated_forwarded_and_echoed() {
     assert_eq!(
         backend.preference_updates,
         [RenderPreferences {
-            preview_size: PreviewSize::Large,
+            preview_scale: PreviewScale::new(150).expect("valid preview scale"),
             video_quality: VideoQuality::Low,
             quick_actions: [
                 QuickAction::Home,
@@ -204,9 +204,10 @@ fn render_preferences_are_validated_forwarded_and_echoed() {
 fn invalid_render_preferences_do_not_reach_the_backend() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
     let invalid = [
-        r#"{"version":1,"type":"set-render-preferences","previewSize":"huge","videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":1,"type":"set-render-preferences","previewSize":"medium","videoQuality":"ultra","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":1,"type":"set-render-preferences","previewSize":"medium","videoQuality":"high","quickActions":["back"]}"#,
+        r#"{"version":2,"type":"set-render-preferences","previewScale":49,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":2,"type":"set-render-preferences","previewScale":151,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":2,"type":"set-render-preferences","previewScale":100,"videoQuality":"ultra","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":2,"type":"set-render-preferences","previewScale":100,"videoQuality":"high","quickActions":["back"]}"#,
     ];
 
     for command in invalid {

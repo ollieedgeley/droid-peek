@@ -40,7 +40,7 @@ TestCase {
         value.type = type
         if (type === "ready" && value.preferences === undefined) {
             value.preferences = {
-                previewSize: "medium",
+                previewScale: 100,
                 videoQuality: "high",
                 quickActions: ["back", "home", "recent-apps"]
             }
@@ -189,16 +189,16 @@ TestCase {
 
     function test_render_preferences_are_versioned_and_applied_immediately() {
         verify(state.setRenderPreferences(
-                   "large", "low", ["home", "recent-apps", "back"]))
+                   150, "low", ["home", "recent-apps", "back"]))
 
-        compare(state.previewSize, "large")
+        compare(state.previewScale, 150)
         compare(state.videoQuality, "low")
         compare(state.quickActions, ["home", "recent-apps", "back"])
         compare(commandSpy.count, 1)
         compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 1,
+                    version: 2,
                     type: "set-render-preferences",
-                    previewSize: "large",
+                    previewScale: 150,
                     videoQuality: "low",
                     quickActions: ["home", "recent-apps", "back"]
                 })
@@ -207,13 +207,13 @@ TestCase {
     function test_quality_restart_event_waits_for_the_new_session() {
         state.receiveLine(event("session-started"))
         state.receiveLine(event("preferences-updated", {
-                                    previewSize: "small",
+                                    previewScale: 50,
                                     videoQuality: "medium",
                                     quickActions: ["back", "home", "recent-apps"],
                                     sessionRestarted: true
                                 }))
 
-        compare(state.previewSize, "small")
+        compare(state.previewScale, 50)
         compare(state.videoQuality, "medium")
         compare(state.sessionState, "pairing")
         compare(state.pairingStage, "session-starting")
@@ -223,12 +223,14 @@ TestCase {
 
     function test_invalid_preferences_fail_closed_without_command() {
         verify(!state.setRenderPreferences(
-                   "huge", "high", ["back", "home", "recent-apps"]))
+                   49, "high", ["back", "home", "recent-apps"]))
+        verify(!state.setRenderPreferences(
+                   151, "high", ["back", "home", "recent-apps"]))
         compare(commandSpy.count, 0)
 
         state.receiveLine(event("preferences-updated", {
-                                    previewSize: "medium",
-                                    videoQuality: "ultra",
+                                    previewScale: 151,
+                                    videoQuality: "high",
                                     quickActions: ["back", "home", "recent-apps"],
                                     sessionRestarted: false
                                 }))

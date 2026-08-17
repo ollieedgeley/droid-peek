@@ -46,17 +46,17 @@ arbitrary functions, ambiguous overrides, desktop chords, and per-device
 action profiles are not inferred.
 
 Settings exposes two global controls. **Android-mode shortcuts** is the master
-switch and defaults off. With **Command passthrough** also on, configured typed
-Omarchy actions receive semantic first refusal under the complete focused-phone
-predicate. With Android mode on and command passthrough off, typed routing is
-disabled and the focused panel requests Wayland compositor shortcut inhibition
-instead. Closing the panel, opening Settings, or losing phone focus releases
-that inhibition. This raw-shortcut mode does not add arbitrary Android modifier
-transport: the current input translator does not preserve combinations such as
-Super+Enter. Turning the master switch off restores normal desktop handling.
-Both controls update before the next dispatch, persist privately as global
-preferences, survive **Start over**, and do not disable quick actions, pointer
-input, named key input, or text input.
+switch and defaults off. When it is enabled under the complete focused-phone
+predicate, every route configured in `omarchy-android.lua` invokes only its
+Android action and bypasses compositor shortcut inhibition. **Command
+passthrough** controls unconfigured bindings: when off, the focused panel
+inhibits them; when on, they continue to their normal Omarchy actions. Closing
+the panel, opening Settings, or losing phone focus releases that inhibition.
+Configured Android routes never fall back to the corresponding desktop action.
+Turning the master switch off restores normal desktop handling. Both controls
+update before the next dispatch, persist privately as global preferences,
+survive **Start over**, and do not disable quick actions, pointer input, named
+key input, or text input.
 
 The ready view includes Back, Home, and recent-apps controls plus an inline
 Settings page. A chain-link toolbar button and the Settings toggle control the
@@ -87,13 +87,12 @@ accepted while enabled to rejected immediately after disabling. A browser
 backend attempt returned unhandled and correctly used desktop fallback; this
 run does not claim that every Android action was handled. QR pairing,
 six-digit fallback, and cancel/retry had already passed on the same platform.
-The Stage 8 run then proved private v4-to-v5 migration with command passthrough
-off, visible keyboard-operable Settings control, persistence without restarting
-the session, and mutually exclusive live routing modes. With passthrough on,
-Super+Enter launched Termux on the phone while the desktop Kitty count remained
-one. With passthrough off, a focused browser chord produced no semantic request
-and left the panel open, while Super+Alt+A still closed it through the global
-toggle's inhibition bypass.
+The Stage 8 run proved private v4-to-v5 preference migration, keyboard-operable
+Settings controls, and persistence without restarting the session. A subsequent
+contract correction keeps configured Android routes active regardless of the
+passthrough value: disabling passthrough now blocks only unconfigured Omarchy
+bindings, while enabling it allows those bindings through. The global
+Super+Alt+A panel toggle remains available through its inhibition bypass.
 This evidence completes the current compatibility slice, not the full V1
 acceptance contract.
 

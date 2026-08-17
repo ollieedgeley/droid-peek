@@ -148,16 +148,16 @@ o.bind("SUPER + RETURN", "Terminal", terminal)
 assert(o.bind == installed_bind, "loader must remain active for later user bindings")
 
 assert(#calls == 11, "each binding must be registered exactly once")
-assert(type(calls[1].dispatcher) == "function")
-assert(calls[1].dispatcher ~= stock_close, "stock close must be wrapped")
-assert(type(calls[2].dispatcher) == "function")
-assert(calls[2].dispatcher ~= custom_close, "custom close must be wrapped")
-assert(type(calls[3].dispatcher) == "function")
-assert(calls[3].dispatcher ~= nil_description_close, "nil-description close must be wrapped")
-assert(calls[1].dispatcher ~= calls[2].dispatcher, "each close must retain its own fallback")
-assert(calls[1].dispatcher ~= calls[3].dispatcher, "each close must be wrapped independently")
-assert(calls[2].dispatcher ~= calls[3].dispatcher, "each close must be wrapped independently")
-assert(calls[1].options == close_options, "close binding options must be preserved")
+assert(type(calls[1].dispatcher) == "string")
+assert(calls[1].dispatcher:match("omarchy%-android%-action' android%-home '' /usr/bin/true$"))
+assert(type(calls[2].dispatcher) == "string")
+assert(calls[2].dispatcher == calls[1].dispatcher)
+assert(type(calls[3].dispatcher) == "string")
+assert(calls[3].dispatcher == calls[1].dispatcher)
+assert(calls[1].options ~= close_options, "close route options must be copied")
+assert(calls[1].options.locked == true, "close route options must be preserved")
+assert(calls[1].options.dont_inhibit == true, "configured close must bypass inhibition")
+assert(close_options.dont_inhibit == nil, "caller options must remain unchanged")
 assert(calls[3].description == nil, "nil close description must be preserved")
 assert(calls[4].dispatcher == untagged, "untagged functions must remain untouched")
 
@@ -184,88 +184,16 @@ assert(calls[8].options.dont_inhibit == true, "nil panel options must gain inhib
 assert(calls[9].keys == "SUPER + SHIFT + B")
 assert(calls[9].description == "Browser / Android default browser")
 assert(type(calls[9].dispatcher) == "string")
-assert(calls[9].dispatcher:match("omarchy%-android%-action' omarchy%-browser '' omarchy%-launch%-browser$"))
-assert(calls[9].options == browser_options)
+assert(calls[9].dispatcher:match("omarchy%-android%-action' omarchy%-browser '' /usr/bin/true$"))
+assert(calls[9].options ~= browser_options, "Android route options must be copied")
+assert(calls[9].options.locked == true, "Android route options must be preserved")
+assert(calls[9].options.dont_inhibit == true, "configured Android routes must bypass inhibition")
+assert(browser_options.dont_inhibit == nil, "caller options must remain unchanged")
 assert(calls[10].dispatcher == private_browser, "private browser must remain untouched")
 assert(calls[11].dispatcher == terminal, "unsupported bindings must remain untouched")
 assert(#executed_commands == 0, "panel bindings must not launch asynchronous commands")
 assert(#timers == 0, "panel bindings must not start asynchronous timers")
 
-local marker = "/tmp/omarchy-android-fallback-1700000000-1"
-local function marker_exists()
-  local file = io.open(marker, "r")
-  if file == nil then
-    return false
-  end
-  file:close()
-  return true
-end
-
-local function write_marker()
-  local file = assert(io.open(marker, "w"))
-  file:close()
-end
-
-write_marker()
-calls[1].dispatcher()
-
-assert(#executed_commands == 1, "close must launch one semantic action")
-local expected_close_command = table.concat({
-  "/usr/bin/timeout --signal=KILL 7",
-  "'/home/test/.local/bin/omarchy-android-action'",
-  "android-home",
-  "''",
-  "/usr/bin/touch",
-  "'" .. marker .. "'",
-  "|| /usr/bin/touch",
-  "'" .. marker .. "'",
-}, " ")
-assert(
-  executed_commands[1] == expected_close_command,
-  "close must use the exact absolute non-catchable KILL timeout wrapper"
-)
-assert(executed_commands[1]:find(
-  "'/home/test/.local/bin/omarchy-android-action' android-home ''",
-  1,
-  true
-))
-assert(executed_commands[1]:find("/usr/bin/touch '" .. marker .. "'", 1, true))
-assert(executed_commands[1]:find("|| /usr/bin/touch '" .. marker .. "'", 1, true))
-assert(not marker_exists(), "stale fallback marker must be removed before launch")
-assert(#dispatches == 0, "fallback must not run while the semantic action is pending")
-
-assert(#timers == 1, "close must start one fallback watcher")
-assert(timers[1].options.timeout == 50)
-assert(timers[1].options.type == "repeat")
-assert(timers[1].enabled)
-
-timers[1].callback()
-assert(#dispatches == 0, "missing marker must not dispatch the fallback")
-assert(timers[1].enabled, "watcher must remain active while the action is pending")
-
-write_marker()
-timers[1].callback()
-assert(#dispatches == 1, "fallback marker must dispatch exactly once")
-assert(dispatches[1] == stock_close, "fallback must dispatch the exact original close dispatcher")
-assert(not marker_exists(), "handled fallback marker must be removed")
-assert(not timers[1].enabled, "fallback watcher must disable itself after dispatch")
-assert(#timer_state_changes == 1)
-assert(timer_state_changes[1].timer == timers[1])
-assert(timer_state_changes[1].enabled == false)
-
-timers[1].callback()
-assert(#dispatches == 1, "repeated timer callbacks must not dispatch twice")
-
-calls[2].dispatcher()
-assert(#timers == 2, "each close invocation must own its fallback watcher")
-for _ = 1, 159 do
-  timers[2].callback()
-end
-assert(timers[2].enabled, "empty watcher must remain active before its cleanup limit")
-assert(#dispatches == 1, "empty watcher polls must not dispatch a fallback")
-timers[2].callback()
-assert(not timers[2].enabled, "empty watcher must disable itself at its cleanup limit")
-assert(#dispatches == 1, "watcher cleanup must not dispatch a fallback")
 
 os.getenv = original_getenv
 os.time = original_time

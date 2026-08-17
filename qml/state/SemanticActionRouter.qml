@@ -14,7 +14,6 @@ QtObject {
     readonly property bool phoneInteractionEligible: sessionReady && panelOpen && !settingsOpen
                                                        && phoneVisible && phoneEnabled && phoneFocused
     readonly property bool actionEligible: semanticIntegrationEnabled
-                                                && commandPassthrough
                                                 && phoneInteractionEligible
     readonly property bool shortcutInhibitionRequested: semanticIntegrationEnabled
                                                            && !commandPassthrough

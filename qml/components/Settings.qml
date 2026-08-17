@@ -155,7 +155,7 @@ NestedEscapeScope {
 
                 PanelToolTip {
                     visible: commandPassthroughControl.pointerHovered || commandPassthroughControl.activeFocus
-                    text: "Let configured Omarchy actions reach the focused phone instead of the desktop."
+                    text: "Allow unconfigured shortcuts to reach Omarchy while the phone is focused."
                 }
             }
 

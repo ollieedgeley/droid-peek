@@ -62,11 +62,17 @@ TestCase {
         compare(router.quickActionKey("recent-apps"), "app-switch")
     }
 
-    function test_passthrough_controls_compositor_shortcut_inhibition() {
+    function test_passthrough_only_controls_compositor_shortcut_inhibition() {
         makeEligible()
         router.commandPassthrough = false
+        var deadline = Date.now() + 2000
 
         compare(router.shortcutInhibitionRequested, true)
+        compare(router.actionEligible, true)
+        verify(router.trigger(
+                   "omarchy-browser", "request-inhibited-browser", deadline))
+        compare(actionSpy.count, 1)
+
         router.commandPassthrough = true
         compare(router.shortcutInhibitionRequested, false)
         compare(router.actionEligible, true)

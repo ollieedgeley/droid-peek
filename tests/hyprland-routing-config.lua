@@ -144,24 +144,26 @@ assert(#calls == 5, "each existing or custom binding must register exactly once"
 assert(calls[1].keys == "SUPER + SHIFT + B")
 assert(calls[1].description == "Browser / Android default browser")
 assert(calls[1].options.locked == true)
+assert(calls[1].options.dont_inhibit == true)
 assert(type(calls[1].dispatcher) == "string")
-assert(calls[1].dispatcher:match("omarchy%-android%-action' omarchy%-browser '' omarchy%-launch%-browser$"))
+assert(calls[1].dispatcher:match("omarchy%-android%-action' omarchy%-browser '' /usr/bin/true$"))
 
 assert(calls[2].description == "Music / Android launch com.spotify.music")
-assert(calls[2].dispatcher:match("omarchy%-android%-action' android%-launch%-app 'com%.spotify%.music' omarchy%-launch%-spotify$"))
+assert(calls[2].options.dont_inhibit == true)
+assert(calls[2].dispatcher:match("omarchy%-android%-action' android%-launch%-app 'com%.spotify%.music' /usr/bin/true$"))
 
 assert(type(calls[3].dispatcher) == "table")
 assert(calls[3].dispatcher.omarchy == "editor", "false route must preserve original Omarchy action")
 
-assert(type(calls[4].dispatcher) == "function", "opaque close fallback must stay asynchronous")
-calls[4].dispatcher()
-assert(#executed_commands == 1)
-assert(executed_commands[1]:match("android%-back '' /usr/bin/touch"))
-assert(executed_commands[1]:match("|| /usr/bin/touch"))
+assert(type(calls[4].dispatcher) == "string")
+assert(calls[4].dispatcher:match("android%-back '' /usr/bin/true$"))
+assert(calls[4].options.dont_inhibit == true)
+assert(#executed_commands == 0, "configured Android routes must not launch fallback work")
 
 assert(calls[5].keys == "CTRL + ALT + SHIFT + P")
 assert(calls[5].description == "Android recent apps")
 assert(calls[5].dispatcher:match("android%-recent%-apps '' /usr/bin/true$"))
+assert(calls[5].options.dont_inhibit == true)
 
 local duplicate_ok, duplicate_error = pcall(android.install_custom_bindings)
 assert(not duplicate_ok, "custom bindings must not install twice")

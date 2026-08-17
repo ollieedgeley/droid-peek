@@ -172,7 +172,7 @@ Load and configure the integration after Omarchy's bootstrap but before
 local android = dofile(
   os.getenv("HOME") .. "/.config/omarchy/plugins/ollie.android/integrations/hyprland.lua"
 )
-android.configure(dofile(os.getenv("HOME") .. "/.config/hypr/omarchy-android.lua"))
+android.configure(require("hypr.omarchy-android"))
 ```
 
 After Omarchy defaults and the user's ordinary bindings have loaded, register
@@ -259,8 +259,9 @@ action argument. IPC is bounded to 3 seconds; semantic ADB work is capped at
 a 7-second outer guard. Android rejection, disconnect, timeout, protocol
 mismatch, or an unhandled action invokes the original fallback exactly once.
 
-Hyprland reloads the user configuration automatically. Confirm it with
-`hyprctl reload` followed by `hyprctl configerrors`. Remove the integration
+Hyprland watches modules loaded through its wrapped `require`, so saving
+`~/.config/hypr/omarchy-android.lua` automatically reloads the complete
+configuration. Check `hyprctl configerrors` after an edit. Remove the integration
 loader/configure lines and the `install_custom_bindings()` call to disable the
 integration; the user-owned configuration file may remain.
 

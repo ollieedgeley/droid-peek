@@ -1,12 +1,16 @@
-use std::io::Write;
-
-use omarchy_android_helper::actions::SemanticAction;
+use omarchy_android_helper::actions::PhoneTarget;
 use omarchy_android_helper::input::{AndroidKey, DisplayGeometry, NormalizedPoint};
 use omarchy_android_helper::preferences::{Preferences, PreviewScale, QuickAction, VideoQuality};
 use omarchy_android_helper::protocol::{
-    Event, FailureReason, PROTOCOL_VERSION, PairingBackend, ProtocolEngine, QrPresentation,
+    ActionFailureCode, Event, FailureReason, PairingBackend, PhoneTargetFailure, ProtocolEngine,
+    QrPresentation, PROTOCOL_VERSION,
 };
-use omarchy_android_helper::runtime::AcceptanceEventWriter;
+
+const HELPER_EPOCH: &str = "73001";
+
+fn engine(backend: FakePairingBackend) -> ProtocolEngine<FakePairingBackend> {
+    ProtocolEngine::new(backend, HELPER_EPOCH)
+}
 
 fn wire_lines(events: Vec<Event>) -> Vec<String> {
     events.into_iter().map(|event| event.to_line()).collect()
@@ -19,14 +23,13 @@ struct FakePairingBackend {
     reconnects: usize,
     session_stops: usize,
     start_overs: usize,
+    session_generation: u64,
     pointer_taps: Vec<(DisplayGeometry, NormalizedPoint)>,
     pointer_swipes: Vec<(DisplayGeometry, NormalizedPoint, NormalizedPoint, u32)>,
     keys: Vec<AndroidKey>,
     texts: Vec<String>,
-    semantic_actions: Vec<SemanticAction>,
-    semantic_request_ids: Vec<String>,
-    semantic_expires_at_unix_ms: Vec<u64>,
-    semantic_action_arguments: Vec<Option<String>>,
+    phone_targets: Vec<(PhoneTarget, String, u64)>,
+    phone_target_failure: Option<PhoneTargetFailure>,
     preference_updates: Vec<Preferences>,
 }
 
@@ -47,17 +50,24 @@ impl PairingBackend for FakePairingBackend {
         Ok(())
     }
 
+    fn session_generation(&self) -> u64 {
+        self.session_generation
+    }
+
     fn reconnect_trusted_device(&mut self) -> Result<(), FailureReason> {
         self.reconnects += 1;
+        self.session_generation += 1;
         Ok(())
     }
 
     fn stop_session(&mut self) {
         self.session_stops += 1;
+        self.session_generation += 1;
     }
 
     fn start_over(&mut self) -> Result<(), FailureReason> {
         self.start_overs += 1;
+        self.session_generation += 1;
         Ok(())
     }
 
@@ -87,29 +97,27 @@ impl PairingBackend for FakePairingBackend {
         Ok(())
     }
 
-    fn semantic_action(
-        &mut self,
-        action: SemanticAction,
-        action_argument: Option<&str>,
-        request_id: &str,
-        expires_at_unix_ms: u64,
-    ) -> Result<bool, FailureReason> {
-        self.semantic_actions.push(action);
-        self.semantic_action_arguments
-            .push(action_argument.map(str::to_owned));
-        self.semantic_request_ids.push(request_id.to_owned());
-        self.semantic_expires_at_unix_ms.push(expires_at_unix_ms);
-        Ok(matches!(
-            action,
-            SemanticAction::OmarchyBrowser
-                | SemanticAction::OmarchyCloseCurrentWindow
-                | SemanticAction::AndroidLaunchApp
-        ))
-    }
-
     fn text_input(&mut self, text: &str) -> Result<(), FailureReason> {
         self.texts.push(text.to_owned());
         Ok(())
+    }
+
+    fn phone_target(
+        &mut self,
+        target: PhoneTarget,
+        request_id: &str,
+        expires_at_unix_ms: u64,
+    ) -> Result<(), PhoneTargetFailure> {
+        self.phone_targets
+            .push((target, request_id.to_owned(), expires_at_unix_ms));
+        match self.phone_target_failure.take() {
+            Some(PhoneTargetFailure::Lifecycle(reason)) => {
+                self.session_generation += 1;
+                Err(PhoneTargetFailure::Lifecycle(reason))
+            }
+            Some(failure) => Err(failure),
+            None => Ok(()),
+        }
     }
 
     fn preferences(&self) -> Preferences {
@@ -119,31 +127,36 @@ impl PairingBackend for FakePairingBackend {
     fn set_preferences(&mut self, preferences: Preferences) -> Result<bool, FailureReason> {
         let restarted = preferences.video_quality != self.preferences().video_quality;
         self.preference_updates.push(preferences);
+        if restarted {
+            self.session_generation += 1;
+        }
         Ok(restarted)
     }
 }
 
 #[test]
-fn backend_shutdown_cancels_pairing_and_session_work() {
-    let engine = ProtocolEngine::new(FakePairingBackend::default());
+fn backend_shutdown_cancels_pairing_and_advances_session_generation() {
+    let engine = engine(FakePairingBackend::default());
     let mut backend = engine.into_backend();
 
     backend.shutdown();
 
     assert_eq!(backend.pairing_cancels, 1);
     assert_eq!(backend.session_stops, 1);
+    assert_eq!(backend.session_generation, 1);
 }
 
 #[test]
-fn protocol_version_ten_ready_event_exposes_shortcut_preferences() {
-    assert_eq!(PROTOCOL_VERSION, 10);
+fn protocol_version_eleven_ready_establishes_epoch_and_generation_zero() {
+    assert_eq!(PROTOCOL_VERSION, 11);
     assert_eq!(
         Event::Ready {
+            helper_epoch: HELPER_EPOCH.to_owned(),
+            session_generation: "0".to_owned(),
             has_trusted_device: true,
             preferences: Preferences {
                 keep_connected: true,
                 android_mode_shortcuts: true,
-                command_passthrough: true,
                 preview_scale: PreviewScale::new(125).expect("valid preview scale"),
                 video_quality: VideoQuality::Low,
                 quick_actions: [
@@ -154,139 +167,102 @@ fn protocol_version_ten_ready_event_exposes_shortcut_preferences() {
             },
         }
         .to_line(),
-        r#"{"version":10,"type":"ready","hasTrustedDevice":true,"preferences":{"keepConnected":true,"androidModeShortcuts":true,"commandPassthrough":true,"previewScale":125,"videoQuality":"low","quickActions":["home","recent-apps","back"]}}"#
+        r#"{"version":11,"type":"ready","helperEpoch":"73001","sessionGeneration":"0","hasTrustedDevice":true,"preferences":{"keepConnected":true,"androidModeShortcuts":true,"previewScale":125,"videoQuality":"low","quickActions":["home","recent-apps","back"]}}"#
     );
 }
 
 #[test]
-fn qr_pairing_commands_emit_versioned_redacted_states() {
-    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
+fn replacement_helper_uses_a_new_epoch_and_resets_its_generation_baseline() {
+    let ready = |helper_epoch: &str| Event::Ready {
+        helper_epoch: helper_epoch.to_owned(),
+        session_generation: "0".to_owned(),
+        has_trusted_device: true,
+        preferences: Preferences::default(),
+    };
 
-    assert_eq!(
-        wire_lines(engine.handle_line(r#"{"version":10,"type":"start-qr-pairing"}"#)),
-        [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"qr-waiting","artifact":"/run/user/1000/omarchy-android/qr.svg","expiresInSeconds":120}}"#
-        )]
-    );
-    assert_eq!(
-        wire_lines(engine.handle_line(r#"{"version":10,"type":"cancel-pairing"}"#)),
-        [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"pairing-cancelled"}}"#
-        )]
-    );
+    let first: serde_json::Value =
+        serde_json::from_str(&ready("73001").to_line()).expect("first ready event");
+    let replacement: serde_json::Value =
+        serde_json::from_str(&ready("73002").to_line()).expect("replacement ready event");
+
+    assert_eq!(first["helperEpoch"], "73001");
+    assert_eq!(replacement["helperEpoch"], "73002");
+    assert_eq!(first["sessionGeneration"], "0");
+    assert_eq!(replacement["sessionGeneration"], "0");
+}
+
+#[test]
+fn pairing_only_events_carry_epoch_but_no_session_generation() {
+    let mut engine = engine(FakePairingBackend::default());
+
+    for (command, expected_type) in [
+        ("start-qr-pairing", "qr-waiting"),
+        ("cancel-pairing", "pairing-cancelled"),
+        ("use-manual-code", "manual-code-required"),
+    ] {
+        let events = wire_lines(engine.handle_line(&format!(
+            r#"{{"version":11,"type":"{command}","helperEpoch":"{HELPER_EPOCH}"}}"#
+        )));
+        let value: serde_json::Value =
+            serde_json::from_str(&events[0]).expect("valid protocol event");
+        assert_eq!(value["type"], expected_type);
+        assert_eq!(value["helperEpoch"], HELPER_EPOCH);
+        assert!(value.get("sessionGeneration").is_none());
+    }
 }
 
 #[test]
 fn manual_code_is_consumed_without_appearing_in_events() {
-    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
-    let code = "482913";
-
-    assert_eq!(
-        wire_lines(engine.handle_line(r#"{"version":10,"type":"use-manual-code"}"#)),
-        [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"manual-code-required"}}"#
-        )]
-    );
+    let mut engine = engine(FakePairingBackend::default());
+    let code = "123456";
     let events = wire_lines(engine.handle_line(&format!(
-        r#"{{"version":10,"type":"submit-manual-code","code":"{code}"}}"#
+        r#"{{"version":11,"type":"submit-manual-code","helperEpoch":"{HELPER_EPOCH}","code":"{code}"}}"#
     )));
 
     assert_eq!(
         events,
         [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"pairing","method":"manual-code"}}"#
+            r#"{{"version":11,"type":"pairing","helperEpoch":"{HELPER_EPOCH}","method":"manual-code"}}"#
         )]
     );
     assert!(events.iter().all(|event| !event.contains(code)));
-    let mut writer = AcceptanceEventWriter::with_log(Vec::new(), Vec::new());
-    for event in &events {
-        writeln!(writer, "{event}").expect("write acceptance event");
-    }
-    let (_, log) = writer.into_parts();
-    let log = String::from_utf8(log.expect("acceptance log")).expect("UTF-8 acceptance log");
-    assert!(!log.contains(code));
-
-    let backend = engine.into_backend();
-    assert_eq!(backend.manual_codes, [code]);
+    assert_eq!(engine.into_backend().manual_codes, [code]);
 }
 
 #[test]
-fn manual_code_rejects_non_six_digit_values_before_the_backend() {
-    let expected = [format!(
-        r#"{{"version":{PROTOCOL_VERSION},"type":"protocol-error","reason":"invalid-command"}}"#
-    )];
+fn reconnect_stop_and_start_over_advance_generation_before_their_events() {
+    let mut engine = engine(FakePairingBackend::default());
 
-    for code in ["", "12345", "1234567", "12345a", "１２３４５６"] {
-        let mut engine = ProtocolEngine::new(FakePairingBackend::default());
+    for (command, event_type, generation) in [
+        ("reconnect-trusted-device", "connecting", "1"),
+        ("stop-session", "session-stopped", "2"),
+        ("start-over", "start-over-complete", "3"),
+    ] {
         assert_eq!(
             wire_lines(engine.handle_line(&format!(
-                r#"{{"version":10,"type":"submit-manual-code","code":"{code}"}}"#
+                r#"{{"version":11,"type":"{command}","helperEpoch":"{HELPER_EPOCH}"}}"#
             ))),
-            expected
-        );
-        assert!(
-            engine.into_backend().manual_codes.is_empty(),
-            "invalid manual code reached the pairing backend"
+            [format!(
+                r#"{{"version":11,"type":"{event_type}","helperEpoch":"{HELPER_EPOCH}","sessionGeneration":"{generation}"}}"#
+            )]
         );
     }
-}
-
-#[test]
-fn reconnect_command_emits_redacted_progress_and_calls_backend() {
-    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
-
-    assert_eq!(
-        wire_lines(engine.handle_line(r#"{"version":10,"type":"reconnect-trusted-device"}"#)),
-        [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"connecting"}}"#
-        )]
-    );
 
     let backend = engine.into_backend();
     assert_eq!(backend.reconnects, 1);
-}
-
-#[test]
-fn stop_session_confirms_cleanup_and_calls_backend() {
-    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
-
-    assert_eq!(
-        wire_lines(engine.handle_line(r#"{"version":10,"type":"stop-session"}"#)),
-        [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"session-stopped"}}"#
-        )]
-    );
-
-    let backend = engine.into_backend();
     assert_eq!(backend.session_stops, 1);
-}
-
-#[test]
-fn start_over_confirms_local_forgetting_and_calls_backend() {
-    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
-
-    assert_eq!(
-        wire_lines(engine.handle_line(r#"{"version":10,"type":"start-over"}"#)),
-        [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"start-over-complete"}}"#
-        )]
-    );
-
-    let backend = engine.into_backend();
     assert_eq!(backend.start_overs, 1);
 }
 
 #[test]
-fn preferences_are_validated_forwarded_and_echoed() {
-    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
+fn preferences_are_schema_one_and_quality_restart_advances_generation() {
+    let mut engine = engine(FakePairingBackend::default());
 
     assert_eq!(
         wire_lines(engine.handle_line(
-            r#"{"version":10,"type":"set-preferences","keepConnected":true,"androidModeShortcuts":true,"commandPassthrough":true,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"]}"#,
+            r#"{"version":11,"type":"set-preferences","helperEpoch":"73001","keepConnected":true,"androidModeShortcuts":false,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"]}"#,
         )),
-        [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"preferences-updated","keepConnected":true,"androidModeShortcuts":true,"commandPassthrough":true,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"],"sessionRestarted":true}}"#
-        )]
+        [r#"{"version":11,"type":"preferences-updated","helperEpoch":"73001","sessionGeneration":"1","keepConnected":true,"androidModeShortcuts":false,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"],"sessionRestarted":true}"#]
     );
 
     let backend = engine.into_backend();
@@ -294,8 +270,7 @@ fn preferences_are_validated_forwarded_and_echoed() {
         backend.preference_updates,
         [Preferences {
             keep_connected: true,
-            android_mode_shortcuts: true,
-            command_passthrough: true,
+            android_mode_shortcuts: false,
             preview_scale: PreviewScale::new(150).expect("valid preview scale"),
             video_quality: VideoQuality::Low,
             quick_actions: [
@@ -308,292 +283,196 @@ fn preferences_are_validated_forwarded_and_echoed() {
 }
 
 #[test]
-fn invalid_preferences_do_not_reach_the_backend() {
-    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
-    let invalid = [
-        r#"{"version":10,"type":"set-preferences","androidModeShortcuts":false,"commandPassthrough":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":10,"type":"set-preferences","keepConnected":"yes","androidModeShortcuts":false,"commandPassthrough":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":10,"type":"set-preferences","keepConnected":false,"commandPassthrough":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":10,"type":"set-preferences","keepConnected":false,"androidModeShortcuts":"yes","commandPassthrough":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":10,"type":"set-preferences","keepConnected":false,"androidModeShortcuts":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":10,"type":"set-preferences","keepConnected":false,"androidModeShortcuts":false,"commandPassthrough":"yes","previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":10,"type":"set-preferences","keepConnected":false,"androidModeShortcuts":false,"commandPassthrough":false,"previewScale":49,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":10,"type":"set-preferences","keepConnected":false,"androidModeShortcuts":false,"commandPassthrough":false,"previewScale":151,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":10,"type":"set-preferences","keepConnected":false,"androidModeShortcuts":false,"commandPassthrough":false,"previewScale":100,"videoQuality":"ultra","quickActions":["back","home","recent-apps"]}"#,
-        r#"{"version":10,"type":"set-preferences","keepConnected":false,"androidModeShortcuts":false,"commandPassthrough":false,"previewScale":100,"videoQuality":"high","quickActions":["back"]}"#,
-    ];
-
-    for command in invalid {
+fn missing_or_retired_preference_fields_do_not_reach_the_backend() {
+    let mut engine = engine(FakePairingBackend::default());
+    for command in [
+        r#"{"version":11,"type":"set-preferences","helperEpoch":"73001","androidModeShortcuts":true,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":11,"type":"set-preferences","helperEpoch":"73001","keepConnected":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+        r#"{"version":11,"type":"set-preferences","helperEpoch":"73001","keepConnected":false,"androidModeShortcuts":true,"commandPassthrough":false,"previewScale":100,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,
+    ] {
         assert_eq!(
             wire_lines(engine.handle_line(command)),
-            [format!(
-                r#"{{"version":{PROTOCOL_VERSION},"type":"protocol-error","reason":"invalid-command"}}"#
-            )]
+            [r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"invalid-command"}"#]
         );
     }
     assert!(engine.into_backend().preference_updates.is_empty());
 }
 
 #[test]
-fn input_commands_are_versioned_validated_and_forwarded_without_response_noise() {
-    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
-
-    assert!(engine
-        .handle_line(
-            r#"{"version":10,"type":"pointer-tap","x":0.25,"y":0.75,"displayWidth":1080,"displayHeight":2400}"#,
-        )
-        .is_empty());
-    assert!(engine
-        .handle_line(
-            r#"{"version":10,"type":"pointer-swipe","startX":0.1,"startY":0.2,"endX":0.8,"endY":0.9,"displayWidth":1080,"displayHeight":2400,"durationMs":320}"#,
-        )
-        .is_empty());
-    assert!(
-        engine
-            .handle_line(r#"{"version":10,"type":"key-input","key":"back"}"#)
-            .is_empty()
-    );
-    assert!(
-        engine
-            .handle_line(r#"{"version":10,"type":"text-input","text":"a"}"#)
-            .is_empty()
-    );
+fn matching_session_bound_input_is_validated_and_forwarded() {
+    let mut engine = engine(FakePairingBackend::default());
+    for command in [
+        r#"{"version":11,"type":"pointer-tap","helperEpoch":"73001","sessionGeneration":"0","x":0.25,"y":0.75,"displayWidth":1080,"displayHeight":2400}"#,
+        r#"{"version":11,"type":"pointer-swipe","helperEpoch":"73001","sessionGeneration":"0","startX":0.1,"startY":0.2,"endX":0.8,"endY":0.9,"displayWidth":1080,"displayHeight":2400,"durationMs":320}"#,
+        r#"{"version":11,"type":"key-input","helperEpoch":"73001","sessionGeneration":"0","key":"back"}"#,
+        r#"{"version":11,"type":"text-input","helperEpoch":"73001","sessionGeneration":"0","text":"a"}"#,
+    ] {
+        assert!(engine.handle_line(command).is_empty());
+    }
 
     let backend = engine.into_backend();
     assert_eq!(backend.pointer_taps.len(), 1);
     assert_eq!(backend.pointer_swipes.len(), 1);
-    assert_eq!(backend.pointer_swipes[0].3, 320);
     assert_eq!(backend.keys, [AndroidKey::Back]);
     assert_eq!(backend.texts, ["a"]);
 }
 
 #[test]
-fn semantic_actions_emit_correlated_handled_results() {
-    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
-
-    for (action_id, request_id, expires_at_unix_ms, handled) in [
-        ("omarchy-browser", "request-1", 1_750_000_000_001_u64, true),
-        (
-            "omarchy-close-current-window",
-            "request-2",
-            1_750_000_000_002,
-            true,
-        ),
-        ("omarchy-menu", "request-3", 1_750_000_000_003, false),
-    ] {
-        assert_eq!(
-            wire_lines(engine.handle_line(&format!(
-                r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"{action_id}","requestId":"{request_id}","expiresAtUnixMs":{expires_at_unix_ms}}}"#
-            ))),
-            [format!(
-                r#"{{"version":{PROTOCOL_VERSION},"type":"action-result","actionId":"{action_id}","requestId":"{request_id}","handled":{handled}}}"#
-            )]
-        );
-    }
-
-    assert_eq!(
-        wire_lines(engine.handle_line(&format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"android-launch-app","actionArgument":"com.example.notes","requestId":"request-package","expiresAtUnixMs":1750000000004}}"#
-        ))),
-        [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"action-result","actionId":"android-launch-app","requestId":"request-package","handled":true}}"#
-        )]
-    );
-
-    for command in [
-        format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"not-declared","requestId":"request-4","expiresAtUnixMs":1750000000004}}"#
-        ),
-        format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"omarchy-browser","requestId":"../unsafe","expiresAtUnixMs":1750000000005}}"#
-        ),
-        format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"omarchy-browser","expiresAtUnixMs":1750000000006}}"#
-        ),
-        format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"omarchy-browser","requestId":"request-missing-expiry"}}"#
-        ),
-        format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"omarchy-browser","requestId":"request-string-expiry","expiresAtUnixMs":"1750000000007"}}"#
-        ),
-        format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"omarchy-browser","requestId":"request-fractional-expiry","expiresAtUnixMs":1750000000007.5}}"#
-        ),
-        format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"omarchy-browser","requestId":"request-negative-expiry","expiresAtUnixMs":-1}}"#
-        ),
-        format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"android-launch-app","requestId":"request-package-missing","expiresAtUnixMs":1750000000008}}"#
-        ),
-        format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"android-launch-app","actionArgument":"bad package","requestId":"request-package-invalid","expiresAtUnixMs":1750000000009}}"#
-        ),
-        format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"android-home","actionArgument":"com.example.notes","requestId":"request-unexpected-argument","expiresAtUnixMs":1750000000010}}"#
-        ),
-    ] {
-        assert_eq!(
-            wire_lines(engine.handle_line(&command)),
-            [format!(
-                r#"{{"version":{PROTOCOL_VERSION},"type":"protocol-error","reason":"invalid-command"}}"#
-            )]
-        );
-    }
-
-    let backend = engine.into_backend();
-    assert_eq!(
-        backend.semantic_actions,
-        [
-            SemanticAction::OmarchyBrowser,
-            SemanticAction::OmarchyCloseCurrentWindow,
-            SemanticAction::OmarchyMenu,
-            SemanticAction::AndroidLaunchApp,
-        ]
-    );
-    assert_eq!(
-        backend.semantic_action_arguments,
-        [None, None, None, Some("com.example.notes".to_owned())]
-    );
-    assert_eq!(
-        backend.semantic_request_ids,
-        ["request-1", "request-2", "request-3", "request-package"]
-    );
-    assert_eq!(
-        backend.semantic_expires_at_unix_ms,
-        [
-            1_750_000_000_001,
-            1_750_000_000_002,
-            1_750_000_000_003,
-            1_750_000_000_004,
-        ]
-    );
-}
-
-#[test]
-fn failed_semantic_actions_still_emit_a_correlated_unhandled_result() {
-    struct FailedActionBackend;
-
-    impl PairingBackend for FailedActionBackend {
-        fn start_qr_pairing(&mut self) -> Result<QrPresentation, FailureReason> {
-            unreachable!("semantic action test")
-        }
-
-        fn cancel_pairing(&mut self) {}
-
-        fn submit_manual_code(&mut self, _code: &str) -> Result<(), FailureReason> {
-            unreachable!("semantic action test")
-        }
-
-        fn semantic_action(
-            &mut self,
-            _action: SemanticAction,
-            _action_argument: Option<&str>,
-            _request_id: &str,
-            _expires_at_unix_ms: u64,
-        ) -> Result<bool, FailureReason> {
-            Err(FailureReason::Disconnected)
-        }
-    }
-
-    let mut engine = ProtocolEngine::new(FailedActionBackend);
-    assert_eq!(
-        wire_lines(engine.handle_line(&format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"omarchy-browser","requestId":"request-failed","expiresAtUnixMs":1750000000008}}"#
-        ))),
-        [
-            format!(
-                r#"{{"version":{PROTOCOL_VERSION},"type":"action-result","actionId":"omarchy-browser","requestId":"request-failed","handled":false}}"#
-            ),
-            format!(
-                r#"{{"version":{PROTOCOL_VERSION},"type":"failure","reason":"disconnected"}}"#
-            )
-        ]
-    );
-}
-#[test]
-fn malformed_input_is_rejected_before_reaching_the_backend() {
-    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
-    let invalid_commands = [
-        r#"{"version":10,"type":"pointer-tap","x":1.01,"y":0.5,"displayWidth":1080,"displayHeight":2400}"#,
-        r#"{"version":10,"type":"pointer-tap","x":0.5,"y":0.5,"displayWidth":0,"displayHeight":2400}"#,
-        r#"{"version":10,"type":"pointer-swipe","startX":0.1,"startY":0.2,"endX":0.8,"endY":0.9,"displayWidth":1080,"displayHeight":2400,"durationMs":0}"#,
-        r#"{"version":10,"type":"text-input","text":"line\nfeed"}"#,
+fn stale_or_missing_identity_rejects_every_session_bound_command_before_backend_work() {
+    let mut backend = FakePairingBackend::default();
+    backend.session_generation = 7;
+    let mut engine = engine(backend);
+    let commands = [
+        r#"{"version":11,"type":"pointer-tap","helperEpoch":"73000","sessionGeneration":"7","x":0.5,"y":0.5,"displayWidth":1080,"displayHeight":2400}"#,
+        r#"{"version":11,"type":"pointer-swipe","helperEpoch":"73001","sessionGeneration":"6","startX":0.1,"startY":0.2,"endX":0.8,"endY":0.9,"displayWidth":1080,"displayHeight":2400,"durationMs":320}"#,
+        r#"{"version":11,"type":"key-input","helperEpoch":"73001","key":"home"}"#,
+        r#"{"version":11,"type":"text-input","sessionGeneration":"7","text":"never type this"}"#,
+        r#"{"version":11,"type":"phone-target","helperEpoch":"73001","sessionGeneration":"8","requestId":"stale-target","expiresAtUnixMs":1750000000001,"target":"android.navigate.home"}"#,
     ];
-    let expected = [format!(
-        r#"{{"version":{PROTOCOL_VERSION},"type":"protocol-error","reason":"invalid-command"}}"#
-    )];
 
-    for command in invalid_commands {
-        assert_eq!(wire_lines(engine.handle_line(command)), expected);
+    for command in commands {
+        let events = wire_lines(engine.handle_line(command));
+        assert_eq!(events.len(), 1);
+        let event: serde_json::Value =
+            serde_json::from_str(&events[0]).expect("typed stale-session result");
+        assert_eq!(event["type"], "action-result");
+        assert_eq!(event["outcome"], "stale-session");
+        assert_eq!(event["helperEpoch"], HELPER_EPOCH);
+        assert_eq!(event["sessionGeneration"], "7");
     }
 
     let backend = engine.into_backend();
     assert!(backend.pointer_taps.is_empty());
     assert!(backend.pointer_swipes.is_empty());
+    assert!(backend.keys.is_empty());
     assert!(backend.texts.is_empty());
+    assert!(backend.phone_targets.is_empty());
 }
 
 #[test]
-fn malformed_unknown_and_mismatched_commands_fail_without_echoing_input() {
-    let mut engine = ProtocolEngine::new(FakePairingBackend::default());
-    let secret = "do-not-echo";
+fn typed_phone_targets_are_correlated_and_forwarded_with_identity() {
+    let mut engine = engine(FakePairingBackend::default());
+    for (request_id, target) in [
+        ("browser", r#""android.browser.default""#),
+        ("home", r#""android.navigate.home""#),
+        (
+            "package",
+            r#"{"type":"android.app.launch","package":"com.example.notes"}"#,
+        ),
+    ] {
+        assert_eq!(
+            wire_lines(engine.handle_line(&format!(
+                r#"{{"version":11,"type":"phone-target","helperEpoch":"{HELPER_EPOCH}","sessionGeneration":"0","requestId":"{request_id}","expiresAtUnixMs":1750000000001,"target":{target}}}"#
+            ))),
+            [format!(
+                r#"{{"version":11,"type":"action-result","helperEpoch":"{HELPER_EPOCH}","sessionGeneration":"0","requestId":"{request_id}","outcome":"completed"}}"#
+            )]
+        );
+    }
 
+    let backend = engine.into_backend();
+    assert_eq!(backend.phone_targets.len(), 3);
+    assert_eq!(backend.phone_targets[0].0, PhoneTarget::BrowserDefault);
+    assert_eq!(backend.phone_targets[1].0, PhoneTarget::NavigateHome);
+    assert_eq!(
+        backend.phone_targets[2].0,
+        PhoneTarget::AppLaunch {
+            package: "com.example.notes".to_owned()
+        }
+    );
+}
+
+#[test]
+fn action_only_failure_is_typed_and_does_not_emit_a_lifecycle_failure() {
+    let mut engine = engine(FakePairingBackend {
+        phone_target_failure: Some(PhoneTargetFailure::ActionOnly(
+            ActionFailureCode::TargetFailed,
+        )),
+        ..FakePairingBackend::default()
+    });
+
+    assert_eq!(
+        wire_lines(engine.handle_line(
+            r#"{"version":11,"type":"phone-target","helperEpoch":"73001","sessionGeneration":"0","requestId":"failed-browser","expiresAtUnixMs":1750000000001,"target":"android.browser.default"}"#,
+        )),
+        [r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"0","requestId":"failed-browser","outcome":"failed","notificationCode":"target-failed"}"#]
+    );
+}
+
+#[test]
+fn proven_transport_failure_is_a_separate_generation_advancing_lifecycle_event() {
+    let mut engine = engine(FakePairingBackend {
+        phone_target_failure: Some(PhoneTargetFailure::Lifecycle(
+            FailureReason::Disconnected,
+        )),
+        ..FakePairingBackend::default()
+    });
+
+    assert_eq!(
+        wire_lines(engine.handle_line(
+            r#"{"version":11,"type":"phone-target","helperEpoch":"73001","sessionGeneration":"0","requestId":"lost-device","expiresAtUnixMs":1750000000001,"target":"android.navigate.home"}"#,
+        )),
+        [
+            r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"0","requestId":"lost-device","outcome":"failed","notificationCode":"target-failed"}"#,
+            r#"{"version":11,"type":"lifecycle-failure","helperEpoch":"73001","sessionGeneration":"1","reason":"disconnected"}"#,
+        ]
+    );
+}
+
+#[test]
+fn malformed_or_unknown_targets_fail_closed_before_android_work() {
+    let mut engine = engine(FakePairingBackend::default());
+    for target in [
+        r#""not-declared""#,
+        r#"{"type":"android.app.launch","package":"bad package"}"#,
+        r#"{"type":"adb.command","command":"shell id"}"#,
+    ] {
+        assert_eq!(
+            wire_lines(engine.handle_line(&format!(
+                r#"{{"version":11,"type":"phone-target","helperEpoch":"{HELPER_EPOCH}","sessionGeneration":"0","requestId":"invalid-target","expiresAtUnixMs":1750000000001,"target":{target}}}"#
+            ))),
+            [format!(
+                r#"{{"version":11,"type":"action-result","helperEpoch":"{HELPER_EPOCH}","sessionGeneration":"0","requestId":"invalid-target","outcome":"failed","notificationCode":"invalid-target"}}"#
+            )]
+        );
+    }
+    assert!(engine.into_backend().phone_targets.is_empty());
+}
+
+#[test]
+fn malformed_unknown_and_v10_commands_fail_without_echoing_input() {
+    let mut engine = engine(FakePairingBackend::default());
+    let secret = "do-not-echo";
     let malformed = wire_lines(engine.handle_line(&format!(r#"{{"secret":"{secret}"}}"#)));
-    let unknown = wire_lines(engine.handle_line(r#"{"version":10,"type":"unknown"}"#));
-    let mismatched = wire_lines(engine.handle_line(r#"{"version":11,"type":"start-qr-pairing"}"#));
+    let unknown = wire_lines(engine.handle_line(
+        r#"{"version":11,"type":"unknown","helperEpoch":"73001"}"#,
+    ));
+    let retired = wire_lines(engine.handle_line(
+        r#"{"version":10,"type":"start-qr-pairing","helperEpoch":"73001"}"#,
+    ));
 
     assert_eq!(
         malformed,
-        [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"protocol-error","reason":"invalid-command"}}"#
-        )]
+        [r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"invalid-command"}"#]
     );
     assert_eq!(unknown, malformed);
     assert_eq!(
-        mismatched,
-        [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"protocol-error","reason":"version-mismatch"}}"#
-        )]
+        retired,
+        [r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"version-mismatch"}"#]
     );
     assert!(malformed.iter().all(|event| !event.contains(secret)));
 }
 
 #[test]
-fn backend_failures_are_fixed_categories_not_raw_messages() {
-    struct UnavailableBackend;
-
-    impl PairingBackend for UnavailableBackend {
-        fn start_qr_pairing(&mut self) -> Result<QrPresentation, FailureReason> {
-            Err(FailureReason::DependencyUnavailable)
-        }
-
-        fn cancel_pairing(&mut self) {}
-
-        fn submit_manual_code(&mut self, _code: &str) -> Result<(), FailureReason> {
-            Err(FailureReason::Unauthorized)
-        }
-    }
-
-    let mut engine = ProtocolEngine::new(UnavailableBackend);
-
-    assert_eq!(
-        wire_lines(engine.handle_line(r#"{"version":10,"type":"start-qr-pairing"}"#)),
-        [format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"failure","reason":"dependency-unavailable"}}"#
-        )]
-    );
-}
-
-#[test]
-fn session_started_reports_only_bounded_physical_dimensions() {
+fn session_started_reports_two_part_identity_and_bounded_dimensions() {
     assert_eq!(
         Event::SessionStarted {
+            helper_epoch: HELPER_EPOCH.to_owned(),
+            session_generation: "9".to_owned(),
             physical_width_mm: Some(70),
             physical_height_mm: Some(157),
         }
         .to_line(),
-        format!(
-            r#"{{"version":{PROTOCOL_VERSION},"type":"session-started","physicalWidthMm":70,"physicalHeightMm":157}}"#
-        )
+        r#"{"version":11,"type":"session-started","helperEpoch":"73001","sessionGeneration":"9","physicalWidthMm":70,"physicalHeightMm":157}"#
     );
 }

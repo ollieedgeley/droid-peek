@@ -4,9 +4,17 @@ import QtTest
 TestCase {
     name: "PanelState"
 
-    function test_knownStates_areStable() {
-        var knownStates = ["unpaired", "qr-waiting", "pairing", "ready", "disconnected", "unauthorized", "dependency-unavailable"]
-        compare(knownStates.indexOf("ready") >= 0, true)
-        compare(knownStates.indexOf("failed"), -1)
+    function test_canonical_states_are_stable() {
+        var knownStates = [
+            "closed",
+            "setup",
+            "recovering",
+            "interactive",
+            "management"
+        ]
+
+        compare(knownStates.length, 5)
+        compare(knownStates.indexOf("ready"), -1)
+        compare(knownStates.indexOf("unpaired"), -1)
     }
 }

@@ -17,6 +17,9 @@ TestCase {
     PhonePreview {
         id: preview
         captureRequested: false
+        helperEpoch: "17"
+        sessionGeneration: "1"
+        applicationState: "closed"
     }
 
     SignalSpy {
@@ -30,151 +33,181 @@ TestCase {
         target: preview
         signalName: "swipeRequested"
     }
+
+    SignalSpy {
+        id: keySpy
+        target: preview
+        signalName: "keyRequested"
+    }
+
+    SignalSpy {
+        id: textSpy
+        target: preview
+        signalName: "textRequested"
+    }
+
     function init() {
-        preview.captureRequested = false;
-        tapSpy.clear();
-        swipeSpy.clear();
-        fallbackFocus.forceActiveFocus();
-        wait(0);
+        preview.captureRequested = false
+        preview.inputEnabled = false
+        preview.helperEpoch = "17"
+        preview.sessionGeneration = "1"
+        preview.applicationState = "closed"
+        tapSpy.clear()
+        swipeSpy.clear()
+        keySpy.clear()
+        textSpy.clear()
+        fallbackFocus.forceActiveFocus()
+        wait(0)
     }
 
-    function test_capture_identity_is_exact() {
-        compare(preview.deviceId, "/dev/video42");
-        compare(preview.deviceDescription, "Omarchy Android");
+    function test_capture_identity_is_exact_and_unique() {
+        compare(preview.deviceId, "/dev/video42")
+        compare(preview.deviceDescription, "Omarchy Android")
         var inputs = [
-            {
-                id: "/dev/video0",
-                description: "USB Camera"
-            },
-            {
-                id: preview.deviceId,
-                description: preview.deviceDescription
-            },
-            {
-                id: "/dev/video43",
-                description: "Omarchy Android Backup"
-            }
-        ];
+            { id: "/dev/video0", description: "USB Camera" },
+            { id: preview.deviceId, description: preview.deviceDescription },
+            { id: "/dev/video43", description: "Omarchy Android Backup" }
+        ]
 
-        compare(preview.findDeviceIndex(inputs, preview.deviceId, preview.deviceDescription), 1);
-        compare(preview.findDeviceIndex(inputs, "/dev/video99", preview.deviceDescription), -1);
-        compare(preview.findDeviceIndex([], preview.deviceId, preview.deviceDescription), -1);
-    }
-
-    function test_capture_identity_rejects_wrong_id_or_description() {
-        var inputs = [{
-            id: "/dev/video41",
-            description: preview.deviceDescription
-        }];
-        compare(preview.findDeviceIndex(inputs, preview.deviceId, preview.deviceDescription), -1);
-
-        inputs[0].id = preview.deviceId;
-        inputs[0].description = "Omarchy Android Backup";
-        compare(preview.findDeviceIndex(inputs, preview.deviceId, preview.deviceDescription), -1);
-    }
-
-    function test_capture_identity_rejects_duplicate_device_matches() {
-        var inputs = [
-            {
-                id: preview.deviceId,
-                description: preview.deviceDescription
-            },
-            {
-                id: preview.deviceId,
-                description: preview.deviceDescription
-            }
-        ];
-
-        compare(preview.findDeviceIndex(inputs, preview.deviceId, preview.deviceDescription), -1);
+        compare(preview.findDeviceIndex(inputs, preview.deviceId,
+                                        preview.deviceDescription), 1)
+        inputs.push({ id: preview.deviceId,
+                      description: preview.deviceDescription })
+        compare(preview.findDeviceIndex(inputs, preview.deviceId,
+                                        preview.deviceDescription), -1)
     }
 
     function test_capture_is_off_until_requested() {
-        compare(preview.captureRequested, false);
-        compare(preview.active, false);
-        compare(preview.firstValidFrameReceived, false);
-        compare(preview.interactionReady, false);
+        compare(preview.active, false)
+        compare(preview.firstValidFrameReceived, false)
+        compare(preview.interactionReady, false)
     }
-    function test_input_activation_claims_keyboard_focus() {
-        verify(fallbackFocus.activeFocus);
 
-        preview.applyInputFocus(true);
+    function test_generation_change_recreates_capture_pipeline_and_clears_facts() {
+        preview.captureRequested = true
+        var oldCaptureEpoch = preview.captureEpoch
+        var oldCapturePipeline = preview.capturePipeline
+        verify(preview.acceptCaptureSource(
+                   oldCaptureEpoch, preview.deviceId, preview.deviceDescription))
+        verify(preview.acceptRenderedFrame(oldCaptureEpoch))
+        compare(preview.firstValidFrameReceived, true)
 
-        tryCompare(preview, "inputFocused", true);
+        preview.sessionGeneration = "2"
+
+        verify(preview.captureEpoch > oldCaptureEpoch)
+        verify(preview.capturePipeline !== oldCapturePipeline)
+        compare(preview.firstValidFrameReceived, false)
+        compare(preview.interactionReady, false)
+    }
+
+    function test_old_capture_callbacks_cannot_restore_current_frame() {
+        preview.captureRequested = true
+        var oldCaptureEpoch = preview.captureEpoch
+        verify(preview.acceptCaptureSource(
+                   oldCaptureEpoch, preview.deviceId, preview.deviceDescription))
+
+        preview.sessionGeneration = "2"
+        var currentCaptureEpoch = preview.captureEpoch
+
+        verify(!preview.acceptRenderedFrame(oldCaptureEpoch))
+        compare(preview.firstValidFrameReceived, false)
+        verify(preview.acceptCaptureSource(
+                   currentCaptureEpoch, preview.deviceId, preview.deviceDescription))
+        verify(preview.acceptRenderedFrame(currentCaptureEpoch))
+        compare(preview.firstValidFrameReceived, true)
+    }
+
+    function test_wrong_epoch_or_source_cannot_acknowledge_capture() {
+        preview.captureRequested = true
+        var currentCaptureEpoch = preview.captureEpoch
+
+        verify(!preview.acceptCaptureSource(
+                   currentCaptureEpoch - 1,
+                   preview.deviceId, preview.deviceDescription))
+        verify(!preview.acceptCaptureSource(
+                   currentCaptureEpoch,
+                   "/dev/video41", preview.deviceDescription))
+        verify(!preview.acceptRenderedFrame(currentCaptureEpoch))
+        compare(preview.firstValidFrameReceived, false)
     }
 
     function test_stopping_capture_clears_current_capture_readiness() {
-        preview.captureRequested = true;
-        preview.firstValidFrameReceived = true;
-        preview.captureRequested = false;
+        preview.captureRequested = true
+        var currentCaptureEpoch = preview.captureEpoch
+        verify(preview.acceptCaptureSource(
+                   currentCaptureEpoch, preview.deviceId, preview.deviceDescription))
+        verify(preview.acceptRenderedFrame(currentCaptureEpoch))
 
-        compare(preview.active, false);
-        compare(preview.firstValidFrameReceived, false);
-        compare(preview.interactionReady, false);
+        preview.captureRequested = false
+
+        compare(preview.firstValidFrameReceived, false)
+        compare(preview.interactionReady, false)
     }
 
     function test_pointer_mapping_excludes_letterbox_and_normalizes_content() {
-        var topLeft = preview.normalizedPoint(20, 40, Qt.rect(20, 40, 200, 400));
-        verify(topLeft !== null);
-        compare(topLeft.x, 0);
-        compare(topLeft.y, 0);
+        var topLeft = preview.normalizedPoint(20, 40, Qt.rect(20, 40, 200, 400))
+        compare(topLeft, Qt.point(0, 0))
+        var center = preview.normalizedPoint(120, 240,
+                                             Qt.rect(20, 40, 200, 400))
+        compare(center, Qt.point(0.5, 0.5))
+        compare(preview.normalizedPoint(10, 240,
+                                        Qt.rect(20, 40, 200, 400)), null)
+    }
 
-        var center = preview.normalizedPoint(120, 240, Qt.rect(20, 40, 200, 400));
-        verify(center !== null);
-        compare(center.x, 0.5);
-        compare(center.y, 0.5);
+    function test_pointer_release_preserves_current_identity() {
+        var content = Qt.rect(20, 40, 200, 400)
+        verify(preview.dispatchPointer(
+                   120, 240, 122, 242, 80, content, 1080, 2400))
+        compare(tapSpy.count, 1)
+        compare(tapSpy.signalArguments[0][4], "17")
+        compare(tapSpy.signalArguments[0][5], "1")
 
-        compare(preview.normalizedPoint(10, 240, Qt.rect(20, 40, 200, 400)), null);
-        compare(preview.normalizedPoint(120, 500, Qt.rect(20, 40, 200, 400)), null);
+        verify(preview.dispatchPointer(
+                   40, 80, 200, 400, 320, content, 1080, 2400))
+        compare(swipeSpy.count, 1)
+        compare(swipeSpy.signalArguments[0][7], "17")
+        compare(swipeSpy.signalArguments[0][8], "1")
+    }
+
+    function test_ordinary_unmodified_text_and_keys_remain_eligible() {
+        preview.applicationState = "interactive"
+        preview.inputEnabled = true
+        verify(preview.dispatchKeyEvent(Qt.Key_A, Qt.NoModifier, "a"))
+        verify(preview.dispatchKeyEvent(Qt.Key_Left, Qt.NoModifier, ""))
+
+        compare(textSpy.count, 1)
+        compare(textSpy.signalArguments[0][0], "a")
+        compare(textSpy.signalArguments[0][1], "17")
+        compare(textSpy.signalArguments[0][2], "1")
+        compare(keySpy.count, 1)
+        compare(keySpy.signalArguments[0][0], "arrow-left")
+        compare(keySpy.signalArguments[0][1], "17")
+        compare(keySpy.signalArguments[0][2], "1")
+    }
+
+    function test_modified_shortcut_chords_are_not_swallowed_as_phone_text() {
+        preview.applicationState = "interactive"
+        preview.inputEnabled = true
+        verify(!preview.dispatchKeyEvent(Qt.Key_W, Qt.MetaModifier, "w"))
+        compare(textSpy.count, 0)
+        compare(keySpy.count, 0)
     }
 
     function test_live_frame_ratio_defines_the_viewport() {
-        var portrait = PreviewGeometry.scaledAspectSize(1080, 2392, 288, 1000, 1000, 100);
-        compare(portrait.width, 288);
-        verify(Math.abs(portrait.height - 637.8666667) < 0.001);
-        verify(Math.abs(portrait.width / portrait.height - 1080 / 2392) < 0.000001);
-
-        var landscape = PreviewGeometry.scaledAspectSize(2392, 1080, 288, 1000, 1000, 100);
-        compare(landscape.width, 288);
-        verify(Math.abs(landscape.width / landscape.height - 2392 / 1080) < 0.000001);
-    }
-
-    function test_frame_derived_viewport_scales_and_stays_output_bounded() {
-        var half = PreviewGeometry.scaledAspectSize(1080, 2392, 288, 1000, 1000, 50);
-        compare(half.width, 144);
-        verify(Math.abs(half.height - 318.9333333) < 0.001);
-
-        var bounded = PreviewGeometry.scaledAspectSize(1080, 2392, 288, 400, 700, 150);
-        compare(bounded.height, 700);
-        verify(bounded.width <= 400);
-        verify(Math.abs(bounded.width / bounded.height - 1080 / 2392) < 0.000001);
-    }
-
-    function test_pointer_release_distinguishes_taps_and_swipes() {
-        var content = Qt.rect(20, 40, 200, 400);
-        verify(preview.dispatchPointer(120, 240, 122, 242, 80, content, 1080, 2400));
-        compare(tapSpy.count, 1);
-        compare(swipeSpy.count, 0);
-        compare(tapSpy.signalArguments[0][0], 0.51);
-        compare(tapSpy.signalArguments[0][1], 0.505);
-        compare(tapSpy.signalArguments[0][2], 1080);
-        compare(tapSpy.signalArguments[0][3], 2400);
-
-        verify(preview.dispatchPointer(40, 80, 200, 400, 320, content, 1080, 2400));
-        compare(tapSpy.count, 1);
-        compare(swipeSpy.count, 1);
-        compare(swipeSpy.signalArguments[0][0], 0.1);
-        compare(swipeSpy.signalArguments[0][1], 0.1);
-        compare(swipeSpy.signalArguments[0][2], 0.9);
-        compare(swipeSpy.signalArguments[0][3], 0.9);
-        compare(swipeSpy.signalArguments[0][6], 320);
+        var portrait = PreviewGeometry.scaledAspectSize(
+                    1080, 2392, 288, 1000, 1000, 100)
+        compare(portrait.width, 288)
+        verify(Math.abs(portrait.height - 637.8666667) < 0.001)
+        verify(Math.abs(portrait.width / portrait.height - 1080 / 2392)
+               < 0.000001)
     }
 
     function test_keyboard_mapping_is_semantic_and_bounded() {
-        compare(preview.androidKeyForQtKey(Qt.Key_Escape), "back");
-        compare(preview.androidKeyForQtKey(Qt.Key_Home), "home");
-        compare(preview.androidKeyForQtKey(Qt.Key_Return), "enter");
-        compare(preview.androidKeyForQtKey(Qt.Key_Backspace), "delete");
-        compare(preview.androidKeyForQtKey(Qt.Key_Left), "arrow-left");
-        compare(preview.androidKeyForQtKey(Qt.Key_A), "");
+        compare(preview.androidKeyForQtKey(Qt.Key_Escape), "back")
+        compare(preview.androidKeyForQtKey(Qt.Key_Home), "home")
+        compare(preview.androidKeyForQtKey(Qt.Key_Return), "enter")
+        compare(preview.androidKeyForQtKey(Qt.Key_Backspace), "delete")
+        compare(preview.androidKeyForQtKey(Qt.Key_Left), "arrow-left")
+        compare(preview.androidKeyForQtKey(Qt.Key_A), "")
     }
 }

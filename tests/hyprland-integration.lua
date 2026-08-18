@@ -1,247 +1,193 @@
-local integration = assert(arg[1], "integration path")
-local calls = {}
-local close_dispatchers = {}
-local executed_commands = {}
-local timers = {}
-local timer_state_changes = {}
+local supplied_path = assert(arg[1], "integration path")
+local integration_directory = supplied_path:match("^(.*)/[^/]+$") or "."
+local integration = integration_directory .. "/phone-bindings.lua"
+
+local bindings = {}
+local submaps = {}
 local dispatches = {}
+local execution_events = {}
+local active_submap = nil
+
+local function record_command(command)
+  table.insert(execution_events, { kind = "command", command = command })
+end
 
 o = {
-  shell_quote = function(value)
-    return "'" .. value .. "'"
+  bind = function()
+    error("phone bindings must not intercept desktop bindings")
   end,
-  bind = function(keys, description, dispatcher, options)
-    table.insert(calls, {
+  shell_quote = function(value)
+    return "[" .. value .. "]"
+  end,
+}
+
+hl = {
+  bind = function(keys, dispatcher, options)
+    table.insert(bindings, {
+      submap = active_submap,
       keys = keys,
-      description = description,
       dispatcher = dispatcher,
       options = options,
     })
   end,
-}
-hl = {
-  dsp = {
-    window = {
-      close = function()
-        local dispatcher = {}
-        table.insert(close_dispatchers, dispatcher)
-        return dispatcher
-      end,
-    },
-  },
-  exec_cmd = function(command)
-    table.insert(executed_commands, command)
-  end,
-  timer = function(callback, options)
-    local timer = {
-      callback = callback,
-      options = options,
-      enabled = true,
-    }
-    timer.set_enabled = function(self_or_enabled, maybe_enabled)
-      local enabled = maybe_enabled
-      if enabled == nil then
-        enabled = self_or_enabled
-      end
-      timer.enabled = enabled
-      table.insert(timer_state_changes, {
-        timer = timer,
-        enabled = enabled,
-      })
-    end
-    table.insert(timers, timer)
-    return timer
+  define_submap = function(name, callback)
+    table.insert(submaps, name)
+    local previous_submap = active_submap
+    active_submap = name
+    callback()
+    active_submap = previous_submap
   end,
   dispatch = function(dispatcher)
     table.insert(dispatches, dispatcher)
+    if dispatcher.kind == "command" then
+      record_command(dispatcher.command)
+    elseif dispatcher.kind == "submap" then
+      table.insert(execution_events, { kind = "submap", name = dispatcher.name })
+    end
   end,
+  exec_cmd = record_command,
+  dsp = {
+    exec_cmd = function(command)
+      return { kind = "command", command = command }
+    end,
+    submap = function(name)
+      return { kind = "submap", name = name }
+    end,
+  },
 }
 
-local original_getenv = os.getenv
+local desktop_bind = o.bind
+local now_seconds = 1700000000
 local original_time = os.time
-os.getenv = function(name)
-  if name == "HOME" then
-    return "/home/test"
-  end
-  if name == "XDG_RUNTIME_DIR" then
-    return "/tmp"
-  end
-  return original_getenv(name)
-end
 os.time = function()
-  return 1700000000
+  return now_seconds
 end
+
+local function decode_base64url(encoded)
+  local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+  local output = {}
+  local buffer = 0
+  local buffered_bits = 0
+
+  for index = 1, #encoded do
+    local value = assert(
+      alphabet:find(encoded:sub(index, index), 1, true),
+      "envelope is not base64url"
+    ) - 1
+    buffer = buffer * 64 + value
+    buffered_bits = buffered_bits + 6
+    while buffered_bits >= 8 do
+      buffered_bits = buffered_bits - 8
+      local divisor = 2 ^ buffered_bits
+      table.insert(output, string.char(math.floor(buffer / divisor) % 256))
+      buffer = buffer % divisor
+    end
+  end
+
+  return table.concat(output)
+end
+
+local function command_envelope(command)
+  local encoded = command:match(
+    "^omarchy%-shell ollie%.android phone%-target %[([A-Za-z0-9_-]+)%]$"
+  )
+  assert(encoded ~= nil, "target must use the phone-target shell endpoint")
+  assert(not encoded:find("=", 1, true), "base64url envelope must omit padding")
+  return decode_base64url(encoded)
+end
+
+local function json_string(json, field)
+  return json:match('"' .. field .. '"%s*:%s*"([^"]+)"')
+end
+
+local function json_integer(json, field)
+  local value = json:match('"' .. field .. '"%s*:%s*(%d+)')
+  return value and tonumber(value) or nil
+end
+
+local wrong_name_api = dofile(integration)
+local wrong_name_ok = pcall(wrong_name_api.define_submap, "other-submap", function() end)
+assert(not wrong_name_ok, "only the named omarchy-android submap is supported")
+assert(#submaps == 0, "an invalid submap name must not reach Hyprland")
 
 local android = dofile(integration)
-local installed_bind = o.bind
-local installed_close_factory = hl.dsp.window.close
-assert(dofile(integration) == android)
-android.configure({
-  routes = {
-    ["omarchy.android.panel.toggle"] = "android.panel.toggle",
-    ["omarchy.browser"] = "android.browser.default",
-    ["omarchy.window.close"] = "android.navigate.home",
-  },
-  customBindings = {},
-})
+assert(type(android) == "table", "integration must return the phone-binding API")
+assert(type(android.define_submap) == "function")
+assert(type(android.bind) == "function")
+assert(type(android.close_panel) == "function")
+assert(android.configure == nil, "retired routes configuration must not remain")
+assert(android.install_custom_bindings == nil, "retired customBindings API must not remain")
+assert(android.routes == nil, "the API must not expose a routing table")
+assert(o.bind == desktop_bind, "loading phone bindings must not wrap o.bind")
 
-assert(o.bind == installed_bind, "duplicate loading must not wrap bindings twice")
-assert(hl.dsp.window.close == installed_close_factory, "duplicate loading must not wrap close twice")
+android.define_submap("omarchy-android", function()
+  android.bind("SUPER + ESCAPE", "Close Android panel", android.close_panel)
+  android.bind("SUPER + SHIFT + B", "Browser", "android.browser.default")
+  android.bind("SUPER + W", "Home", "android.navigate.home")
+  android.bind("SUPER + ALT + P", "Package", {
+    type = "android.app.launch",
+    package = "com.example.files",
+  })
+  android.bind("SUPER + U", "Unsupported target", "android.unsupported")
+end)
 
-local stock_close = hl.dsp.window.close()
-local custom_close = hl.dsp.window.close()
-local nil_description_close = hl.dsp.window.close()
-local untagged = function() end
-local close_options = { locked = true, repeatable = false }
-local browser = { omarchy = "browser" }
-local private_browser = { omarchy = "browser --private" }
-local terminal = { omarchy = "terminal" }
-local browser_options = { locked = true }
-local android_panel = { omarchy = "toggle-android-panel" }
-local ambiguous_android_panel = { omarchy = "toggle-android-panel --extra" }
-local extra_field_android_panel = { omarchy = "toggle-android-panel", extra = true }
-local nil_description_android_panel = { omarchy = "toggle-android-panel" }
-local panel_options = { locked = true, repeatable = false }
-
-assert(stock_close ~= custom_close, "close factory must return a fresh dispatcher")
-assert(stock_close ~= nil_description_close, "close factory must return a fresh dispatcher")
-assert(custom_close ~= nil_description_close, "close factory must return a fresh dispatcher")
-assert(type(stock_close) == "table", "stock close must be opaque before wrapping")
-assert(type(custom_close) == "table", "custom close must be opaque before wrapping")
-assert(type(nil_description_close) == "table", "nil-description close must be opaque before wrapping")
-assert(close_dispatchers[1] == stock_close, "stock close must be tagged without replacing it")
-assert(close_dispatchers[2] == custom_close, "custom close must be tagged without replacing it")
-assert(
-  close_dispatchers[3] == nil_description_close,
-  "nil-description close must be tagged without replacing it"
-)
-
-o.bind("SUPER + W", "Close window", stock_close, close_options)
-o.bind("SUPER + SHIFT + W", "Close custom window", custom_close)
-local nil_description_ok, nil_description_error = pcall(
-  o.bind,
-  "SUPER + ALT + W",
-  nil,
-  nil_description_close
-)
-assert(
-  nil_description_ok,
-  "nil-description close must register without error: " .. tostring(nil_description_error)
-)
-o.bind("SUPER + X", "Arbitrary function", untagged)
-o.bind("SUPER + P", "Toggle Android panel", android_panel, panel_options)
-o.bind("SUPER + SHIFT + P", "Ambiguous Android panel", ambiguous_android_panel)
-o.bind("SUPER + CTRL + P", "Extra-field Android panel", extra_field_android_panel)
-local nil_description_panel_ok, nil_description_panel_error = pcall(
-  o.bind,
-  "SUPER + ALT + P",
-  nil,
-  nil_description_android_panel
-)
-assert(
-  nil_description_panel_ok,
-  "nil-description panel must register without error: " .. tostring(nil_description_panel_error)
-)
-o.bind("SUPER + SHIFT + B", "Browser", browser, browser_options)
-o.bind("SUPER + SHIFT + ALT + B", "Browser (private)", private_browser)
-o.bind("SUPER + RETURN", "Terminal", terminal)
-assert(o.bind == installed_bind, "loader must remain active for later user bindings")
-
-assert(#calls == 11, "each binding must be registered exactly once")
-assert(type(calls[1].dispatcher) == "function")
-assert(calls[1].dispatcher ~= stock_close, "stock close must be wrapped")
-assert(type(calls[2].dispatcher) == "function")
-assert(calls[2].dispatcher ~= custom_close, "custom close must be wrapped")
-assert(type(calls[3].dispatcher) == "function")
-assert(calls[3].dispatcher ~= nil_description_close, "nil-description close must be wrapped")
-assert(calls[1].dispatcher ~= calls[2].dispatcher, "each close must retain its own fallback")
-assert(calls[1].dispatcher ~= calls[3].dispatcher, "each close must be wrapped independently")
-assert(calls[2].dispatcher ~= calls[3].dispatcher, "each close must be wrapped independently")
-assert(calls[1].options ~= close_options, "close route options must be copied")
-assert(calls[1].options.locked == true, "close route options must be preserved")
-assert(calls[1].options.dont_inhibit == true, "configured close must bypass inhibition")
-assert(close_options.dont_inhibit == nil, "caller options must remain unchanged")
-assert(calls[3].description == nil, "nil close description must be preserved")
-assert(calls[4].dispatcher == untagged, "untagged functions must remain untouched")
-
-assert(calls[5].keys == "SUPER + P")
-assert(calls[5].description == "Toggle Android panel")
-assert(calls[5].dispatcher == "omarchy-shell ollie.android toggle")
-assert(calls[5].options ~= panel_options, "panel bypass must not mutate caller options")
-assert(calls[5].options.locked == true, "panel locked option must be preserved")
-assert(calls[5].options.repeatable == false, "panel repeatable option must be preserved")
-assert(calls[5].options.dont_inhibit == true, "panel toggle must bypass shortcut inhibition")
-assert(panel_options.dont_inhibit == nil, "caller options must remain unchanged")
-assert(
-  calls[6].dispatcher == ambiguous_android_panel,
-  "ambiguous panel declarations must remain untouched"
-)
-assert(
-  calls[7].dispatcher == extra_field_android_panel,
-  "extra-field panel declarations must preserve the exact original object"
-)
-assert(calls[8].dispatcher == "omarchy-shell ollie.android toggle")
-assert(calls[8].description == nil, "nil panel description must be preserved")
-assert(calls[8].options.dont_inhibit == true, "nil panel options must gain inhibition bypass")
-
-assert(calls[9].keys == "SUPER + SHIFT + B")
-assert(calls[9].description == "Browser / Android default browser")
-assert(type(calls[9].dispatcher) == "string")
-assert(calls[9].dispatcher:match("omarchy%-android%-action' omarchy%-browser '' omarchy%-launch%-browser$"))
-assert(calls[9].options ~= browser_options, "Android route options must be copied")
-assert(calls[9].options.locked == true, "Android route options must be preserved")
-assert(calls[9].options.dont_inhibit == true, "configured Android routes must bypass inhibition")
-assert(browser_options.dont_inhibit == nil, "caller options must remain unchanged")
-assert(calls[10].dispatcher == private_browser, "private browser must remain untouched")
-assert(calls[11].dispatcher == terminal, "unsupported bindings must remain untouched")
-assert(#executed_commands == 0, "panel bindings must not launch asynchronous commands")
-assert(#timers == 0, "panel bindings must not start asynchronous timers")
-
-local marker = "/tmp/omarchy-android-fallback-1700000000-1"
-local function marker_exists()
-  local file = io.open(marker, "r")
-  if file == nil then
-    return false
-  end
-  file:close()
-  return true
+assert(#submaps == 1, "the API must define exactly one submap")
+assert(submaps[1] == "omarchy-android")
+assert(#bindings == 5, "only declared phone bindings may be registered")
+for _, binding in ipairs(bindings) do
+  assert(binding.submap == "omarchy-android", "phone bindings must stay inside their submap")
+  assert(type(binding.dispatcher) == "function", "deadlines must be created at dispatch time")
+  assert(type(binding.options) == "table")
+  assert(type(binding.options.description) == "string")
 end
+assert(bindings[1].options.description == "Close Android panel")
+assert(bindings[2].options.description == "Browser")
 
-local function write_marker()
-  local file = assert(io.open(marker, "w"))
-  file:close()
+for _, binding in ipairs(bindings) do
+  assert(binding.keys ~= "SUPER + Q", "unsupported desktop chords must remain inert")
 end
+assert(o.bind == desktop_bind, "defining the submap must not intercept desktop bindings")
 
-write_marker()
-calls[1].dispatcher()
+local duplicate_ok = pcall(android.define_submap, "omarchy-android", function() end)
+assert(not duplicate_ok, "the API must not define a second submap")
+assert(#submaps == 1, "a duplicate definition must not reach Hyprland")
 
-assert(#executed_commands == 1, "close must launch one semantic action")
-local expected_close_command = table.concat({
-  "/usr/bin/timeout --signal=KILL 7",
-  "'/home/test/.local/bin/omarchy-android-action'",
-  "android-home",
-  "''",
-  "/usr/bin/touch",
-  "'" .. marker .. "'",
-  "|| true",
-}, " ")
+bindings[1].dispatcher()
+assert(#execution_events == 2, "close must request panel close and reset synchronously")
+assert(execution_events[1].kind == "submap")
+assert(execution_events[1].name == "reset")
+assert(execution_events[2].kind == "command")
+assert(execution_events[2].command == "omarchy-shell ollie.android close")
+
+now_seconds = 1700000030
+bindings[2].dispatcher()
+local browser_json = command_envelope(execution_events[3].command)
+assert(json_string(browser_json, "target") == "android.browser.default")
+assert(json_integer(browser_json, "expiresAtUnixMs") == 1700000032000)
+local first_request_id = json_string(browser_json, "requestId")
+assert(first_request_id ~= nil and first_request_id:match("^[A-Za-z0-9-]+$"))
+
+bindings[2].dispatcher()
+local repeated_json = command_envelope(execution_events[4].command)
 assert(
-  executed_commands[1] == expected_close_command,
-  "close must bound the dispatcher without converting ambiguous timeout into fallback"
+  json_string(repeated_json, "requestId") ~= first_request_id,
+  "each dispatch must have a fresh requestId"
 )
-assert(not marker_exists(), "stale fallback marker must be removed before launch")
-assert(#dispatches == 0, "fallback must not run while the semantic action is pending")
-assert(#timers == 1, "close must start one fallback watcher")
 
-timers[1].callback()
-assert(#dispatches == 0, "missing marker must not dispatch the fallback")
+bindings[4].dispatcher()
+local package_json = command_envelope(execution_events[5].command)
+assert(package_json:match('"target"%s*:%s*{'), "typed target must stay an object")
+assert(json_string(package_json, "type") == "android.app.launch")
+assert(json_string(package_json, "package") == "com.example.files")
+assert(json_integer(package_json, "expiresAtUnixMs") == 1700000032000)
 
-write_marker()
-timers[1].callback()
-assert(#dispatches == 1, "ineligible route must dispatch fallback exactly once")
-assert(dispatches[1] == stock_close, "fallback must dispatch the exact original close dispatcher")
-assert(not marker_exists(), "handled fallback marker must be removed")
-assert(not timers[1].enabled, "fallback watcher must disable itself after dispatch")
+local invalid_target_ok, invalid_target_error = pcall(bindings[5].dispatcher)
+assert(invalid_target_ok, tostring(invalid_target_error))
+local invalid_json = command_envelope(execution_events[6].command)
+assert(json_string(invalid_json, "target") == "android.unsupported")
+assert(
+  #execution_events == 6,
+  "an invalid target must be consumed by phone-target without desktop fallback"
+)
 
-os.getenv = original_getenv
 os.time = original_time

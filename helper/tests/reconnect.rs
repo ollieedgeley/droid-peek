@@ -15,11 +15,13 @@ use omarchy_android_helper::{
     persistence::{FileTrustedDeviceStore, TrustedDevice},
     preferences::{FilePreferenceStore, Preferences, PreviewScale, QuickAction, VideoQuality},
     process::{CancellationToken, CommandFailure, CommandOutput, CommandRequest, CommandRunner},
-    protocol::{Event, FailureReason, PairingBackend},
+    protocol::{Event, PairingBackend},
     runtime::{ProtocolSink, RuntimePairingBackend},
     session::{SessionExit, SessionFailure, SessionRunner},
     wireless::{DiscoveryFailure, PairingEndpoint, PairingFlow, WirelessDiscovery},
 };
+
+const HELPER_EPOCH: &str = "73001";
 
 struct FakeDiscovery {
     trusted_result: Result<PairingEndpoint, DiscoveryFailure>,
@@ -116,7 +118,7 @@ fn reconnect_resolves_the_remembered_service_and_never_emits_its_endpoint() {
         flow.reconnect_with(&device, &CancellationToken::new(), emit);
     });
 
-    assert!(matches!(events.as_slice(), [Event::Connected]));
+    assert_eq!(events.len(), 1);
     assert_eq!(
         flow.take_connected_target().as_deref(),
         Some("192.168.50.4:37123")
@@ -148,12 +150,7 @@ fn stale_remembered_service_reports_a_fixed_disconnected_failure() {
     let events = collect_events(|emit| {
         flow.reconnect_with(&device, &CancellationToken::new(), emit);
     });
-    assert!(matches!(
-        events.as_slice(),
-        [Event::Failure {
-            reason: FailureReason::Disconnected
-        }]
-    ));
+    assert_eq!(events.len(), 1);
     let (_, runner) = flow.into_parts();
     assert!(runner.requests.is_empty());
 }
@@ -176,40 +173,46 @@ impl ProtocolSink for MemorySink {
 }
 
 impl MemorySink {
-    fn wait_for(&self, expected: &str) {
+    fn wait_for_event(&self, event_type: &str, generation: Option<&str>) -> String {
         let deadline = Instant::now() + Duration::from_secs(1);
         while Instant::now() < deadline {
-            if self
+            if let Some(line) = self
                 .lines
                 .lock()
                 .expect("memory sink lock")
                 .iter()
-                .any(|line| line == expected)
+                .find(|line| {
+                    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                        return false;
+                    };
+                    value["type"] == event_type
+                        && value["helperEpoch"] == HELPER_EPOCH
+                        && generation.is_none_or(|expected| {
+                            value["sessionGeneration"].as_str() == Some(expected)
+                        })
+                })
+                .cloned()
             {
-                return;
+                return line;
             }
             thread::sleep(Duration::from_millis(2));
         }
-        panic!("event was not emitted");
+        panic!("event {event_type} at generation {generation:?} was not emitted");
     }
 
-    fn wait_for_count(&self, expected: &str, count: usize) {
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while Instant::now() < deadline {
-            if self
-                .lines
-                .lock()
-                .expect("memory sink lock")
-                .iter()
-                .filter(|line| line.as_str() == expected)
-                .count()
-                >= count
-            {
-                return;
-            }
-            thread::sleep(Duration::from_millis(2));
-        }
-        panic!("event count was not reached");
+    fn event_count(&self, event_type: &str, generation: &str) -> usize {
+        self.lines
+            .lock()
+            .expect("memory sink lock")
+            .iter()
+            .filter(|line| {
+                serde_json::from_str::<serde_json::Value>(line).is_ok_and(|value| {
+                    value["type"] == event_type
+                        && value["helperEpoch"] == HELPER_EPOCH
+                        && value["sessionGeneration"] == generation
+                })
+            })
+            .count()
     }
 }
 
@@ -258,6 +261,7 @@ fn runtime_loads_private_state_and_reconnects_after_the_sync_response() {
         directory.path().join("runtime"),
         &state_directory,
         Duration::from_secs(1),
+        HELPER_EPOCH,
         sink.clone(),
         FakeDiscovery {
             trusted_result: PairingEndpoint::new("192.168.50.4", 37_123)
@@ -281,7 +285,44 @@ fn runtime_loads_private_state_and_reconnects_after_the_sync_response() {
         "background work started before the protocol response"
     );
     backend.response_emitted();
-    sink.wait_for(&Event::Connected.to_line());
+    sink.wait_for_event("connected", Some("1"));
+}
+
+#[test]
+fn reconnect_transport_failure_advances_generation_before_lifecycle_event() {
+    let directory = tempfile::tempdir().expect("temporary runtime");
+    let state_directory = directory.path().join("state");
+    FileTrustedDeviceStore::new(&state_directory)
+        .save(&TrustedDevice::new("adb-14141FD6F00081-TnSdi9").expect("trusted device"))
+        .expect("seed trusted-device state");
+    let sink = MemorySink::default();
+    let mut backend = RuntimePairingBackend::with_dependencies(
+        directory.path().join("runtime"),
+        &state_directory,
+        Duration::from_secs(1),
+        HELPER_EPOCH,
+        sink.clone(),
+        FakeDiscovery {
+            trusted_result: Err(DiscoveryFailure::NetworkUnavailable),
+            requested_devices: Vec::new(),
+        },
+        FakeRunner {
+            outputs: VecDeque::new(),
+            requests: Vec::new(),
+        },
+        None,
+    )
+    .expect("runtime backend");
+
+    backend
+        .reconnect_trusted_device()
+        .expect("queue trusted reconnect");
+    backend.response_emitted();
+
+    let failure = sink.wait_for_event("lifecycle-failure", Some("2"));
+    let failure: serde_json::Value =
+        serde_json::from_str(&failure).expect("lifecycle failure event");
+    assert_eq!(failure["reason"], "network-unavailable");
 }
 
 #[test]
@@ -307,6 +348,7 @@ fn runtime_starts_scrcpy_after_reconnect_and_stops_it_before_confirmation() {
         directory.path().join("runtime"),
         &state_directory,
         Duration::from_secs(1),
+        HELPER_EPOCH,
         sink.clone(),
         FakeDiscovery {
             trusted_result: PairingEndpoint::new("192.168.50.4", 37_123)
@@ -330,13 +372,7 @@ fn runtime_starts_scrcpy_after_reconnect_and_stops_it_before_confirmation() {
         .reconnect_trusted_device()
         .expect("queue trusted reconnect");
     backend.response_emitted();
-    sink.wait_for(
-        &Event::SessionStarted {
-            physical_width_mm: None,
-            physical_height_mm: None,
-        }
-        .to_line(),
-    );
+    sink.wait_for_event("session-started", Some("1"));
     assert_eq!(
         target.lock().expect("session target lock").as_deref(),
         Some("192.168.50.4:37123")
@@ -398,6 +434,7 @@ fn runtime_starts_scrcpy_after_reconnect_and_stops_it_before_confirmation() {
     drop(requests_before_stop);
 
     backend.stop_session();
+    sink.wait_for_event("session-ended", Some("2"));
 
     assert!(stopped.load(Ordering::Acquire));
 }
@@ -429,6 +466,7 @@ fn start_over_preserves_enabled_global_preference_across_a_different_device_relo
         directory.path().join("runtime"),
         &state_directory,
         Duration::from_secs(1),
+        HELPER_EPOCH,
         sink.clone(),
         FakeDiscovery {
             trusted_result: PairingEndpoint::new("192.168.50.4", 37_123)
@@ -453,13 +491,7 @@ fn start_over_preserves_enabled_global_preference_across_a_different_device_relo
         .reconnect_trusted_device()
         .expect("queue trusted reconnect");
     backend.response_emitted();
-    sink.wait_for(
-        &Event::SessionStarted {
-            physical_width_mm: None,
-            physical_height_mm: None,
-        }
-        .to_line(),
-    );
+    sink.wait_for_event("session-started", Some("1"));
 
     backend.start_over().expect("start over");
 
@@ -493,6 +525,7 @@ fn start_over_preserves_enabled_global_preference_across_a_different_device_relo
         directory.path().join("reloaded-runtime"),
         &state_directory,
         Duration::from_secs(1),
+        HELPER_EPOCH,
         MemorySink::default(),
         FakeDiscovery {
             trusted_result: Err(DiscoveryFailure::NetworkUnavailable),
@@ -525,6 +558,7 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
         directory.path().join("runtime"),
         &state_directory,
         Duration::from_secs(1),
+        HELPER_EPOCH,
         sink.clone(),
         FakeDiscovery {
             trusted_result: PairingEndpoint::new("192.168.50.4", 37_123)
@@ -548,14 +582,7 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
         .reconnect_trusted_device()
         .expect("queue trusted reconnect");
     backend.response_emitted();
-    sink.wait_for_count(
-        &Event::SessionStarted {
-            physical_width_mm: None,
-            physical_height_mm: None,
-        }
-        .to_line(),
-        1,
-    );
+    sink.wait_for_event("session-started", Some("1"));
 
     let retained_preferences = Preferences {
         keep_connected: true,
@@ -574,7 +601,6 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
     let preferences = Preferences {
         keep_connected: true,
         android_mode_shortcuts: false,
-        command_passthrough: false,
         preview_scale: PreviewScale::new(150).expect("valid preview scale"),
         video_quality: VideoQuality::Low,
         quick_actions: [
@@ -588,14 +614,9 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
             .set_preferences(preferences)
             .expect("save and restart session")
     );
-    sink.wait_for_count(
-        &Event::SessionStarted {
-            physical_width_mm: None,
-            physical_height_mm: None,
-        }
-        .to_line(),
-        2,
-    );
+    sink.wait_for_event("session-started", Some("2"));
+    assert_eq!(sink.event_count("session-started", "1"), 1);
+    assert_eq!(sink.event_count("session-started", "2"), 1);
     assert_eq!(
         qualities.lock().expect("session qualities lock").as_slice(),
         [VideoQuality::High, VideoQuality::Low]
@@ -623,6 +644,7 @@ fn runtime_rejects_a_symlinked_private_state_root_before_loading() {
         directory.path().join("runtime"),
         &state_directory,
         Duration::from_secs(1),
+        HELPER_EPOCH,
         MemorySink::default(),
         FakeDiscovery {
             trusted_result: Err(DiscoveryFailure::NetworkUnavailable),

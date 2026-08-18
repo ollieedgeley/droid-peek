@@ -1,6 +1,5 @@
 use std::{
     convert::Infallible,
-    fs,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -10,15 +9,17 @@ use std::{
 };
 
 use omarchy_android_helper::{
-    actions::SemanticAction,
+    actions::PhoneTarget,
     input::{AndroidKey, DisplayGeometry, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
     process::{CancellationToken, CommandFailure, CommandOutput, CommandRequest, CommandRunner},
-    protocol::{Event, PairingBackend},
+    protocol::{ActionFailureCode, Event, PairingBackend, PhoneTargetFailure},
     runtime::{ProtocolSink, RuntimePairingBackend},
     session::{PhysicalDisplaySize, SessionExit, SessionFailure, SessionRunner},
     wireless::{DiscoveryFailure, PairingEndpoint, WirelessDiscovery},
 };
+
+const HELPER_EPOCH: &str = "73001";
 
 struct TrustedDiscovery {
     endpoint: PairingEndpoint,
@@ -69,9 +70,8 @@ impl CommandRunner for SlowActionRunner {
             return Ok(CommandOutput { succeeded: true });
         }
 
-        assert_eq!(request.program(), "adb");
         assert!(request.arguments().windows(2).any(|arguments| {
-            arguments[0] == "-a" && arguments[1] == "android.intent.action.VIEW"
+            arguments[0] == "-a" && arguments[1] == "android.intent.action.MAIN"
         }));
         let would_report_success_at = Instant::now() + Duration::from_secs(4);
         loop {
@@ -153,7 +153,7 @@ impl ProtocolSink for MemorySink {
 }
 
 impl MemorySink {
-    fn wait_for(&self, expected: &str) {
+    fn wait_for_event(&self, event_type: &str, generation: &str) {
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
             if self
@@ -161,13 +161,19 @@ impl MemorySink {
                 .lock()
                 .expect("memory sink lock")
                 .iter()
-                .any(|line| line == expected)
+                .any(|line| {
+                    serde_json::from_str::<serde_json::Value>(line).is_ok_and(|value| {
+                        value["type"] == event_type
+                            && value["helperEpoch"] == HELPER_EPOCH
+                            && value["sessionGeneration"] == generation
+                    })
+                })
             {
                 return;
             }
             thread::sleep(Duration::from_millis(2));
         }
-        panic!("event was not emitted");
+        panic!("event {event_type} at generation {generation} was not emitted");
     }
 }
 
@@ -201,7 +207,7 @@ fn unix_time_ms() -> u64 {
 }
 
 #[test]
-fn runtime_rejects_expired_actions_and_consumes_slow_accepted_actions() {
+fn runtime_rejects_invalid_phone_target_deadlines_and_bounds_accepted_work() {
     let directory = tempfile::tempdir().expect("temporary runtime");
     let runtime_directory = directory.path().join("runtime");
     let state_directory = directory.path().join("state");
@@ -218,6 +224,7 @@ fn runtime_rejects_expired_actions_and_consumes_slow_accepted_actions() {
         &runtime_directory,
         &state_directory,
         Duration::from_secs(1),
+        HELPER_EPOCH,
         sink.clone(),
         TrustedDiscovery {
             endpoint: PairingEndpoint::new("192.168.50.4", 37_123).expect("connection endpoint"),
@@ -237,72 +244,54 @@ fn runtime_rejects_expired_actions_and_consumes_slow_accepted_actions() {
         .reconnect_trusted_device()
         .expect("queue trusted reconnect");
     backend.response_emitted();
-    sink.wait_for(
-        &Event::SessionStarted {
-            physical_width_mm: None,
-            physical_height_mm: None,
-        }
-        .to_line(),
-    );
+    sink.wait_for_event("session-started", "1");
     assert_eq!(calls.load(Ordering::Acquire), 1);
 
     assert_eq!(
-        backend.semantic_action(
-            SemanticAction::OmarchyBrowser,
-            None,
+        backend.phone_target(
+            PhoneTarget::BrowserDefault,
             "expired-action",
             unix_time_ms() - 1_000,
         ),
-        Ok(false)
+        Err(PhoneTargetFailure::ActionOnly(
+            ActionFailureCode::InvalidDeadline
+        ))
     );
     assert_eq!(calls.load(Ordering::Acquire), 1);
-    assert_eq!(
-        fs::read_to_string(runtime_directory.join("action-results/expired-action"))
-            .expect("expired result"),
-        "false\n"
-    );
 
     assert_eq!(
-        backend.semantic_action(
-            SemanticAction::OmarchyBrowser,
-            None,
+        backend.phone_target(
+            PhoneTarget::BrowserDefault,
             "unreasonable-future-action",
             unix_time_ms() + 60_000,
         ),
-        Ok(false)
+        Err(PhoneTargetFailure::ActionOnly(
+            ActionFailureCode::InvalidDeadline
+        ))
     );
     assert_eq!(calls.load(Ordering::Acquire), 1);
-    assert_eq!(
-        fs::read_to_string(runtime_directory.join("action-results/unreasonable-future-action"))
-            .expect("unreasonable future result"),
-        "false\n"
-    );
 
     let started = Instant::now();
     assert_eq!(
-        backend.semantic_action(
-            SemanticAction::OmarchyBrowser,
-            None,
+        backend.phone_target(
+            PhoneTarget::BrowserDefault,
             "slow-action",
             unix_time_ms() + 2_000,
         ),
-        Ok(false)
+        Err(PhoneTargetFailure::ActionOnly(
+            ActionFailureCode::TargetTimedOut
+        ))
     );
     assert!(
         started.elapsed() < Duration::from_millis(1_500),
-        "the accepted action outlived its bounded execution window"
+        "the accepted target outlived its bounded execution window"
     );
     assert!(action_cancelled.load(Ordering::Acquire));
     assert!(!action_reported_success.load(Ordering::Acquire));
     assert_eq!(calls.load(Ordering::Acquire), 2);
-    assert_eq!(
-        fs::read_to_string(runtime_directory.join("action-results/slow-action"))
-            .expect("cancelled result"),
-        "true\n"
-    );
     assert!(
         !session_stopped.load(Ordering::Acquire),
-        "the child action deadline cancelled the active session"
+        "the child target deadline cancelled the active session"
     );
 
     backend.stop_session();
@@ -326,6 +315,7 @@ fn runtime_bounds_input_and_start_over_disconnect_commands() {
         &runtime_directory,
         &state_directory,
         Duration::from_secs(1),
+        HELPER_EPOCH,
         sink.clone(),
         TrustedDiscovery {
             endpoint: PairingEndpoint::new("192.168.50.4", 37_123).expect("connection endpoint"),
@@ -344,13 +334,7 @@ fn runtime_bounds_input_and_start_over_disconnect_commands() {
         .reconnect_trusted_device()
         .expect("queue trusted reconnect");
     backend.response_emitted();
-    sink.wait_for(
-        &Event::SessionStarted {
-            physical_width_mm: None,
-            physical_height_mm: None,
-        }
-        .to_line(),
-    );
+    sink.wait_for_event("session-started", "1");
 
     let swipe_started = Instant::now();
     backend

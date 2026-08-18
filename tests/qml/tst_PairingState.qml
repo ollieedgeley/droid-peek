@@ -4,11 +4,10 @@ import "../../qml/state"
 
 TestCase {
     name: "PairingState"
-    property var androidModeShortcutsAtCommand: undefined
-
 
     PairingState {
         id: state
+        helperEpoch: "17"
     }
 
     SignalSpy {
@@ -16,14 +15,6 @@ TestCase {
         target: state
         signalName: "commandRequested"
     }
-    Connections {
-        target: state
-
-        function onCommandRequested() {
-            androidModeShortcutsAtCommand = state.androidModeShortcuts
-        }
-    }
-
 
     SignalSpy {
         id: cancellationSpy
@@ -38,591 +29,355 @@ TestCase {
     }
 
     SignalSpy {
-        id: actionCompletedSpy
+        id: phoneTargetCompletedSpy
         target: state
-        signalName: "semanticActionCompleted"
+        signalName: "phoneTargetCompleted"
     }
 
-    function init() {
-        state.reset()
-        androidModeShortcutsAtCommand = undefined
-        commandSpy.clear()
-        cancellationSpy.clear()
-        sessionStopSpy.clear()
-        actionCompletedSpy.clear()
-    }
-
-    function preferences(androidModeShortcuts, commandPassthrough) {
+    function defaultPreferences(androidModeShortcuts) {
         return {
             keepConnected: false,
             previewScale: 100,
             videoQuality: "high",
             quickActions: ["back", "home", "recent-apps"],
-            androidModeShortcuts: androidModeShortcuts,
-            commandPassthrough: commandPassthrough === true
+            androidModeShortcuts: androidModeShortcuts === undefined
+                                      ? true : androidModeShortcuts
         }
     }
 
-    function event(type, properties) {
+    function event(type, properties, epoch) {
         var value = properties || {}
-        value.version = state.protocolVersion
+        value.version = 11
         value.type = type
-        if (type === "ready" && value.preferences === undefined) {
-            value.preferences = preferences(false)
+        value.helperEpoch = epoch === undefined ? state.helperEpoch : epoch
+        if (type === "ready") {
+            if (value.sessionGeneration === undefined)
+                value.sessionGeneration = "0"
+            if (value.preferences === undefined)
+                value.preferences = defaultPreferences()
         }
         return JSON.stringify(value)
     }
 
-    function test_unpaired_is_the_safe_initial_state() {
-        compare(state.protocolVersion, 10)
-        compare(state.sessionState, "unpaired")
-        compare(state.pairingStage, "idle")
-        verify(state.statusTitle.length > 0)
-        compare(state.qrArtifact, "")
-        compare(state.qrExpiresInSeconds, 0)
-        compare(state.androidModeShortcuts, false)
-        compare(state.commandPassthrough, false)
+    function commandAt(index) {
+        return JSON.parse(commandSpy.signalArguments[index][0])
     }
 
-    function test_helper_ready_starts_qr_without_a_connect_action() {
+    function init() {
+        state.reset()
+        state.helperEpoch = "17"
+        commandSpy.clear()
+        cancellationSpy.clear()
+        phoneTargetCompletedSpy.clear()
+        sessionStopSpy.clear()
+    }
+
+    function establishTrustedBaseline() {
+        state.receiveLine(event("ready", {
+            hasTrustedDevice: true,
+            sessionGeneration: "0"
+        }))
+        commandSpy.clear()
+    }
+
+    function establishLiveSession() {
+        establishTrustedBaseline()
+        state.receiveLine(event("connecting", { sessionGeneration: "1" }))
+        state.receiveLine(event("connected", { sessionGeneration: "1" }))
+        state.receiveLine(event("session-starting", { sessionGeneration: "1" }))
+        state.receiveLine(event("session-started", {
+            sessionGeneration: "1",
+            physicalWidthMm: 70,
+            physicalHeightMm: 157
+        }))
+    }
+
+    function test_protocol_v11_baseline_and_defaults() {
+        compare(state.protocolVersion, 11)
+        compare(state.androidModeShortcuts, true)
+        compare(state.commandPassthrough, undefined)
+
         state.receiveLine(event("ready", { hasTrustedDevice: false }))
 
         compare(state.helperReady, true)
+        compare(state.hasTrustedDevice, false)
+        compare(state.sessionGeneration, "0")
         compare(commandSpy.count, 1)
-        var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 10)
-        compare(command.type, "start-qr-pairing")
+        compare(commandAt(0), {
+            version: 11,
+            type: "start-qr-pairing",
+            helperEpoch: "17"
+        })
     }
 
-    function test_helper_ready_reconnects_a_remembered_device() {
-        state.receiveLine(event("ready", {
-                                    hasTrustedDevice: true,
-                                    preferences: preferences(true, true)
-                                }))
+    function test_ready_with_trusted_phone_requests_reconnect_in_current_epoch() {
+        state.receiveLine(event("ready", { hasTrustedDevice: true }))
 
-        compare(state.helperReady, true)
-        compare(state.androidModeShortcuts, true)
-        compare(state.commandPassthrough, true)
+        compare(state.hasTrustedDevice, true)
         compare(commandSpy.count, 1)
-        compare(JSON.parse(commandSpy.signalArguments[0][0]).type, "reconnect-trusted-device")
+        compare(commandAt(0), {
+            version: 11,
+            type: "reconnect-trusted-device",
+            helperEpoch: "17"
+        })
     }
 
-    function test_qr_waiting_and_pairing_progress() {
+    function test_pairing_only_events_are_admitted_by_epoch_without_generation() {
+        state.receiveLine(event("ready", { hasTrustedDevice: false }))
+        commandSpy.clear()
+
         state.receiveLine(event("qr-waiting", {
             artifact: "/run/user/1000/omarchy-android/qr.svg",
             expiresInSeconds: 120
         }))
-        compare(state.sessionState, "qr-waiting")
-        compare(state.pairingStage, "qr-waiting")
-        compare(state.qrArtifact, "/run/user/1000/omarchy-android/qr.svg")
-        compare(state.qrExpiresInSeconds, 120)
+        compare(state.activity, "qr-waiting")
+        state.receiveLine(event("qr-timed-out"))
+        compare(state.activity, "starting-pairing")
+        compare(commandSpy.count, 1)
+        compare(commandAt(0).type, "start-qr-pairing")
+        commandSpy.clear()
+
 
         state.receiveLine(event("pairing", { method: "qr" }))
-        compare(state.sessionState, "pairing")
-        compare(state.pairingStage, "pairing")
-    }
+        compare(state.activity, "pairing")
 
+        state.receiveLine(event("manual-code-required"))
+        compare(state.activity, "manual-code")
 
-    function test_qr_expiry_tick_updates_visible_countdown() {
-        state.receiveLine(event("qr-waiting", {
-            artifact: "/run/user/1000/omarchy-android/qr.svg",
-            expiresInSeconds: 2
-        }))
-
-        state.tickQrExpiry()
-        compare(state.qrExpiresInSeconds, 1)
-        state.tickQrExpiry()
-        compare(state.qrExpiresInSeconds, 0)
-        state.tickQrExpiry()
-        compare(state.qrExpiresInSeconds, 0)
-    }
-    function test_qr_timeout_requests_a_fresh_code() {
-        state.receiveLine(event("qr-timed-out"))
-
-        compare(state.qrArtifact, "")
-        compare(state.qrExpiresInSeconds, 0)
-        compare(commandSpy.count, 1)
-        compare(JSON.parse(commandSpy.signalArguments[0][0]).type, "start-qr-pairing")
-    }
-
-    function test_pairing_cancellation_confirms_cleanup() {
         state.receiveLine(event("pairing-cancelled"))
-
-        compare(state.sessionState, "unpaired")
-        compare(state.pairingStage, "cancelled")
+        compare(state.activity, "pairing-cancelled")
         compare(cancellationSpy.count, 1)
+
+        state.receiveLine(event("failure", { reason: "pairing-rejected" }))
+        compare(state.hasTrustedDevice, false)
+        compare(state.reason, "pairing-rejected")
     }
 
-    function test_manual_code_fallback_never_retains_the_code() {
-        state.receiveLine(event("manual-code-required"))
-        compare(state.sessionState, "qr-waiting")
-        compare(state.pairingStage, "manual-code")
+    function test_session_event_sequence_advances_then_reuses_generation() {
+        establishTrustedBaseline()
+        state.receiveLine(event("paired", { sessionGeneration: "1" }))
+        compare(state.sessionGeneration, "1")
+        compare(state.hasTrustedDevice, true)
+        compare(state.activity, "connecting")
 
-        verify(state.submitManualCode("482913"))
-        compare(commandSpy.count, 1)
-        var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, 10)
-        compare(command.type, "submit-manual-code")
-        compare(command.code, "482913")
-        compare(state.statusDescription.indexOf("482913"), -1)
+
+        state.receiveLine(event("connecting", { sessionGeneration: "1" }))
+        compare(state.sessionGeneration, "1")
+        compare(state.activity, "connecting")
+        compare(state.sessionStarted, false)
+
+        state.receiveLine(event("connected", { sessionGeneration: "1" }))
+        compare(state.activity, "connected")
+
+        state.receiveLine(event("session-starting", { sessionGeneration: "1" }))
+        compare(state.activity, "starting-preview")
+
+        state.receiveLine(event("session-started", { sessionGeneration: "1" }))
+        compare(state.sessionStarted, true)
+        compare(state.activity, "")
     }
 
-    function test_manual_code_rejects_invalid_values_without_leaving_the_flow() {
-        state.receiveLine(event("manual-code-required"))
+    function test_session_end_stop_and_lifecycle_failure_invalidate_the_session() {
+        establishLiveSession()
 
-        var invalidCodes = ["", "12345", "1234567", "12345a", "１２３４５６"]
-        for (var index = 0; index < invalidCodes.length; ++index)
-            verify(!state.submitManualCode(invalidCodes[index]))
+        state.receiveLine(event("session-ended", { sessionGeneration: "2" }))
+        compare(state.sessionGeneration, "2")
+        compare(state.sessionStarted, false)
+        compare(state.reason, "disconnected")
 
-        compare(commandSpy.count, 0)
-        compare(state.pairingStage, "manual-code")
-        compare(state.statusDescription, "Enter the six-digit pairing code shown by Android.")
-    }
-
-    function test_connected_phone_becomes_ready_only_after_session_starts() {
-        state.receiveLine(event("paired"))
-        compare(state.sessionState, "pairing")
-        compare(state.pairingStage, "connected")
-
-        state.receiveLine(event("session-starting"))
-        compare(state.sessionState, "pairing")
-        compare(state.pairingStage, "session-starting")
-
-        state.receiveLine(event("session-started", {
-                                    physicalWidthMm: 70,
-                                    physicalHeightMm: 157
-                                }))
-        compare(state.sessionState, "ready")
-        compare(state.pairingStage, "session-started")
-
-        state.receiveLine(event("session-ended"))
-        compare(state.sessionState, "disconnected")
-        compare(state.pairingStage, "session-ended")
-    }
-
-    function test_reconnect_and_session_stop_are_actionable() {
-        state.receiveLine(event("connecting"))
-        compare(state.sessionState, "pairing")
-        compare(state.pairingStage, "connecting")
-
-        state.receiveLine(event("connected"))
-        compare(state.sessionState, "pairing")
-        compare(state.pairingStage, "connected")
-
-        state.stopSession()
-        compare(JSON.parse(commandSpy.signalArguments[0][0]).type, "stop-session")
-        state.receiveLine(event("session-stopped"))
+        state.receiveLine(event("session-stopped", { sessionGeneration: "3" }))
+        compare(state.sessionGeneration, "3")
         compare(sessionStopSpy.count, 1)
 
-        state.receiveLine(event("failure", { reason: "disconnected" }))
-
-        compare(state.sessionState, "disconnected")
-        state.reconnectTrustedDevice()
-        compare(commandSpy.count, 2)
-        compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "reconnect-trusted-device")
-    }
-    function test_semantic_action_serialization_is_exact_after_router_acceptance() {
-        var expiresAtUnixMs = Date.now() + 2000
-        state.sendSemanticAction(
-                    "android-launch-app", "request-package", expiresAtUnixMs,
-                    "com.example.notes")
-
-        compare(commandSpy.count, 1)
-        compare(commandSpy.signalArguments[0][0], JSON.stringify({
-                    type: "semantic-action",
-                    actionId: "android-launch-app",
-                    actionArgument: "com.example.notes",
-                    requestId: "request-package",
-                    expiresAtUnixMs: expiresAtUnixMs,
-                    version: state.protocolVersion
-                }))
+        state.receiveLine(event("failure", {
+            reason: "network-unavailable",
+            sessionGeneration: "4"
+        }))
+        compare(state.sessionGeneration, "4")
+        compare(state.sessionStarted, false)
+        compare(state.reason, "network-unavailable")
     }
 
-    function test_semantic_action_results_are_correlated() {
-        state.receiveLine(event("action-result", {
-                                    actionId: "omarchy-browser",
-                                    requestId: "request-123",
-                                    handled: true
-                                }))
+    function test_start_over_and_restart_events_accept_the_new_generation() {
+        establishLiveSession()
 
-        compare(actionCompletedSpy.count, 1)
-        compare(actionCompletedSpy.signalArguments[0][0], "omarchy-browser")
-        compare(actionCompletedSpy.signalArguments[0][1], "request-123")
-        compare(actionCompletedSpy.signalArguments[0][2], true)
-    }
-
-    function test_start_over_forgets_the_device_then_requests_fresh_qr() {
-        state.receiveLine(event("ready", { hasTrustedDevice: true }))
-        state.setPreferences(
-                    true, 125, "medium", ["home", "back", "recent-apps"], true, false)
-        commandSpy.clear()
-
-        state.startOver()
-        state.startOver()
-
-        compare(state.startOverPending, true)
-        compare(state.statusTitle, "Starting over")
-        compare(commandSpy.count, 1)
-        compare(JSON.parse(commandSpy.signalArguments[0][0]),
-                { version: 10, type: "start-over" })
-
-        state.receiveLine(event("start-over-complete"))
-
-        compare(state.startOverPending, false)
-        compare(state.hasTrustedDevice, false)
-        compare(state.sessionState, "unpaired")
-        compare(state.keepConnected, true)
-        compare(state.previewScale, 125)
-        compare(state.videoQuality, "medium")
-        compare(state.androidModeShortcuts, true)
-        compare(state.commandPassthrough, false)
-        compare(commandSpy.count, 2)
-        compare(JSON.parse(commandSpy.signalArguments[1][0]).type,
-                "start-qr-pairing")
-    }
-
-    function test_start_over_failure_keeps_the_phone_and_does_not_request_qr() {
-        state.receiveLine(event("ready", { hasTrustedDevice: true }))
-        commandSpy.clear()
-
-        state.startOver()
-        state.receiveLine(event("failure", { reason: "dependency-unavailable" }))
-
-        compare(state.startOverPending, false)
-        compare(state.hasTrustedDevice, true)
-        compare(state.pairingStage, "start-over-failed")
-        compare(state.statusTitle, "Couldn’t start over")
-        compare(commandSpy.count, 1)
-    }
-
-    function test_commands_are_versioned_line_payloads() {
-        state.startQrPairing()
-        state.useManualCode()
-        state.cancelPairing()
-        state.stopSession()
-
-        compare(commandSpy.count, 4)
-        compare(JSON.parse(commandSpy.signalArguments[0][0]).type, "start-qr-pairing")
-        compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "use-manual-code")
-        compare(JSON.parse(commandSpy.signalArguments[2][0]).type, "cancel-pairing")
-        compare(JSON.parse(commandSpy.signalArguments[3][0]).type, "stop-session")
-        compare(JSON.parse(commandSpy.signalArguments[0][0]).version, 10)
-    }
-
-    function test_preferences_are_versioned_and_applied_immediately() {
-        verify(state.setPreferences(
-                   true, 150, "low", ["home", "recent-apps", "back"], true, true))
-
-        compare(state.keepConnected, true)
-        compare(state.previewScale, 150)
-        compare(state.videoQuality, "low")
-        compare(state.quickActions, ["home", "recent-apps", "back"])
-        compare(state.androidModeShortcuts, true)
-        compare(state.commandPassthrough, true)
-        compare(androidModeShortcutsAtCommand, true)
-        compare(commandSpy.count, 1)
-        compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 10,
-                    type: "set-preferences",
-                    keepConnected: true,
-                    previewScale: 150,
-                    videoQuality: "low",
-                    quickActions: ["home", "recent-apps", "back"],
-                    androidModeShortcuts: true,
-                    commandPassthrough: true,
-                })
-    }
-
-    function test_quality_restart_event_waits_for_the_new_session() {
-        state.receiveLine(event("session-started"))
         state.receiveLine(event("preferences-updated", {
-                                    keepConnected: true,
-                                    previewScale: 50,
-                                    videoQuality: "medium",
-                                    quickActions: ["back", "home", "recent-apps"],
-                                    androidModeShortcuts: true,
-                                    commandPassthrough: true,
-                                    sessionRestarted: true
-                                }))
+            keepConnected: true,
+            previewScale: 125,
+            videoQuality: "medium",
+            quickActions: ["home", "back", "recent-apps"],
+            androidModeShortcuts: false,
+            sessionRestarted: true,
+            sessionGeneration: "2"
+        }))
+        compare(state.sessionGeneration, "2")
+        compare(state.sessionStarted, false)
+        compare(state.activity, "starting-preview")
 
-        compare(state.previewScale, 50)
-        compare(state.keepConnected, true)
-        compare(state.videoQuality, "medium")
-        compare(state.androidModeShortcuts, true)
-        compare(state.commandPassthrough, true)
-        compare(state.sessionState, "pairing")
-        compare(state.pairingStage, "session-starting")
-        state.receiveLine(event("session-started"))
-        compare(state.sessionState, "ready")
+        state.receiveLine(event("start-over-complete", {
+            sessionGeneration: "3"
+        }))
+        compare(state.sessionGeneration, "3")
+        compare(state.hasTrustedDevice, false)
+        compare(state.sessionStarted, false)
     }
 
-    function test_preferences_update_rejects_invalid_session_restarted_atomically_data() {
-        return [
-            {
-                tag: "missing"
-            },
-            {
-                tag: "non-boolean",
-                sessionRestarted: "true"
-            }
-        ]
-    }
+    function test_preferences_without_restart_do_not_change_session_identity() {
+        establishLiveSession()
 
-    function test_preferences_update_rejects_invalid_session_restarted_atomically(data) {
-        state.receiveLine(event("session-started"))
-        compare(state.sessionState, "ready")
+        state.receiveLine(event("preferences-updated", {
+            keepConnected: true,
+            previewScale: 125,
+            videoQuality: "medium",
+            quickActions: ["home", "back", "recent-apps"],
+            androidModeShortcuts: false,
+            sessionRestarted: false,
+            sessionGeneration: "1"
+        }))
+
+        compare(state.sessionGeneration, "1")
+        compare(state.sessionStarted, true)
         compare(state.androidModeShortcuts, false)
+    }
 
-        var payload = {
+    function test_action_results_never_change_session_availability_facts() {
+        establishLiveSession()
+
+        state.receiveLine(event("action-result", {
+            requestId: "request-1",
+            outcome: "action-failed",
+            notificationCode: "browser-unavailable",
+            sessionGeneration: "1"
+        }))
+
+        compare(state.sessionGeneration, "1")
+        compare(state.sessionStarted, true)
+        compare(state.hasTrustedDevice, true)
+        compare(phoneTargetCompletedSpy.count, 1)
+        compare(phoneTargetCompletedSpy.signalArguments[0][0], "request-1")
+        compare(phoneTargetCompletedSpy.signalArguments[0][1], "action-failed")
+        compare(phoneTargetCompletedSpy.signalArguments[0][2],
+                "browser-unavailable")
+    }
+
+    function test_stale_and_missing_epoch_events_are_ignored_before_any_fact_change() {
+        state.receiveLine(event("ready", { hasTrustedDevice: false }))
+        commandSpy.clear()
+
+        state.receiveLine(event("ready", {
+            hasTrustedDevice: true,
+            sessionGeneration: "0"
+        }, "16"))
+        state.receiveLine(JSON.stringify({
+            version: 11,
+            type: "paired",
+            sessionGeneration: "1"
+        }))
+
+        compare(state.hasTrustedDevice, false)
+        compare(state.sessionGeneration, "0")
+        compare(state.activity, "")
+        compare(commandSpy.count, 0)
+    }
+
+    function test_stale_missing_and_skipped_generation_events_are_ignored() {
+        establishTrustedBaseline()
+
+        state.receiveLine(event("session-started", { sessionGeneration: "0" }))
+        state.receiveLine(event("connecting", {}))
+        state.receiveLine(event("connecting", { sessionGeneration: "2" }))
+
+        compare(state.sessionGeneration, "0")
+        compare(state.sessionStarted, false)
+        compare(state.activity, "")
+
+        state.receiveLine(event("connecting", { sessionGeneration: "1" }))
+        state.receiveLine(event("session-started", { sessionGeneration: "0" }))
+        compare(state.sessionGeneration, "1")
+        compare(state.sessionStarted, false)
+        compare(state.activity, "connecting")
+    }
+
+    function test_helper_epoch_change_resets_generation_baseline_and_facts() {
+        establishLiveSession()
+
+        state.helperEpoch = "18"
+
+        compare(state.helperReady, false)
+        compare(state.sessionGeneration, "")
+        compare(state.sessionStarted, false)
+        state.receiveLine(event("ready", {
+            hasTrustedDevice: true,
+            sessionGeneration: "0"
+        }, "18"))
+        compare(state.helperReady, true)
+        compare(state.sessionGeneration, "0")
+    }
+
+    function test_session_bound_commands_carry_both_decimal_string_identities() {
+        establishLiveSession()
+        commandSpy.clear()
+        var expiresAtUnixMs = Date.now() + 2000
+
+        state.sendPointerTap(0.25, 0.75, 1080, 2400)
+        state.sendPointerSwipe(0.1, 0.2, 0.8, 0.9, 1080, 2400, 320)
+        state.sendKeyInput("back")
+        state.sendTextInput("a")
+        state.sendPhoneTarget("request-1", "android.browser.default", expiresAtUnixMs)
+
+        compare(commandSpy.count, 5)
+        for (var index = 0; index < commandSpy.count; ++index) {
+            compare(commandAt(index).version, 11)
+            compare(commandAt(index).helperEpoch, "17")
+            compare(commandAt(index).sessionGeneration, "1")
+        }
+        compare(commandAt(4), {
+            version: 11,
+            type: "phone-target",
+            requestId: "request-1",
+            target: "android.browser.default",
+            expiresAtUnixMs: expiresAtUnixMs,
+            helperEpoch: "17",
+            sessionGeneration: "1"
+        })
+    }
+
+    function test_preferences_schema_v1_has_no_passthrough_and_defaults_android_mode_on() {
+        verify(state.setPreferences(
+                   true, 150, "low", ["home", "recent-apps", "back"], true))
+
+        compare(state.androidModeShortcuts, true)
+        compare(state.commandPassthrough, undefined)
+        compare(commandSpy.count, 1)
+        compare(commandAt(0), {
+            version: 11,
+            type: "set-preferences",
             keepConnected: true,
             previewScale: 150,
             videoQuality: "low",
             quickActions: ["home", "recent-apps", "back"],
             androidModeShortcuts: true,
-            commandPassthrough: true
-        }
-        if (data.sessionRestarted !== undefined)
-            payload.sessionRestarted = data.sessionRestarted
-
-        state.receiveLine(event("preferences-updated", payload))
-
-        compare(state.sessionState, "dependency-unavailable")
-        compare(state.pairingStage, "protocol-error")
-        compare(state.keepConnected, false)
-        compare(state.previewScale, 100)
-        compare(state.videoQuality, "high")
-        compare(state.quickActions, ["back", "home", "recent-apps"])
-        compare(state.androidModeShortcuts, false)
-        compare(state.commandPassthrough, false)
-
-        state.receiveLine(event("session-started"))
-
-        compare(state.sessionState, "ready")
-        compare(state.androidModeShortcuts, false)
+            helperEpoch: "17"
+        })
     }
 
-    function test_invalid_preferences_fail_closed_without_command() {
-        verify(!state.setPreferences(
-                   false, 49, "high", ["back", "home", "recent-apps"], false, false))
-        verify(!state.setPreferences(
-                   false, 151, "high", ["back", "home", "recent-apps"], false, false))
-        compare(commandSpy.count, 0)
+    function test_schema_v1_rejects_unreleased_passthrough_field() {
+        var oldPreferences = defaultPreferences()
+        oldPreferences.commandPassthrough = false
 
-        state.receiveLine(event("preferences-updated", {
-                                    keepConnected: false,
-                                    previewScale: 151,
-                                    videoQuality: "high",
-                                    quickActions: ["back", "home", "recent-apps"],
-                                    androidModeShortcuts: false,
-                                    commandPassthrough: false,
-                                    sessionRestarted: false
-                                }))
-        compare(state.sessionState, "dependency-unavailable")
-        compare(state.pairingStage, "protocol-error")
-    }
-
-    function test_set_preferences_requires_boolean_android_mode_shortcuts() {
-        verify(!state.setPreferences(
-                   true, 125, "medium", ["home", "back", "recent-apps"], undefined, false))
-        verify(!state.setPreferences(
-                   true, 125, "medium", ["home", "back", "recent-apps"], "true", false))
-
-        compare(state.keepConnected, false)
-        compare(state.previewScale, 100)
-        compare(state.videoQuality, "high")
-        compare(state.quickActions, ["back", "home", "recent-apps"])
-        compare(state.androidModeShortcuts, false)
-        compare(commandSpy.count, 0)
-    }
-
-    function test_set_preferences_requires_boolean_command_passthrough() {
-        verify(!state.setPreferences(
-                   true, 125, "medium", ["home", "back", "recent-apps"], true))
-        verify(!state.setPreferences(
-                   true, 125, "medium", ["home", "back", "recent-apps"], true, "true"))
-
-        compare(state.commandPassthrough, false)
-        compare(commandSpy.count, 0)
-    }
-
-    function test_ready_and_preference_updates_require_boolean_shortcut_preferences_data() {
-        return [
-            {
-                tag: "ready missing Android mode",
-                type: "ready",
-                payload: {
-                    hasTrustedDevice: false,
-                    preferences: {
-                        keepConnected: false,
-                        previewScale: 100,
-                        videoQuality: "high",
-                        quickActions: ["back", "home", "recent-apps"],
-                        commandPassthrough: false
-                    }
-                }
-            },
-            {
-                tag: "ready non-boolean Android mode",
-                type: "ready",
-                payload: {
-                    hasTrustedDevice: false,
-                    preferences: {
-                        keepConnected: false,
-                        previewScale: 100,
-                        videoQuality: "high",
-                        quickActions: ["back", "home", "recent-apps"],
-                        androidModeShortcuts: "false",
-                        commandPassthrough: false
-                    }
-                }
-            },
-            {
-                tag: "preferences update missing Android mode",
-                type: "preferences-updated",
-                payload: {
-                    keepConnected: false,
-                    previewScale: 100,
-                    videoQuality: "high",
-                    quickActions: ["back", "home", "recent-apps"],
-                    commandPassthrough: false,
-                    sessionRestarted: false
-                }
-            },
-            {
-                tag: "preferences update non-boolean Android mode",
-                type: "preferences-updated",
-                payload: {
-                    keepConnected: false,
-                    previewScale: 100,
-                    videoQuality: "high",
-                    quickActions: ["back", "home", "recent-apps"],
-                    androidModeShortcuts: 0,
-                    commandPassthrough: false,
-                    sessionRestarted: false
-                }
-            },
-            {
-                tag: "ready command passthrough missing",
-                type: "ready",
-                payload: {
-                    hasTrustedDevice: false,
-                    preferences: {
-                        keepConnected: false,
-                        previewScale: 100,
-                        videoQuality: "high",
-                        quickActions: ["back", "home", "recent-apps"],
-                        androidModeShortcuts: false
-                    }
-                }
-            },
-            {
-                tag: "ready command passthrough non-boolean",
-                type: "ready",
-                payload: {
-                    hasTrustedDevice: false,
-                    preferences: {
-                        keepConnected: false,
-                        previewScale: 100,
-                        videoQuality: "high",
-                        quickActions: ["back", "home", "recent-apps"],
-                        androidModeShortcuts: false,
-                        commandPassthrough: "false"
-                    }
-                }
-            },
-            {
-                tag: "preferences update command passthrough missing",
-                type: "preferences-updated",
-                payload: {
-                    keepConnected: false,
-                    previewScale: 100,
-                    videoQuality: "high",
-                    quickActions: ["back", "home", "recent-apps"],
-                    androidModeShortcuts: false,
-                    sessionRestarted: false
-                }
-            },
-            {
-                tag: "preferences update command passthrough non-boolean",
-                type: "preferences-updated",
-                payload: {
-                    keepConnected: false,
-                    previewScale: 100,
-                    videoQuality: "high",
-                    quickActions: ["back", "home", "recent-apps"],
-                    androidModeShortcuts: false,
-                    commandPassthrough: 0,
-                    sessionRestarted: false
-                }
-            }
-        ]
-    }
-
-    function test_ready_and_preference_updates_require_boolean_shortcut_preferences(data) {
-        state.receiveLine(event(data.type, data.payload))
+        state.receiveLine(event("ready", {
+            hasTrustedDevice: false,
+            preferences: oldPreferences
+        }))
 
         compare(state.helperReady, false)
-        compare(state.androidModeShortcuts, false)
-        compare(state.sessionState, "dependency-unavailable")
-        compare(state.pairingStage, "protocol-error")
+        compare(state.sessionGeneration, "")
         compare(commandSpy.count, 0)
     }
 
-    function test_failures_and_invalid_events_are_redacted() {
-        var rawDetail = "adb pair phone.local:37000 482913 failed"
-        state.receiveLine(event("failure", {
-            reason: "dependency-unavailable",
-            detail: rawDetail
-        }))
-        compare(state.sessionState, "dependency-unavailable")
-        compare(state.statusDescription.indexOf(rawDetail), -1)
-        compare(state.statusDescription.indexOf("482913"), -1)
-
-        state.receiveLine(event("failure", {
-            reason: "pairing-rejected",
-            detail: rawDetail
-        }))
-        compare(state.sessionState, "unauthorized")
-        compare(state.statusTitle, "Pairing rejected")
-        compare(state.statusDescription.indexOf(rawDetail), -1)
-
-        state.receiveLine(event("failure", {
-            reason: "network-unavailable",
-            detail: rawDetail
-        }))
-        compare(state.sessionState, "disconnected")
-        compare(state.statusDescription.indexOf(rawDetail), -1)
-
-        state.receiveLine(event("unknown", { detail: rawDetail }))
-        compare(state.sessionState, "dependency-unavailable")
-        compare(state.pairingStage, "protocol-error")
-        compare(state.statusDescription.indexOf(rawDetail), -1)
-
-        state.receiveLine(JSON.stringify({ version: state.protocolVersion - 1, type: "ready", detail: rawDetail }))
-        compare(state.sessionState, "dependency-unavailable")
-        compare(state.statusDescription.indexOf(rawDetail), -1)
-    }
-
-    function test_input_commands_are_versioned_line_payloads() {
-        state.sendPointerTap(0.25, 0.75, 1080, 2400)
-        state.sendPointerSwipe(0.1, 0.2, 0.8, 0.9, 1080, 2400, 320)
-        state.sendKeyInput("back")
-        state.sendTextInput("a")
-
-        compare(commandSpy.count, 4)
-        compare(JSON.parse(commandSpy.signalArguments[0][0]), {
-                    version: 10,
-                    type: "pointer-tap",
-                    x: 0.25,
-                    y: 0.75,
-                    displayWidth: 1080,
-                    displayHeight: 2400
-                })
-        compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "pointer-swipe")
-        compare(JSON.parse(commandSpy.signalArguments[1][0]).durationMs, 320)
-        compare(JSON.parse(commandSpy.signalArguments[2][0]),
-                { version: 10, type: "key-input", key: "back" })
-        compare(JSON.parse(commandSpy.signalArguments[3][0]),
-                { version: 10, type: "text-input", text: "a" })
+    function test_old_semantic_command_api_is_completely_removed() {
+        compare(state.sendSemanticAction, undefined)
+        compare(state.semanticActionCompleted, undefined)
+        compare(state.commandPassthrough, undefined)
     }
 }

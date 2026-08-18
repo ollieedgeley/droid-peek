@@ -122,6 +122,7 @@ TestCase {
 
         state.helperEpoch = "18"
 
+        compare(state.hasTrustedDevice, true)
         compare(state.applicationState, "recovering")
         compare(state.sessionGeneration, "0")
         compare(state.sessionStarted, false)

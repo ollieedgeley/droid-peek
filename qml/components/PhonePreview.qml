@@ -1,31 +1,61 @@
 import QtQuick
 import QtMultimedia
 
+pragma ComponentBehavior: Bound
+
 Item {
     id: root
 
     property bool captureRequested: false
     property bool inputEnabled: false
+    property string helperEpoch: ""
+    property string sessionGeneration: "0"
+    property string applicationState: "closed"
     readonly property string deviceId: "/dev/video42"
     readonly property string deviceDescription: "Omarchy Android"
     property color foreground: "white"
     property color background: "#101418"
     property bool firstValidFrameReceived: false
-    readonly property int deviceIndex: findDeviceIndex(mediaDevices.videoInputs, deviceId, deviceDescription)
+    property bool captureSourceAcknowledged: false
+    property int captureEpoch: 0
+    readonly property var capturePipeline: captureLoader.item
+    readonly property int deviceIndex: findDeviceIndex(
+                                                   mediaDevices.videoInputs,
+                                                   deviceId,
+                                                   deviceDescription)
     readonly property bool deviceAvailable: deviceIndex >= 0
-    readonly property bool active: camera.active
+    readonly property bool captureAvailable: deviceAvailable
+                                                && captureSourceAcknowledged
+    readonly property bool active: capturePipeline !== null
+                                      && capturePipeline.cameraActive
     readonly property bool inputFocused: activeFocus
-    readonly property bool inputActive: inputEnabled && captureRequested && deviceAvailable
-    readonly property rect displayedContent: videoOutput.contentRect
-    readonly property int displayWidth: Math.round(videoOutput.sourceRect.width)
-    readonly property int displayHeight: Math.round(videoOutput.sourceRect.height)
-    readonly property bool interactionReady: active && firstValidFrameReceived
-                                                && displayWidth > 0 && displayHeight > 0
+    readonly property bool previewInputEnabled: inputEnabled && captureRequested
+    readonly property bool inputActive: previewInputEnabled
+                                          && applicationState === "interactive"
+    readonly property rect displayedContent: capturePipeline !== null
+                                                ? capturePipeline.contentRect
+                                                : Qt.rect(0, 0, 0, 0)
+    readonly property int displayWidth: capturePipeline !== null
+                                            ? Math.round(capturePipeline.sourceRect.width)
+                                            : 0
+    readonly property int displayHeight: capturePipeline !== null
+                                             ? Math.round(capturePipeline.sourceRect.height)
+                                             : 0
+    readonly property bool interactionReady: captureAvailable && active
+                                                && firstValidFrameReceived
+                                                && displayWidth > 0
+                                                && displayHeight > 0
+                                                && previewInputEnabled
 
-    signal tapRequested(real x, real y, int displayWidth, int displayHeight)
-    signal swipeRequested(real startX, real startY, real endX, real endY, int displayWidth, int displayHeight, int durationMs)
-    signal keyRequested(string key)
-    signal textRequested(string text)
+    signal tapRequested(real x, real y, int displayWidth, int displayHeight,
+                        string helperEpoch, string sessionGeneration)
+    signal swipeRequested(real startX, real startY, real endX, real endY,
+                          int displayWidth, int displayHeight, int durationMs,
+                          string helperEpoch, string sessionGeneration)
+    signal keyRequested(string key, string helperEpoch,
+                        string sessionGeneration)
+    signal textRequested(string text, string helperEpoch,
+                         string sessionGeneration)
 
     implicitWidth: 240
     implicitHeight: 360
@@ -45,14 +75,32 @@ Item {
         return idMatches === 1 ? matchIndex : -1;
     }
 
-    function normalizedPoint(x, y, contentRect) {
-        if (contentRect.width <= 0 || contentRect.height <= 0 || x < contentRect.x || y < contentRect.y || x > contentRect.x + contentRect.width || y > contentRect.y + contentRect.height)
-            return null;
-        return Qt.point((x - contentRect.x) / contentRect.width, (y - contentRect.y) / contentRect.height);
+    function validIdentity(value) {
+        return typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value);
     }
 
-    function dispatchPointer(startX, startY, endX, endY, durationMs, contentRect, sourceWidth, sourceHeight) {
-        if (sourceWidth <= 0 || sourceHeight <= 0)
+    function normalizedPoint(x, y, contentRect) {
+        if (contentRect.width <= 0 || contentRect.height <= 0
+                || x < contentRect.x || y < contentRect.y
+                || x > contentRect.x + contentRect.width
+                || y > contentRect.y + contentRect.height)
+            return null;
+        return Qt.point((x - contentRect.x) / contentRect.width,
+                        (y - contentRect.y) / contentRect.height);
+    }
+
+    function dispatchPointer(startX, startY, endX, endY, durationMs,
+                             contentRect, sourceWidth, sourceHeight,
+                             eventHelperEpoch, eventSessionGeneration) {
+        eventHelperEpoch = eventHelperEpoch === undefined
+                ? helperEpoch : eventHelperEpoch;
+        eventSessionGeneration = eventSessionGeneration === undefined
+                ? sessionGeneration : eventSessionGeneration;
+        if (sourceWidth <= 0 || sourceHeight <= 0
+                || eventHelperEpoch !== helperEpoch
+                || eventSessionGeneration !== sessionGeneration
+                || !validIdentity(eventHelperEpoch)
+                || !validIdentity(eventSessionGeneration))
             return false;
         var start = normalizedPoint(startX, startY, contentRect);
         var end = normalizedPoint(endX, endY, contentRect);
@@ -60,9 +108,14 @@ Item {
             return false;
         var distance = Math.hypot(endX - startX, endY - startY);
         if (distance <= 8) {
-            tapRequested(end.x, end.y, sourceWidth, sourceHeight);
+            tapRequested(end.x, end.y, sourceWidth, sourceHeight,
+                         eventHelperEpoch, eventSessionGeneration);
         } else {
-            swipeRequested(start.x, start.y, end.x, end.y, sourceWidth, sourceHeight, Math.max(1, Math.min(60000, Math.round(durationMs))));
+            swipeRequested(start.x, start.y, end.x, end.y,
+                           sourceWidth, sourceHeight,
+                           Math.max(1, Math.min(60000,
+                                                Math.round(durationMs))),
+                           eventHelperEpoch, eventSessionGeneration);
         }
         return true;
     }
@@ -96,30 +149,78 @@ Item {
             return "";
         }
     }
-    function applyInputFocus(active) {
-        if (active)
+
+    function dispatchKeyEvent(keyCode, modifiers, text) {
+        if (!inputActive || !validIdentity(helperEpoch)
+                || !validIdentity(sessionGeneration))
+            return false;
+        var compositorModifiers = Qt.ControlModifier | Qt.AltModifier
+                | Qt.MetaModifier | Qt.ShiftModifier;
+        if (modifiers & compositorModifiers)
+            return false;
+        var androidKey = androidKeyForQtKey(keyCode);
+        if (androidKey !== "") {
+            keyRequested(androidKey, helperEpoch, sessionGeneration);
+            return true;
+        }
+        if (text !== "" && text.length <= 2) {
+            textRequested(text, helperEpoch, sessionGeneration);
+            return true;
+        }
+        return false;
+    }
+
+    function applyInputFocus(focused) {
+        if (focused)
             forceActiveFocus();
         else
             focus = false;
     }
+
     function resetCurrentCaptureReadiness() {
+        captureSourceAcknowledged = false;
         firstValidFrameReceived = false;
     }
 
+    function recreateCapturePipeline() {
+        resetCurrentCaptureReadiness();
+        var pipelineEpoch = ++captureEpoch;
+        captureLoader.sourceComponent = null;
+        captureLoader.sourceComponent = capturePipelineComponent;
+        if (captureLoader.item !== null) {
+            captureLoader.item.epoch = pipelineEpoch;
+            captureLoader.item.helperEpochSnapshot = helperEpoch;
+            captureLoader.item.sessionGenerationSnapshot = sessionGeneration;
+            captureLoader.item.initialized = true;
+        }
+    }
+
+    function acceptCaptureSource(epoch, eventHelperEpoch,
+                                 eventSessionGeneration, id, description) {
+        if (epoch !== captureEpoch
+                || eventHelperEpoch !== helperEpoch
+                || eventSessionGeneration !== sessionGeneration
+                || !captureRequested
+                || id !== deviceId || description !== deviceDescription)
+            return false;
+        captureSourceAcknowledged = true;
+        return true;
+    }
+
+    function acceptRenderedFrame(epoch, eventHelperEpoch,
+                                 eventSessionGeneration) {
+        if (epoch !== captureEpoch
+                || eventHelperEpoch !== helperEpoch
+                || eventSessionGeneration !== sessionGeneration
+                || !captureRequested || !captureSourceAcknowledged)
+            return false;
+        firstValidFrameReceived = true;
+        return true;
+    }
+
     Keys.onPressed: function (event) {
-        if (!root.inputActive)
-            return;
-        var key = root.androidKeyForQtKey(event.key);
-        if (key !== "") {
-            root.keyRequested(key);
-            event.accepted = true;
-            return;
-        }
-        var blockedModifiers = Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier;
-        if (!(event.modifiers & blockedModifiers) && event.text !== "" && event.text.length <= 2) {
-            root.textRequested(event.text);
-            event.accepted = true;
-        }
+        event.accepted = root.dispatchKeyEvent(event.key, event.modifiers,
+                                               event.text);
     }
 
     onInputActiveChanged: {
@@ -131,26 +232,93 @@ Item {
             root.applyInputFocus(root.inputActive);
         });
     }
-
-    onCaptureRequestedChanged: resetCurrentCaptureReadiness()
-    onDeviceIndexChanged: resetCurrentCaptureReadiness()
-    onActiveChanged: {
-        if (!active)
+    onCaptureRequestedChanged: {
+        if (!captureRequested) {
             resetCurrentCaptureReadiness();
+        } else if (capturePipeline !== null) {
+            acceptCaptureSource(capturePipeline.epoch,
+                                capturePipeline.helperEpochSnapshot,
+                                capturePipeline.sessionGenerationSnapshot,
+                                capturePipeline.sourceDeviceId,
+                                capturePipeline.sourceDeviceDescription);
+        }
     }
+    onDeviceIndexChanged: recreateCapturePipeline()
+    onHelperEpochChanged: recreateCapturePipeline()
+    onSessionGenerationChanged: recreateCapturePipeline()
+    Component.onCompleted: recreateCapturePipeline()
 
     MediaDevices {
         id: mediaDevices
     }
 
-    CaptureSession {
-        camera: Camera {
-            id: camera
-            cameraDevice: root.deviceAvailable ? mediaDevices.videoInputs[root.deviceIndex] : mediaDevices.defaultVideoInput
-            onCameraDeviceChanged: root.resetCurrentCaptureReadiness()
-            active: root.captureRequested && root.deviceAvailable
+    Component {
+        id: capturePipelineComponent
+
+        Item {
+            id: pipeline
+            property int epoch: -1
+            property string helperEpochSnapshot: ""
+            property string sessionGenerationSnapshot: ""
+            property bool initialized: false
+            readonly property bool cameraActive: camera.active
+            readonly property rect contentRect: videoOutput.contentRect
+            readonly property string sourceDeviceId: String(camera.cameraDevice.id)
+            readonly property string sourceDeviceDescription:
+                camera.cameraDevice.description
+            readonly property rect sourceRect: videoOutput.sourceRect
+
+            Camera {
+                id: camera
+                cameraDevice: root.deviceAvailable
+                              ? mediaDevices.videoInputs[root.deviceIndex]
+                              : mediaDevices.defaultVideoInput
+                active: pipeline.initialized && root.captureRequested
+                        && root.deviceAvailable
+                onCameraDeviceChanged: {
+                    root.acceptCaptureSource(
+                                pipeline.epoch,
+                                pipeline.helperEpochSnapshot,
+                                pipeline.sessionGenerationSnapshot,
+                                pipeline.sourceDeviceId,
+                                pipeline.sourceDeviceDescription);
+                }
+                onActiveChanged: {
+                    if (active) {
+                        root.acceptCaptureSource(
+                                    pipeline.epoch,
+                                    pipeline.helperEpochSnapshot,
+                                    pipeline.sessionGenerationSnapshot,
+                                    pipeline.sourceDeviceId,
+                                    pipeline.sourceDeviceDescription);
+                    } else if (pipeline.epoch === root.captureEpoch) {
+                        root.resetCurrentCaptureReadiness();
+                    }
+                }
+            }
+
+            CaptureSession {
+                camera: camera
+                videoOutput: videoOutput
+            }
+
+            VideoOutput {
+                id: videoOutput
+                anchors.fill: parent
+                fillMode: VideoOutput.PreserveAspectFit
+            }
+
+            Connections {
+                target: videoOutput.videoSink
+                function onVideoFrameChanged(frame) {
+                    if (frame.isValid())
+                        root.acceptRenderedFrame(
+                                    pipeline.epoch,
+                                    pipeline.helperEpochSnapshot,
+                                    pipeline.sessionGenerationSnapshot);
+                }
+            }
         }
-        videoOutput: videoOutput
     }
 
     Rectangle {
@@ -158,10 +326,9 @@ Item {
         color: root.background
     }
 
-    VideoOutput {
-        id: videoOutput
+    Loader {
+        id: captureLoader
         anchors.fill: parent
-        fillMode: VideoOutput.PreserveAspectFit
     }
 
     MouseArea {
@@ -173,23 +340,23 @@ Item {
         property real pressX: 0
         property real pressY: 0
         property double pressedAt: 0
+        property string pressHelperEpoch: ""
+        property string pressSessionGeneration: ""
 
         onPressed: function (mouse) {
             root.forceActiveFocus();
             pressX = mouse.x;
             pressY = mouse.y;
             pressedAt = Date.now();
+            pressHelperEpoch = root.helperEpoch;
+            pressSessionGeneration = root.sessionGeneration;
         }
         onReleased: function (mouse) {
-            root.dispatchPointer(pressX, pressY, mouse.x, mouse.y, Date.now() - pressedAt, root.displayedContent, root.displayWidth, root.displayHeight);
-        }
-    }
-
-    Connections {
-        target: videoOutput.videoSink
-        function onVideoFrameChanged(frame) {
-            if (root.captureRequested && root.deviceAvailable && frame.isValid())
-                root.firstValidFrameReceived = true;
+            root.dispatchPointer(pressX, pressY, mouse.x, mouse.y,
+                                 Date.now() - pressedAt,
+                                 root.displayedContent,
+                                 root.displayWidth, root.displayHeight,
+                                 pressHelperEpoch, pressSessionGeneration);
         }
     }
 

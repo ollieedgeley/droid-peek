@@ -34,6 +34,12 @@ TestCase {
         signalName: "phoneTargetCompleted"
     }
 
+    SignalSpy {
+        id: preferenceFailureSpy
+        target: state
+        signalName: "preferenceUpdateFailed"
+    }
+
     function defaultPreferences(androidModeShortcuts) {
         return {
             keepConnected: false,
@@ -65,10 +71,12 @@ TestCase {
 
     function init() {
         state.reset()
+        state.hasTrustedDevice = false
         state.helperEpoch = "17"
         commandSpy.clear()
         cancellationSpy.clear()
         phoneTargetCompletedSpy.clear()
+        preferenceFailureSpy.clear()
         sessionStopSpy.clear()
     }
 
@@ -185,15 +193,16 @@ TestCase {
         compare(state.sessionStarted, false)
         compare(state.reason, "disconnected")
 
-        state.receiveLine(event("session-stopped", { sessionGeneration: "3" }))
-        compare(state.sessionGeneration, "3")
+        state.receiveLine(event("session-stopped", { sessionGeneration: "2" }))
+        compare(state.sessionGeneration, "2")
+        compare(state.pairingStage, "session-stopped")
         compare(sessionStopSpy.count, 1)
 
-        state.receiveLine(event("failure", {
+        state.receiveLine(event("lifecycle-failure", {
             reason: "network-unavailable",
-            sessionGeneration: "4"
+            sessionGeneration: "3"
         }))
-        compare(state.sessionGeneration, "4")
+        compare(state.sessionGeneration, "3")
         compare(state.sessionStarted, false)
         compare(state.reason, "network-unavailable")
     }
@@ -213,6 +222,7 @@ TestCase {
         compare(state.sessionGeneration, "2")
         compare(state.sessionStarted, false)
         compare(state.activity, "starting-preview")
+        verify(state.startOver())
 
         state.receiveLine(event("start-over-complete", {
             sessionGeneration: "3"
@@ -220,6 +230,42 @@ TestCase {
         compare(state.sessionGeneration, "3")
         compare(state.hasTrustedDevice, false)
         compare(state.sessionStarted, false)
+    }
+
+    function test_start_over_failure_restores_retryable_trusted_state() {
+        establishLiveSession()
+        verify(state.startOver())
+
+        state.receiveLine(event("failure", {
+            reason: "dependency-unavailable"
+        }))
+
+        compare(state.startOverPending, false)
+        compare(state.hasTrustedDevice, true)
+        compare(state.sessionStarted, false)
+        compare(state.sessionState, "disconnected")
+        compare(state.pairingStage, "failed")
+        compare(state.statusTitle, "Start over failed")
+    }
+
+    function test_live_preference_failure_preserves_confirmed_values() {
+        establishLiveSession()
+        verify(state.setPreferences(
+                   true, 150, "low", ["home", "recent-apps", "back"], false))
+        compare(state.keepConnected, false)
+        compare(state.previewScale, 100)
+        compare(state.videoQuality, "high")
+        compare(state.androidModeShortcuts, true)
+
+        state.receiveLine(event("failure", {
+            reason: "dependency-unavailable"
+        }))
+
+        compare(preferenceFailureSpy.count, 1)
+        compare(state.keepConnected, false)
+        compare(state.previewScale, 100)
+        compare(state.videoQuality, "high")
+        compare(state.androidModeShortcuts, true)
     }
 
     function test_preferences_without_restart_do_not_change_session_identity() {
@@ -240,24 +286,46 @@ TestCase {
         compare(state.androidModeShortcuts, false)
     }
 
-    function test_action_results_never_change_session_availability_facts() {
+    function test_action_results_use_protocol_v11_wire_values_without_changing_session_facts() {
         establishLiveSession()
 
         state.receiveLine(event("action-result", {
             requestId: "request-1",
-            outcome: "action-failed",
-            notificationCode: "browser-unavailable",
+            outcome: "failed",
+            notificationCode: "target-failed",
+            sessionGeneration: "1"
+        }))
+        state.receiveLine(event("action-result", {
+            requestId: "request-2",
+            outcome: "completed",
+            sessionGeneration: "1"
+        }))
+        state.receiveLine(event("action-result", {
+            requestId: "request-3",
+            outcome: "stale-session",
             sessionGeneration: "1"
         }))
 
+        state.receiveLine(event("action-result", {
+            requestId: "legacy-request",
+            outcome: "action-failed",
+            notificationCode: "target-failed",
+            sessionGeneration: "1"
+        }))
         compare(state.sessionGeneration, "1")
         compare(state.sessionStarted, true)
         compare(state.hasTrustedDevice, true)
-        compare(phoneTargetCompletedSpy.count, 1)
+        compare(phoneTargetCompletedSpy.count, 3)
+        compare(phoneTargetCompletedSpy.signalArguments[0].length, 3)
         compare(phoneTargetCompletedSpy.signalArguments[0][0], "request-1")
-        compare(phoneTargetCompletedSpy.signalArguments[0][1], "action-failed")
-        compare(phoneTargetCompletedSpy.signalArguments[0][2],
-                "browser-unavailable")
+        compare(phoneTargetCompletedSpy.signalArguments[0][1], "failed")
+        compare(phoneTargetCompletedSpy.signalArguments[0][2], "target-failed")
+        compare(phoneTargetCompletedSpy.signalArguments[1][0], "request-2")
+        compare(phoneTargetCompletedSpy.signalArguments[1][1], "completed")
+        compare(phoneTargetCompletedSpy.signalArguments[1][2], "")
+        compare(phoneTargetCompletedSpy.signalArguments[2][0], "request-3")
+        compare(phoneTargetCompletedSpy.signalArguments[2][1], "stale-session")
+        compare(phoneTargetCompletedSpy.signalArguments[2][2], "")
     }
 
     function test_stale_and_missing_epoch_events_are_ignored_before_any_fact_change() {
@@ -298,20 +366,89 @@ TestCase {
         compare(state.activity, "connecting")
     }
 
-    function test_helper_epoch_change_resets_generation_baseline_and_facts() {
+    function test_helper_epoch_change_preserves_trusted_fact_until_ready_baseline() {
         establishLiveSession()
+        state.reset()
+        compare(state.hasTrustedDevice, true)
 
         state.helperEpoch = "18"
 
         compare(state.helperReady, false)
+        compare(state.hasTrustedDevice, true)
+        compare(state.sessionState, "disconnected")
         compare(state.sessionGeneration, "")
         compare(state.sessionStarted, false)
         state.receiveLine(event("ready", {
-            hasTrustedDevice: true,
+            hasTrustedDevice: false,
             sessionGeneration: "0"
         }, "18"))
         compare(state.helperReady, true)
+        compare(state.hasTrustedDevice, false)
         compare(state.sessionGeneration, "0")
+    }
+
+    function test_start_over_clears_live_facts_and_rejects_session_reentry() {
+        establishLiveSession()
+        commandSpy.clear()
+
+        verify(state.startOver())
+        compare(state.hasTrustedDevice, false)
+        compare(state.sessionStarted, false)
+        compare(state.startOverPending, true)
+        compare(state.pairingStage, "starting-over")
+        compare(commandAt(0).type, "start-over")
+
+        state.receiveLine(event("session-started", {
+            sessionGeneration: "1"
+        }))
+        compare(state.sessionStarted, false)
+        compare(state.pairingStage, "starting-over")
+
+        state.receiveLine(event("session-ended", {
+            sessionGeneration: "2"
+        }))
+        state.receiveLine(event("start-over-complete", {
+            sessionGeneration: "2"
+        }))
+        compare(state.startOverPending, false)
+        compare(state.hasTrustedDevice, false)
+        compare(state.sessionGeneration, "2")
+    }
+
+    function test_epoch_only_failure_is_handled_during_setup_but_not_live() {
+        establishTrustedBaseline()
+        state.receiveLine(event("failure", {
+            reason: "network-unavailable"
+        }))
+        compare(state.reason, "network-unavailable")
+        compare(state.hasTrustedDevice, true)
+
+        establishLiveSession()
+        state.receiveLine(event("failure", {
+            reason: "dependency-unavailable"
+        }))
+        compare(state.sessionStarted, true)
+        compare(state.reason, "")
+    }
+
+    function test_local_integration_failure_fails_closed_until_helper_restart() {
+        establishLiveSession()
+
+        state.localIntegrationFailure()
+        compare(state.helperReady, false)
+        compare(state.hasTrustedDevice, true)
+        compare(state.sessionStarted, false)
+        compare(state.localIntegrationAvailable, false)
+        compare(state.reason, "dependency-unavailable")
+
+        state.receiveLine(event("session-started", {
+            sessionGeneration: "1"
+        }))
+        compare(state.sessionStarted, false)
+
+        state.helperEpoch = "18"
+        compare(state.localIntegrationAvailable, true)
+        compare(state.hasTrustedDevice, true)
     }
 
     function test_session_bound_commands_carry_both_decimal_string_identities() {

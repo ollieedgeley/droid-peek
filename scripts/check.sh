@@ -27,12 +27,12 @@ run_check() {
 }
 
 run_check "validate plugin manifest" omarchy plugin validate .
-run_check "test semantic action dispatcher" tests/semantic-action-dispatcher.sh
-run_check "test Hyprland integration" lua tests/hyprland-integration.lua integrations/hyprland.lua
-run_check "test Hyprland routing configuration" lua tests/hyprland-routing-config.lua integrations/hyprland.lua
+run_check "test phone-binding configurator" tests/semantic-action-dispatcher.sh
+run_check "test phone-binding API" lua tests/hyprland-integration.lua integrations/phone-bindings.lua
+run_check "test phone-binding template" lua tests/hyprland-routing-config.lua integrations/phone-bindings.lua
 run_check "check architecture contracts" scripts/check-architecture.sh
-run_check "lint QML" "$qt6_bin/qmllint" -I "$lint_root" BarWidget.qml Panel.qml qml/components/NestedEscapeScope.qml qml/components/PhonePreview.qml qml/components/PhoneToolbar.qml qml/components/Settings.qml qml/state/PairingState.qml qml/state/SemanticActionRouter.qml
-run_check "run QML tests" "$qt6_bin/qmltestrunner" -input tests/qml
+run_check "lint QML" "$qt6_bin/qmllint" -I "$lint_root" BarWidget.qml Panel.qml qml/components/NestedEscapeScope.qml qml/components/PhonePreview.qml qml/components/PhoneToolbar.qml qml/components/Settings.qml qml/state/ApplicationState.qml qml/state/PairingState.qml qml/state/PhoneTargetRouter.qml qml/state/SubmapController.qml
+run_check "run QML tests" "$qt6_bin/qmltestrunner" -import "$lint_root" -input tests/qml
 run_check "check Rust formatting" cargo fmt --manifest-path helper/Cargo.toml -- --check
 run_check "lint Rust" cargo clippy --manifest-path helper/Cargo.toml --all-targets --all-features --locked -- -D warnings
 run_check "test Rust helper" cargo nextest run --manifest-path helper/Cargo.toml --locked

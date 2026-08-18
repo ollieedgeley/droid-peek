@@ -2,8 +2,8 @@ use omarchy_android_helper::actions::PhoneTarget;
 use omarchy_android_helper::input::{AndroidKey, DisplayGeometry, NormalizedPoint};
 use omarchy_android_helper::preferences::{Preferences, PreviewScale, QuickAction, VideoQuality};
 use omarchy_android_helper::protocol::{
-    ActionFailureCode, Event, FailureReason, PairingBackend, PhoneTargetFailure, ProtocolEngine,
-    QrPresentation, PROTOCOL_VERSION,
+    ActionFailureCode, Event, FailureReason, PROTOCOL_VERSION, PairingBackend,
+    PairingRequestFailure, PhoneTargetFailure, ProtocolEngine, QrPresentation,
 };
 
 const HELPER_EPOCH: &str = "73001";
@@ -34,7 +34,7 @@ struct FakePairingBackend {
 }
 
 impl PairingBackend for FakePairingBackend {
-    fn start_qr_pairing(&mut self) -> Result<QrPresentation, FailureReason> {
+    fn start_qr_pairing(&mut self) -> Result<QrPresentation, PairingRequestFailure> {
         Ok(QrPresentation {
             artifact: "/run/user/1000/omarchy-android/qr.svg".into(),
             expires_in_seconds: 120,
@@ -45,7 +45,7 @@ impl PairingBackend for FakePairingBackend {
         self.pairing_cancels += 1;
     }
 
-    fn submit_manual_code(&mut self, code: &str) -> Result<(), FailureReason> {
+    fn submit_manual_code(&mut self, code: &str) -> Result<(), PairingRequestFailure> {
         self.manual_codes.push(code.to_owned());
         Ok(())
     }
@@ -233,14 +233,24 @@ fn manual_code_is_consumed_without_appearing_in_events() {
 fn reconnect_stop_and_start_over_advance_generation_before_their_events() {
     let mut engine = engine(FakePairingBackend::default());
 
-    for (command, event_type, generation) in [
-        ("reconnect-trusted-device", "connecting", "1"),
-        ("stop-session", "session-stopped", "2"),
-        ("start-over", "start-over-complete", "3"),
+    for (command, identity, event_type, generation) in [
+        ("reconnect-trusted-device", "", "connecting", "1"),
+        (
+            "stop-session",
+            r#","sessionGeneration":"1""#,
+            "session-stopped",
+            "2",
+        ),
+        (
+            "start-over",
+            r#","sessionGeneration":"2""#,
+            "start-over-complete",
+            "3",
+        ),
     ] {
         assert_eq!(
             wire_lines(engine.handle_line(&format!(
-                r#"{{"version":11,"type":"{command}","helperEpoch":"{HELPER_EPOCH}"}}"#
+                r#"{{"version":11,"type":"{command}","helperEpoch":"{HELPER_EPOCH}"{identity}}}"#
             ))),
             [format!(
                 r#"{{"version":11,"type":"{event_type}","helperEpoch":"{HELPER_EPOCH}","sessionGeneration":"{generation}"}}"#
@@ -292,7 +302,9 @@ fn missing_or_retired_preference_fields_do_not_reach_the_backend() {
     ] {
         assert_eq!(
             wire_lines(engine.handle_line(command)),
-            [r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"invalid-command"}"#]
+            [
+                r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"invalid-command"}"#
+            ]
         );
     }
     assert!(engine.into_backend().preference_updates.is_empty());
@@ -319,8 +331,10 @@ fn matching_session_bound_input_is_validated_and_forwarded() {
 
 #[test]
 fn stale_or_missing_identity_rejects_every_session_bound_command_before_backend_work() {
-    let mut backend = FakePairingBackend::default();
-    backend.session_generation = 7;
+    let backend = FakePairingBackend {
+        session_generation: 7,
+        ..FakePairingBackend::default()
+    };
     let mut engine = engine(backend);
     let commands = [
         r#"{"version":11,"type":"pointer-tap","helperEpoch":"73000","sessionGeneration":"7","x":0.5,"y":0.5,"displayWidth":1080,"displayHeight":2400}"#,
@@ -347,6 +361,29 @@ fn stale_or_missing_identity_rejects_every_session_bound_command_before_backend_
     assert!(backend.keys.is_empty());
     assert!(backend.texts.is_empty());
     assert!(backend.phone_targets.is_empty());
+}
+
+#[test]
+fn invalid_phone_target_request_ids_are_rejected_before_stale_identity_can_echo_them() {
+    let backend = FakePairingBackend {
+        session_generation: 7,
+        ..FakePairingBackend::default()
+    };
+    let mut engine = engine(backend);
+
+    for command in [
+        r#"{"version":11,"type":"phone-target","helperEpoch":"73000","sessionGeneration":"7","requestId":"invalid/request","expiresAtUnixMs":1750000000001,"target":"android.navigate.home"}"#,
+        r#"{"version":11,"type":"phone-target","helperEpoch":"73001","sessionGeneration":"6","requestId":"invalid request","expiresAtUnixMs":1750000000001,"target":"android.navigate.home"}"#,
+    ] {
+        assert_eq!(
+            wire_lines(engine.handle_line(command)),
+            [
+                r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"invalid-command"}"#
+            ]
+        );
+    }
+
+    assert!(engine.into_backend().phone_targets.is_empty());
 }
 
 #[test]
@@ -402,9 +439,7 @@ fn action_only_failure_is_typed_and_does_not_emit_a_lifecycle_failure() {
 #[test]
 fn proven_transport_failure_is_a_separate_generation_advancing_lifecycle_event() {
     let mut engine = engine(FakePairingBackend {
-        phone_target_failure: Some(PhoneTargetFailure::Lifecycle(
-            FailureReason::Disconnected,
-        )),
+        phone_target_failure: Some(PhoneTargetFailure::Lifecycle(FailureReason::Disconnected)),
         ..FakePairingBackend::default()
     });
 
@@ -444,21 +479,24 @@ fn malformed_unknown_and_v10_commands_fail_without_echoing_input() {
     let mut engine = engine(FakePairingBackend::default());
     let secret = "do-not-echo";
     let malformed = wire_lines(engine.handle_line(&format!(r#"{{"secret":"{secret}"}}"#)));
-    let unknown = wire_lines(engine.handle_line(
-        r#"{"version":11,"type":"unknown","helperEpoch":"73001"}"#,
-    ));
-    let retired = wire_lines(engine.handle_line(
-        r#"{"version":10,"type":"start-qr-pairing","helperEpoch":"73001"}"#,
-    ));
+    let unknown =
+        wire_lines(engine.handle_line(r#"{"version":11,"type":"unknown","helperEpoch":"73001"}"#));
+    let retired = wire_lines(
+        engine.handle_line(r#"{"version":10,"type":"start-qr-pairing","helperEpoch":"73001"}"#),
+    );
 
     assert_eq!(
         malformed,
-        [r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"invalid-command"}"#]
+        [
+            r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"invalid-command"}"#
+        ]
     );
     assert_eq!(unknown, malformed);
     assert_eq!(
         retired,
-        [r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"version-mismatch"}"#]
+        [
+            r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"version-mismatch"}"#
+        ]
     );
     assert!(malformed.iter().all(|event| !event.contains(secret)));
 }

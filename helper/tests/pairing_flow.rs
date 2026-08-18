@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use omarchy_android_helper::{
     persistence::TrustedDevice,
     process::{CommandFailure, CommandOutput, CommandRequest, CommandRunner},
-    protocol::{Event, FailureReason, PairingMethod},
+    protocol::{FailureReason, PairingEvent as Event, PairingMethod},
     wireless::{
         CancellationToken, DiscoveryFailure, PairingEndpoint, PairingFlow, WirelessDiscovery,
     },

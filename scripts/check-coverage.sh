@@ -45,7 +45,6 @@ check_file() {
 }
 
 printf '%s\n' '==> enforce focused Rust line coverage'
-check_file action_results.rs 90
 check_file actions.rs 90
 check_file input.rs 85
 check_file pairing.rs 90

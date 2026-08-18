@@ -13,23 +13,23 @@ use std::{
 use zeroize::Zeroizing;
 
 use crate::{
-    action_results::ActionResultStore,
-    actions::{
-        ActionResult, AdbActionAdapter, SemanticAction, bundled_action_manifest, resolve_action,
-    },
+    actions::{AdbActionAdapter, PhoneTarget},
     input::{AdbInputAdapter, AndroidKey, DisplayGeometry, InputFailure, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
     preferences::{FilePreferenceStore, Preferences, VideoQuality},
     private_fs::ensure_private_directory,
     process::{AdbCommandRunner, CancellationToken, CommandFailure, CommandRequest, CommandRunner},
-    protocol::{Event, FailureReason, PairingBackend, PairingMethod, QrPresentation},
+    protocol::{
+        ActionFailureCode, Event, FailureReason, PairingBackend, PairingEvent, PairingMethod,
+        PairingRequestFailure, PhoneTargetFailure, QrPresentation,
+    },
     qr::{QrCeremony, RuntimeQrRenderer, SystemClock, SystemEntropy},
     session::{ScrcpySessionRunner, SessionExit, SessionFailure, SessionRunner},
     wireless::{AvahiDiscovery, PairingFlow, WirelessDiscovery},
 };
 
-const MAX_SEMANTIC_DEADLINE_AHEAD_MS: u64 = 5_000;
-const MAX_SEMANTIC_EXECUTION_MS: u64 = 750;
+const MAX_PHONE_TARGET_DEADLINE_AHEAD_MS: u64 = 2_000;
+const MAX_PHONE_TARGET_EXECUTION_MS: u64 = 750;
 const MAX_LOCAL_COMMAND_MS: u64 = 750;
 
 pub trait ProtocolSink: Clone + Send + 'static {
@@ -147,19 +147,20 @@ struct SessionControl {
     target: Arc<Mutex<Option<String>>>,
     generation: Arc<AtomicU64>,
     cancellation: CancellationToken,
+    helper_epoch: String,
 }
 
 impl SessionControl {
-    fn start<S>(&self, quality: VideoQuality, sink: S) -> impl FnOnce(String) + Send + 'static
+    fn start<S>(&self, quality: VideoQuality, sink: S) -> impl FnOnce(String, u64) + Send + 'static
     where
         S: ProtocolSink,
     {
         let runner = Arc::clone(&self.runner);
         let target = Arc::clone(&self.target);
         let generation = Arc::clone(&self.generation);
-        let expected_generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
         let cancellation = self.cancellation.clone();
-        move |connected_target| {
+        let helper_epoch = self.helper_epoch.clone();
+        move |connected_target, expected_generation| {
             thread::spawn(move || {
                 if cancellation.is_cancelled()
                     || generation.load(Ordering::Acquire) != expected_generation
@@ -167,36 +168,60 @@ impl SessionControl {
                     return;
                 }
                 let result = match runner.lock() {
-                    Ok(mut session) => match session.as_mut() {
-                        Some(session) => {
-                            session.set_quality(quality);
-                            if let Ok(mut active) = target.lock() {
-                                *active = Some(connected_target.clone());
-                            } else {
-                                return;
-                            }
-                            let _ = sink.emit_event(&Event::SessionStarting);
-                            session.run(&connected_target, &cancellation, &mut |physical_display| {
-                                if !cancellation.is_cancelled()
-                                    && generation.load(Ordering::Acquire) == expected_generation
-                                {
-                                    let _ = sink.emit_event(&Event::SessionStarted {
-                                        physical_width_mm: physical_display
-                                            .map(|size| size.width_mm()),
-                                        physical_height_mm: physical_display
-                                            .map(|size| size.height_mm()),
-                                    });
-                                }
-                            })
+                    Ok(mut session) => {
+                        if cancellation.is_cancelled()
+                            || generation.load(Ordering::Acquire) != expected_generation
+                        {
+                            return;
                         }
-                        None => return,
-                    },
+                        match session.as_mut() {
+                            Some(session) => {
+                                session.set_quality(quality);
+                                if cancellation.is_cancelled()
+                                    || generation.load(Ordering::Acquire) != expected_generation
+                                {
+                                    return;
+                                }
+                                if let Ok(mut active) = target.lock() {
+                                    *active = Some(connected_target.clone());
+                                } else {
+                                    return;
+                                }
+                                let session_generation = expected_generation.to_string();
+                                let _ = sink.emit_event(&Event::SessionStarting {
+                                    helper_epoch: helper_epoch.clone(),
+                                    session_generation: session_generation.clone(),
+                                });
+                                session.run(
+                                    &connected_target,
+                                    &cancellation,
+                                    &mut |physical_display| {
+                                        if !cancellation.is_cancelled()
+                                            && generation.load(Ordering::Acquire)
+                                                == expected_generation
+                                        {
+                                            let _ = sink.emit_event(&Event::SessionStarted {
+                                                helper_epoch: helper_epoch.clone(),
+                                                session_generation: session_generation.clone(),
+                                                physical_width_mm: physical_display
+                                                    .map(|size| size.width_mm()),
+                                                physical_height_mm: physical_display
+                                                    .map(|size| size.height_mm()),
+                                            });
+                                        }
+                                    },
+                                )
+                            }
+                            None => return,
+                        }
+                    }
                     Err(_) => Err(SessionFailure::DependencyUnavailable),
                 };
+                let ended_generation = expected_generation + 1;
                 if generation
                     .compare_exchange(
                         expected_generation,
-                        expected_generation + 1,
+                        ended_generation,
                         Ordering::AcqRel,
                         Ordering::Acquire,
                     )
@@ -204,29 +229,34 @@ impl SessionControl {
                 {
                     return;
                 }
-                let event = match result {
-                    Ok(SessionExit::Ended) => Some(Event::SessionEnded),
-                    Ok(SessionExit::Stopped) => None,
-                    Err(SessionFailure::DependencyUnavailable) => Some(Event::Failure {
-                        reason: FailureReason::DependencyUnavailable,
-                    }),
-                    Err(SessionFailure::Disconnected) => Some(Event::Failure {
-                        reason: FailureReason::Disconnected,
-                    }),
-                };
+                cancellation.cancel();
                 if let Ok(mut active) = target.lock() {
                     *active = None;
                 }
-                if let Some(event) = event {
-                    let _ = sink.emit_event(&event);
-                }
+                let session_generation = ended_generation.to_string();
+                let event = match result {
+                    Ok(SessionExit::Ended | SessionExit::Stopped) => Event::SessionEnded {
+                        helper_epoch,
+                        session_generation,
+                    },
+                    Err(SessionFailure::DependencyUnavailable) => Event::LifecycleFailure {
+                        helper_epoch,
+                        session_generation,
+                        reason: FailureReason::DependencyUnavailable,
+                    },
+                    Err(SessionFailure::Disconnected) => Event::LifecycleFailure {
+                        helper_epoch,
+                        session_generation,
+                        reason: FailureReason::Disconnected,
+                    },
+                };
+                let _ = sink.emit_event(&event);
             });
         }
     }
 
     fn stop_and_wait(&mut self) {
         self.cancellation.cancel();
-        self.generation.fetch_add(1, Ordering::AcqRel);
         if let Ok(session) = self.runner.lock() {
             drop(session);
         }
@@ -234,6 +264,12 @@ impl SessionControl {
             *target = None;
         }
         self.cancellation = CancellationToken::new();
+    }
+
+    fn invalidate_and_wait(&mut self) -> u64 {
+        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        self.stop_and_wait();
+        generation
     }
 
     fn restart<S>(
@@ -245,7 +281,7 @@ impl SessionControl {
     where
         S: ProtocolSink,
     {
-        self.stop_and_wait();
+        let generation = self.invalidate_and_wait();
         if self
             .runner
             .lock()
@@ -254,7 +290,7 @@ impl SessionControl {
         {
             return Err(FailureReason::DependencyUnavailable);
         }
-        self.start(quality, sink)(target);
+        self.start(quality, sink)(target, generation);
         Ok(())
     }
 
@@ -268,6 +304,26 @@ impl SessionControl {
     fn child_cancellation(&self) -> CancellationToken {
         self.cancellation.clone()
     }
+
+    fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+}
+
+pub struct RuntimeDependencies<D, R> {
+    discovery: D,
+    runner: R,
+    session: Option<Box<dyn SessionRunner + Send>>,
+}
+
+impl<D, R> RuntimeDependencies<D, R> {
+    pub fn new(discovery: D, runner: R, session: Option<Box<dyn SessionRunner + Send>>) -> Self {
+        Self {
+            discovery,
+            runner,
+            session,
+        }
+    }
 }
 
 pub struct RuntimePairingBackend<S> {
@@ -276,6 +332,7 @@ pub struct RuntimePairingBackend<S> {
     session: SessionControl,
     lifetime: Duration,
     sink: S,
+    helper_epoch: String,
     generation: Arc<AtomicU64>,
     cancellation: CancellationToken,
     pending: Option<PendingPairing>,
@@ -283,8 +340,6 @@ pub struct RuntimePairingBackend<S> {
     preference_store: FilePreferenceStore,
     preferences: Preferences,
     trusted_device: Arc<Mutex<Option<TrustedDevice>>>,
-    action_manifest: crate::actions::ActionManifest,
-    action_results: ActionResultStore,
     pending_reconnect: Option<PendingReconnect>,
 }
 
@@ -296,20 +351,24 @@ where
         runtime_directory: impl AsRef<Path>,
         state_directory: impl AsRef<Path>,
         lifetime: Duration,
+        helper_epoch: impl Into<String>,
         sink: S,
     ) -> io::Result<Self> {
-        let session: Box<dyn SessionRunner + Send> = Box::new(ScrcpySessionRunner::new(
-            "scrcpy",
+        let session: Box<dyn SessionRunner + Send> = Box::new(ScrcpySessionRunner::new_guarded(
+            env::current_exe()?,
             Duration::from_millis(25),
         ));
         Self::with_dependencies(
             runtime_directory,
             state_directory,
             lifetime,
+            helper_epoch,
             sink,
-            AvahiDiscovery::new("avahi-browse", lifetime, Duration::from_millis(25)),
-            AdbCommandRunner::new("adb", Duration::from_millis(25)),
-            Some(session),
+            RuntimeDependencies::new(
+                AvahiDiscovery::new("avahi-browse", lifetime, Duration::from_millis(25)),
+                AdbCommandRunner::new("adb", Duration::from_millis(25)),
+                Some(session),
+            ),
         )
     }
 
@@ -317,10 +376,9 @@ where
         runtime_directory: impl AsRef<Path>,
         state_directory: impl AsRef<Path>,
         lifetime: Duration,
+        helper_epoch: impl Into<String>,
         sink: S,
-        discovery: D,
-        runner: R,
-        session: Option<Box<dyn SessionRunner + Send>>,
+        dependencies: RuntimeDependencies<D, R>,
     ) -> io::Result<Self>
     where
         D: WirelessDiscovery + Send + 'static,
@@ -328,7 +386,6 @@ where
     {
         let state_directory = state_directory.as_ref();
         ensure_private_directory(state_directory)?;
-        let action_results = ActionResultStore::new(runtime_directory.as_ref())?;
         let ceremony = QrCeremony::new(
             SystemEntropy::new()?,
             SystemClock::new(),
@@ -339,26 +396,23 @@ where
         let trusted_device = store.load()?;
         let preference_store = FilePreferenceStore::new(state_directory);
         let preferences = preference_store.load()?;
-        let action_manifest = bundled_action_manifest().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "bundled action manifest is invalid",
-            )
-        })?;
+        let helper_epoch = helper_epoch.into();
         Ok(Self {
             ceremony: Arc::new(Mutex::new(ceremony)),
             flow: Arc::new(Mutex::new(PairingFlow::new(
-                Box::new(discovery),
-                Box::new(runner),
+                Box::new(dependencies.discovery),
+                Box::new(dependencies.runner),
             ))),
             session: SessionControl {
-                runner: Arc::new(Mutex::new(session)),
+                runner: Arc::new(Mutex::new(dependencies.session)),
                 target: Arc::new(Mutex::new(None)),
                 generation: Arc::new(AtomicU64::new(0)),
                 cancellation: CancellationToken::new(),
+                helper_epoch: helper_epoch.clone(),
             },
             lifetime,
             sink,
+            helper_epoch,
             generation: Arc::new(AtomicU64::new(0)),
             cancellation: CancellationToken::new(),
             pending: None,
@@ -366,10 +420,21 @@ where
             preference_store,
             preferences,
             trusted_device: Arc::new(Mutex::new(trusted_device)),
-            action_manifest,
-            action_results,
             pending_reconnect: None,
         })
+    }
+
+    fn stop_for_pairing(&mut self) -> Result<(), PairingRequestFailure> {
+        if self
+            .session
+            .target()
+            .map_err(PairingRequestFailure::Backend)?
+            .is_some()
+        {
+            return Err(PairingRequestFailure::InvalidState);
+        }
+        self.session.stop_and_wait();
+        Ok(())
     }
 
     fn run_input(
@@ -381,7 +446,11 @@ where
             .session
             .child_cancellation()
             .child_with_timeout(Duration::from_millis(timeout_ms));
-        self.run_input_with_cancellation(&cancellation, operation)
+        let result = self.run_input_with_cancellation(&cancellation, operation);
+        if result.is_err() {
+            self.session.invalidate_and_wait();
+        }
+        result
     }
 
     fn run_input_with_cancellation(
@@ -401,31 +470,14 @@ where
         })
     }
 
-    fn run_action(
-        &mut self,
-        cancellation: &CancellationToken,
-        operation: impl FnOnce(&mut AdbActionAdapter<'_>, &str) -> Result<bool, CommandFailure>,
-    ) -> Result<bool, FailureReason> {
-        let target = self.session.target()?.ok_or(FailureReason::Disconnected)?;
-        let mut flow = self
-            .flow
-            .lock()
-            .map_err(|_| FailureReason::DependencyUnavailable)?;
-        let mut adapter = AdbActionAdapter::new(flow.runner_mut().as_mut(), cancellation);
-        operation(&mut adapter, &target).map_err(|failure| match failure {
-            CommandFailure::DependencyUnavailable => FailureReason::DependencyUnavailable,
-            CommandFailure::Unauthorized => FailureReason::Unauthorized,
-            CommandFailure::Cancelled => FailureReason::Disconnected,
-        })
-    }
-
     fn launch_pending(&mut self) {
         let Some(pending) = self.pending.take() else {
             return;
         };
         let pending_generation = pending.generation;
         let pending_method = pending.method;
-
+        let public_generation = Arc::clone(&self.session.generation);
+        let helper_epoch = self.helper_epoch.clone();
         let flow = Arc::clone(&self.flow);
         let ceremony = Arc::clone(&self.ceremony);
         let generation = Arc::clone(&self.generation);
@@ -437,6 +489,8 @@ where
             .session
             .start(self.preferences.video_quality, self.sink.clone());
         let worker_cancellation = cancellation.clone();
+        let progress_epoch = helper_epoch.clone();
+        let progress_sink = sink.clone();
         thread::spawn(move || {
             let mut terminal_event = None;
             let mut paired_device = None;
@@ -444,9 +498,12 @@ where
             match flow.lock() {
                 Ok(mut flow) => {
                     let mut capture = |event| match event {
-                        event @ Event::Pairing { .. } => {
+                        PairingEvent::Pairing { method } => {
                             if generation.load(Ordering::Acquire) == pending_generation {
-                                let _ = sink.emit_event(&event);
+                                let _ = progress_sink.emit_event(&Event::Pairing {
+                                    helper_epoch: progress_epoch.clone(),
+                                    method,
+                                });
                             }
                         }
                         event => terminal_event = Some(event),
@@ -470,7 +527,7 @@ where
                     connected_target = flow.take_connected_target();
                 }
                 Err(_) => {
-                    terminal_event = Some(Event::Failure {
+                    terminal_event = Some(PairingEvent::Failure {
                         reason: FailureReason::DependencyUnavailable,
                     });
                 }
@@ -489,7 +546,7 @@ where
                 if let Ok(mut ceremony) = ceremony.lock() {
                     ceremony.cancel();
                 }
-                if matches!(terminal_event, Some(Event::Paired))
+                if matches!(terminal_event, Some(PairingEvent::Paired))
                     && let Some(device) = paired_device
                 {
                     if store.save(&device).is_ok() {
@@ -497,18 +554,23 @@ where
                             *remembered = Some(device);
                         }
                     } else {
-                        terminal_event = Some(Event::Failure {
+                        terminal_event = Some(PairingEvent::Failure {
                             reason: FailureReason::DependencyUnavailable,
                         });
                     }
                 }
-                let starts_session =
-                    matches!(terminal_event, Some(Event::Paired)) && connected_target.is_some();
+                let paired = matches!(terminal_event, Some(PairingEvent::Paired));
+                let starts_session = paired && connected_target.is_some();
+                let event_generation = if paired {
+                    public_generation.fetch_add(1, Ordering::AcqRel) + 1
+                } else {
+                    public_generation.load(Ordering::Acquire)
+                };
                 if let Some(event) = terminal_event {
-                    let _ = sink.emit_event(&event);
+                    let _ = sink.emit_event(&pairing_event(&helper_epoch, event_generation, event));
                 }
                 if starts_session && let Some(connected_target) = connected_target {
-                    start_session(connected_target);
+                    start_session(connected_target, event_generation);
                 }
             }
         });
@@ -516,6 +578,7 @@ where
         let ceremony = Arc::clone(&self.ceremony);
         let generation = Arc::clone(&self.generation);
         let sink = self.sink.clone();
+        let helper_epoch = self.helper_epoch.clone();
         let lifetime = self.lifetime;
         thread::spawn(move || {
             thread::sleep(lifetime);
@@ -533,9 +596,10 @@ where
                     ceremony.cancel();
                 }
                 let event = if pending_method == PairingMethod::Qr {
-                    Event::QrTimedOut
+                    Event::QrTimedOut { helper_epoch }
                 } else {
                     Event::Failure {
+                        helper_epoch,
                         reason: FailureReason::NetworkUnavailable,
                     }
                 };
@@ -543,16 +607,18 @@ where
             }
         });
     }
-
     fn launch_reconnect(&mut self) {
         let Some(pending) = self.pending_reconnect.take() else {
             return;
         };
         let flow = Arc::clone(&self.flow);
         let generation = Arc::clone(&self.generation);
+        let session_generation = Arc::clone(&self.session.generation);
+        let expected_session_generation = self.session.generation();
         let cancellation = self.cancellation.clone();
         let worker_cancellation = cancellation.clone();
         let sink = self.sink.clone();
+        let helper_epoch = self.helper_epoch.clone();
         let start_session = self
             .session
             .start(self.preferences.video_quality, self.sink.clone());
@@ -567,7 +633,7 @@ where
                     connected_target = flow.take_connected_target();
                 }
                 Err(_) => {
-                    terminal_event = Some(Event::Failure {
+                    terminal_event = Some(PairingEvent::Failure {
                         reason: FailureReason::DependencyUnavailable,
                     });
                 }
@@ -582,16 +648,90 @@ where
                 .is_ok()
             {
                 worker_cancellation.cancel();
-                let starts_session =
-                    matches!(terminal_event, Some(Event::Connected)) && connected_target.is_some();
+                let starts_session = matches!(terminal_event, Some(PairingEvent::Connected))
+                    && connected_target.is_some();
                 if let Some(event) = terminal_event {
+                    let event = match event {
+                        PairingEvent::Connected => Event::Connected {
+                            helper_epoch: helper_epoch.clone(),
+                            session_generation: expected_session_generation.to_string(),
+                        },
+                        PairingEvent::Failure { reason } => {
+                            let failed_generation = expected_session_generation + 1;
+                            if session_generation
+                                .compare_exchange(
+                                    expected_session_generation,
+                                    failed_generation,
+                                    Ordering::AcqRel,
+                                    Ordering::Acquire,
+                                )
+                                .is_err()
+                            {
+                                return;
+                            }
+                            Event::LifecycleFailure {
+                                helper_epoch: helper_epoch.clone(),
+                                session_generation: failed_generation.to_string(),
+                                reason,
+                            }
+                        }
+                        PairingEvent::PairingCancelled => return,
+                        PairingEvent::Pairing { .. }
+                        | PairingEvent::QrTimedOut
+                        | PairingEvent::Paired => Event::LifecycleFailure {
+                            helper_epoch: helper_epoch.clone(),
+                            session_generation: expected_session_generation.to_string(),
+                            reason: FailureReason::DependencyUnavailable,
+                        },
+                    };
                     let _ = sink.emit_event(&event);
                 }
                 if starts_session && let Some(connected_target) = connected_target {
-                    start_session(connected_target);
+                    start_session(connected_target, expected_session_generation);
                 }
             }
         });
+    }
+}
+
+impl<S> Drop for RuntimePairingBackend<S> {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        if let Ok(flow) = self.flow.lock() {
+            drop(flow);
+        }
+        if let Ok(mut ceremony) = self.ceremony.lock() {
+            ceremony.cancel();
+        }
+        self.session.invalidate_and_wait();
+    }
+}
+
+fn pairing_event(helper_epoch: &str, session_generation: u64, event: PairingEvent) -> Event {
+    match event {
+        PairingEvent::Pairing { method } => Event::Pairing {
+            helper_epoch: helper_epoch.to_owned(),
+            method,
+        },
+        PairingEvent::PairingCancelled => Event::PairingCancelled {
+            helper_epoch: helper_epoch.to_owned(),
+        },
+        PairingEvent::QrTimedOut => Event::QrTimedOut {
+            helper_epoch: helper_epoch.to_owned(),
+        },
+        PairingEvent::Paired => Event::Paired {
+            helper_epoch: helper_epoch.to_owned(),
+            session_generation: session_generation.to_string(),
+        },
+        PairingEvent::Connected => Event::Connected {
+            helper_epoch: helper_epoch.to_owned(),
+            session_generation: session_generation.to_string(),
+        },
+        PairingEvent::Failure { reason } => Event::Failure {
+            helper_epoch: helper_epoch.to_owned(),
+            reason,
+        },
     }
 }
 
@@ -599,8 +739,8 @@ impl<S> PairingBackend for RuntimePairingBackend<S>
 where
     S: ProtocolSink,
 {
-    fn start_qr_pairing(&mut self) -> Result<QrPresentation, FailureReason> {
-        self.session.stop_and_wait();
+    fn start_qr_pairing(&mut self) -> Result<QrPresentation, PairingRequestFailure> {
+        self.stop_for_pairing()?;
         self.cancellation.cancel();
         self.pending = None;
         self.pending_reconnect = None;
@@ -608,13 +748,12 @@ where
         self.cancellation = CancellationToken::new();
 
         let (presentation, requested_service, secret) = {
-            let mut ceremony = self
-                .ceremony
-                .lock()
-                .map_err(|_| FailureReason::DependencyUnavailable)?;
-            let presentation = ceremony
-                .start()
-                .map_err(|_| FailureReason::DependencyUnavailable)?;
+            let mut ceremony = self.ceremony.lock().map_err(|_| {
+                PairingRequestFailure::Backend(FailureReason::DependencyUnavailable)
+            })?;
+            let presentation = ceremony.start().map_err(|_| {
+                PairingRequestFailure::Backend(FailureReason::DependencyUnavailable)
+            })?;
             let (requested_service, secret) = ceremony
                 .with_pairing_material(|requested_service, secret| {
                     (
@@ -622,7 +761,9 @@ where
                         Zeroizing::new(secret.to_owned()),
                     )
                 })
-                .ok_or(FailureReason::DependencyUnavailable)?;
+                .ok_or(PairingRequestFailure::Backend(
+                    FailureReason::DependencyUnavailable,
+                ))?;
             (presentation, requested_service, secret)
         };
         self.pending = Some(PendingPairing {
@@ -639,7 +780,6 @@ where
     }
 
     fn cancel_pairing(&mut self) {
-        self.session.stop_and_wait();
         self.pending = None;
         self.pending_reconnect = None;
         self.cancellation.cancel();
@@ -655,8 +795,8 @@ where
         }
     }
 
-    fn submit_manual_code(&mut self, code: &str) -> Result<(), FailureReason> {
-        self.session.stop_and_wait();
+    fn submit_manual_code(&mut self, code: &str) -> Result<(), PairingRequestFailure> {
+        self.stop_for_pairing()?;
         self.cancellation.cancel();
         self.pending = None;
         self.pending_reconnect = None;
@@ -677,6 +817,10 @@ where
             .is_ok_and(|device| device.is_some())
     }
 
+    fn session_generation(&self) -> u64 {
+        self.session.generation()
+    }
+
     fn reconnect_trusted_device(&mut self) -> Result<(), FailureReason> {
         let device = self
             .trusted_device
@@ -684,7 +828,7 @@ where
             .map_err(|_| FailureReason::DependencyUnavailable)?
             .clone()
             .ok_or(FailureReason::Disconnected)?;
-        self.session.stop_and_wait();
+        self.session.invalidate_and_wait();
         self.cancellation.cancel();
         self.pending = None;
         let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
@@ -694,22 +838,45 @@ where
     }
 
     fn stop_session(&mut self) {
-        self.session.stop_and_wait();
+        self.cancellation.cancel();
+        self.pending_reconnect = None;
+        self.pending = None;
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        if let Ok(_flow) = self.flow.lock() {}
+
+        let had_active_session = self.session.target().ok().flatten().is_some();
+        let generation = self.session.invalidate_and_wait();
+        if had_active_session {
+            let _ = self.sink.emit_event(&Event::SessionEnded {
+                helper_epoch: self.helper_epoch.clone(),
+                session_generation: generation.to_string(),
+            });
+        }
     }
 
     fn start_over(&mut self) -> Result<(), FailureReason> {
         let active_target = self.session.target()?;
-
-        self.session.stop_and_wait();
-        self.pending = None;
-        self.pending_reconnect = None;
         self.cancellation.cancel();
-        self.generation.fetch_add(1, Ordering::AcqRel);
 
         let mut flow = self
             .flow
             .lock()
             .map_err(|_| FailureReason::DependencyUnavailable)?;
+        let mut trusted_device = self
+            .trusted_device
+            .lock()
+            .map_err(|_| FailureReason::DependencyUnavailable)?;
+        // Start Over forgets the trusted device but intentionally retains global preferences.
+        self.store
+            .remove()
+            .map_err(|_| FailureReason::DependencyUnavailable)?;
+        *trusted_device = None;
+
+        self.session.invalidate_and_wait();
+        self.pending = None;
+        self.pending_reconnect = None;
+        self.generation.fetch_add(1, Ordering::AcqRel);
+
         if let Some(target) = active_target {
             let cancellation = CancellationToken::new()
                 .child_with_timeout(Duration::from_millis(MAX_LOCAL_COMMAND_MS));
@@ -719,18 +886,11 @@ where
             );
         }
         drop(flow);
+        drop(trusted_device);
 
         if let Ok(mut ceremony) = self.ceremony.lock() {
             ceremony.cancel();
         }
-        // Start Over forgets the trusted device but intentionally retains global preferences.
-        self.store
-            .remove()
-            .map_err(|_| FailureReason::DependencyUnavailable)?;
-        *self
-            .trusted_device
-            .lock()
-            .map_err(|_| FailureReason::DependencyUnavailable)? = None;
         Ok(())
     }
 
@@ -770,75 +930,63 @@ where
         })
     }
 
-    fn semantic_action(
+    fn phone_target(
         &mut self,
-        action: SemanticAction,
-        action_argument: Option<&str>,
-        request_id: &str,
+        target: PhoneTarget,
+        _request_id: &str,
         expires_at_unix_ms: u64,
-    ) -> Result<bool, FailureReason> {
+    ) -> Result<(), PhoneTargetFailure> {
         let remaining_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .ok()
             .and_then(|duration| u64::try_from(duration.as_millis()).ok())
             .and_then(|now_unix_ms| expires_at_unix_ms.checked_sub(now_unix_ms))
             .filter(|remaining_ms| {
-                *remaining_ms > 0 && *remaining_ms <= MAX_SEMANTIC_DEADLINE_AHEAD_MS
-            });
-        let Some(remaining_ms) = remaining_ms else {
-            self.action_results
-                .publish(request_id, false)
-                .map_err(|_| FailureReason::DependencyUnavailable)?;
-            return Ok(false);
-        };
+                *remaining_ms > 0 && *remaining_ms <= MAX_PHONE_TARGET_DEADLINE_AHEAD_MS
+            })
+            .ok_or(PhoneTargetFailure::ActionOnly(
+                ActionFailureCode::InvalidDeadline,
+            ))?;
+        let selected_device = self
+            .session
+            .target()
+            .map_err(PhoneTargetFailure::Lifecycle)?
+            .ok_or(PhoneTargetFailure::ActionOnly(
+                ActionFailureCode::TargetFailed,
+            ))?;
         let session_cancellation = self.session.child_cancellation();
-        let action_cancellation = session_cancellation.child_with_timeout(Duration::from_millis(
-            remaining_ms.min(MAX_SEMANTIC_EXECUTION_MS),
+        let target_cancellation = session_cancellation.child_with_timeout(Duration::from_millis(
+            remaining_ms.min(MAX_PHONE_TARGET_EXECUTION_MS),
         ));
-
-        enum Execution<'a> {
-            Key(AndroidKey),
-            StandardBrowser,
-            LaunchPackage(&'a str),
-            Unhandled,
+        let result = {
+            let mut flow = self
+                .flow
+                .lock()
+                .map_err(|_| PhoneTargetFailure::ActionOnly(ActionFailureCode::TargetFailed))?;
+            let mut adapter =
+                AdbActionAdapter::new(flow.runner_mut().as_mut(), &target_cancellation);
+            adapter.execute(&selected_device, &target)
+        };
+        match result {
+            Ok(true) => Ok(()),
+            Ok(false) | Err(CommandFailure::DependencyUnavailable) => Err(
+                PhoneTargetFailure::ActionOnly(ActionFailureCode::TargetFailed),
+            ),
+            Err(CommandFailure::Cancelled)
+                if target_cancellation.is_cancelled() && !session_cancellation.is_cancelled() =>
+            {
+                Err(PhoneTargetFailure::ActionOnly(
+                    ActionFailureCode::TargetTimedOut,
+                ))
+            }
+            Err(CommandFailure::Cancelled) => Err(PhoneTargetFailure::ActionOnly(
+                ActionFailureCode::TargetFailed,
+            )),
+            Err(CommandFailure::Unauthorized) => {
+                self.session.invalidate_and_wait();
+                Err(PhoneTargetFailure::Lifecycle(FailureReason::Unauthorized))
+            }
         }
-
-        let execution = match resolve_action(&self.action_manifest, action.as_str()) {
-            Some(ActionResult::KeyInput { key }) => Execution::Key(*key),
-            Some(ActionResult::StandardBrowserIntent {}) => Execution::StandardBrowser,
-            Some(ActionResult::PackageLaunch {}) => action_argument
-                .map(Execution::LaunchPackage)
-                .unwrap_or(Execution::Unhandled),
-            _ => Execution::Unhandled,
-        };
-
-        let result = match execution {
-            Execution::Key(key) => self
-                .run_input_with_cancellation(&action_cancellation, |adapter, target| {
-                    adapter.key(target, key)
-                })
-                .map(|()| true),
-            Execution::StandardBrowser => self
-                .run_action(&action_cancellation, |adapter, target| {
-                    adapter.open_standard_browser(target)
-                }),
-            Execution::LaunchPackage(package) => self
-                .run_action(&action_cancellation, |adapter, target| {
-                    adapter.launch_package(target, package)
-                }),
-            Execution::Unhandled => Ok(false),
-        };
-        let action_timed_out = matches!(result, Err(FailureReason::Disconnected))
-            && action_cancellation.is_cancelled()
-            && !session_cancellation.is_cancelled();
-        let result = if action_timed_out { Ok(false) } else { result };
-        self.action_results
-            .publish(
-                request_id,
-                action_timed_out || result.as_ref().copied().unwrap_or(false),
-            )
-            .map_err(|_| FailureReason::DependencyUnavailable)?;
-        result
     }
 
     fn preferences(&self) -> Preferences {

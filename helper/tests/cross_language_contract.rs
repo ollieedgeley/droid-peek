@@ -122,9 +122,7 @@ fn installer_and_template_share_the_exact_user_config_contract() {
         "the configurator and managed loader block drifted"
     );
     assert!(
-        template.contains(
-            "/.config/omarchy/plugins/ollie.android/integrations/phone-bindings.lua"
-        ),
+        template.contains("/.config/omarchy/plugins/ollie.android/integrations/phone-bindings.lua"),
         "the user template must load the plugin-owned API"
     );
 }

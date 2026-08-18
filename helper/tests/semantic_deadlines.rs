@@ -14,7 +14,7 @@ use omarchy_android_helper::{
     persistence::{FileTrustedDeviceStore, TrustedDevice},
     process::{CancellationToken, CommandFailure, CommandOutput, CommandRequest, CommandRunner},
     protocol::{ActionFailureCode, Event, PairingBackend, PhoneTargetFailure},
-    runtime::{ProtocolSink, RuntimePairingBackend},
+    runtime::{ProtocolSink, RuntimeDependencies, RuntimePairingBackend},
     session::{PhysicalDisplaySize, SessionExit, SessionFailure, SessionRunner},
     wireless::{DiscoveryFailure, PairingEndpoint, WirelessDiscovery},
 };
@@ -226,17 +226,20 @@ fn runtime_rejects_invalid_phone_target_deadlines_and_bounds_accepted_work() {
         Duration::from_secs(1),
         HELPER_EPOCH,
         sink.clone(),
-        TrustedDiscovery {
-            endpoint: PairingEndpoint::new("192.168.50.4", 37_123).expect("connection endpoint"),
-        },
-        SlowActionRunner {
-            calls: Arc::clone(&calls),
-            action_cancelled: Arc::clone(&action_cancelled),
-            action_reported_success: Arc::clone(&action_reported_success),
-        },
-        Some(Box::new(BlockingSession {
-            stopped: Arc::clone(&session_stopped),
-        })),
+        RuntimeDependencies::new(
+            TrustedDiscovery {
+                endpoint: PairingEndpoint::new("192.168.50.4", 37_123)
+                    .expect("connection endpoint"),
+            },
+            SlowActionRunner {
+                calls: Arc::clone(&calls),
+                action_cancelled: Arc::clone(&action_cancelled),
+                action_reported_success: Arc::clone(&action_reported_success),
+            },
+            Some(Box::new(BlockingSession {
+                stopped: Arc::clone(&session_stopped),
+            })),
+        ),
     )
     .expect("runtime backend");
 
@@ -317,16 +320,19 @@ fn runtime_bounds_input_and_start_over_disconnect_commands() {
         Duration::from_secs(1),
         HELPER_EPOCH,
         sink.clone(),
-        TrustedDiscovery {
-            endpoint: PairingEndpoint::new("192.168.50.4", 37_123).expect("connection endpoint"),
-        },
-        SlowInputRunner {
-            calls: Arc::clone(&calls),
-            cancelled_calls: Arc::clone(&cancelled_calls),
-        },
-        Some(Box::new(BlockingSession {
-            stopped: Arc::clone(&session_stopped),
-        })),
+        RuntimeDependencies::new(
+            TrustedDiscovery {
+                endpoint: PairingEndpoint::new("192.168.50.4", 37_123)
+                    .expect("connection endpoint"),
+            },
+            SlowInputRunner {
+                calls: Arc::clone(&calls),
+                cancelled_calls: Arc::clone(&cancelled_calls),
+            },
+            Some(Box::new(BlockingSession {
+                stopped: Arc::clone(&session_stopped),
+            })),
+        ),
     )
     .expect("runtime backend");
 
@@ -357,7 +363,7 @@ fn runtime_bounds_input_and_start_over_disconnect_commands() {
     let start_over_started = Instant::now();
     backend.start_over().expect("start over completes");
     assert!(start_over_started.elapsed() < Duration::from_millis(1_500));
-    assert_eq!(calls.load(Ordering::Acquire), 4);
-    assert_eq!(cancelled_calls.load(Ordering::Acquire), 2);
+    assert_eq!(calls.load(Ordering::Acquire), 3);
+    assert_eq!(cancelled_calls.load(Ordering::Acquire), 1);
     assert!(session_stopped.load(Ordering::Acquire));
 }

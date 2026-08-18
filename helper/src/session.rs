@@ -1,10 +1,18 @@
 //! Cancellable lifecycle boundary for the unmodified scrcpy client.
+use nix::{
+    sys::{prctl, signal::Signal},
+    unistd,
+};
 use std::{
+    ffi::OsString,
     fs::{self, File, Metadata, OpenOptions},
     io::{self, Read},
-    os::unix::fs::{FileTypeExt, MetadataExt},
+    os::unix::{
+        fs::{FileTypeExt, MetadataExt},
+        process::CommandExt,
+    },
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{self, Child, Command, Stdio},
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -250,8 +258,30 @@ fn validate_capture_sink_identity(
         && sysfs_attribute_value(sysfs_name) == Some(PRODUCTION_V4L2_CARD)
 }
 
+#[doc(hidden)]
+pub fn run_scrcpy_guardian(mut arguments: impl Iterator<Item = OsString>) -> io::Result<bool> {
+    if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--scrcpy-guardian")) {
+        return Ok(false);
+    }
+    let expected_parent = arguments
+        .next()
+        .and_then(|value| value.into_string().ok())
+        .and_then(|value| value.parse::<i32>().ok())
+        .filter(|parent| *parent > 1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid guardian parent"))?;
+    prctl::set_pdeathsig(Signal::SIGKILL).map_err(io::Error::other)?;
+    if unistd::getppid().as_raw() != expected_parent {
+        return Err(io::Error::other(
+            "helper parent exited before scrcpy startup",
+        ));
+    }
+    let error = Command::new("scrcpy").args(arguments).exec();
+    Err(error)
+}
+
 pub struct ScrcpySessionRunner {
     executable: PathBuf,
+    argument_prefix: Vec<OsString>,
     v4l2_sink: PathBuf,
     poll_interval: Duration,
     quality: VideoQuality,
@@ -269,6 +299,16 @@ impl ScrcpySessionRunner {
             poll_interval,
             true,
         )
+    }
+
+    #[must_use]
+    pub fn new_guarded(helper_executable: impl AsRef<Path>, poll_interval: Duration) -> Self {
+        let mut runner = Self::new(helper_executable, poll_interval);
+        runner.argument_prefix = vec![
+            OsString::from("--scrcpy-guardian"),
+            OsString::from(process::id().to_string()),
+        ];
+        runner
     }
 
     /// Constructs a runner with an isolated sink for fake process tests.
@@ -293,6 +333,7 @@ impl ScrcpySessionRunner {
     ) -> Self {
         Self {
             executable: executable.as_ref().to_owned(),
+            argument_prefix: Vec::new(),
             v4l2_sink: v4l2_sink.as_ref().to_owned(),
             poll_interval,
             quality: VideoQuality::default(),
@@ -383,7 +424,9 @@ impl SessionRunner for ScrcpySessionRunner {
             VideoQuality::Medium => ["1080", "8M", "60"],
             VideoQuality::High => ["0", "16M", "60"],
         };
-        let mut child = Command::new(&self.executable)
+        let mut command = Command::new(&self.executable);
+        let mut child = command
+            .args(&self.argument_prefix)
             .arg(format!("--serial={target}"))
             .arg("--no-window")
             .arg("--no-audio")

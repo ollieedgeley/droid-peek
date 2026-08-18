@@ -21,11 +21,13 @@ input through a local Rust helper.
 - Renders scrcpy video from a private V4L2 loopback device inside QML.
 - Supports aspect-fit pointer input, ordinary key and text input, and Back,
   Home, and recent-apps quick actions.
-- Optionally routes reviewed Omarchy semantic actions to the focused phone.
+- Provides a dedicated `omarchy-android` key-binding context while an
+  interactive phone panel owns Android-mode shortcuts.
 
 It does not install an Android companion app, replace scrcpy, manage multiple
-phones, read or rewrite the user's binding files, or silently change system
-configuration.
+phones, translate user bindings, or silently change system configuration. Its
+configurator manages only one exact loader block and creates the user-owned
+phone-binding file only when that file is absent.
 
 ## Requirements
 
@@ -102,18 +104,18 @@ From a clean checkout, after approving and preparing the dependencies:
 cargo build --release --manifest-path helper/Cargo.toml
 install -Dm755 helper/target/release/omarchy-android-helper \
   "$HOME/.local/bin/omarchy-android-helper"
-install -Dm755 scripts/omarchy-android-action \
-  "$HOME/.local/bin/omarchy-android-action"
 mkdir -p "$HOME/.config/omarchy/plugins"
 ln -s "$PWD" "$HOME/.config/omarchy/plugins/ollie.android"
+scripts/configure-phone-bindings install
 omarchy-shell shell rescanPlugins
 omarchy plugin enable ollie.android
 ```
 
 `~/.local/bin` must be on the `PATH` inherited by `omarchy-shell`. The symlink is
 intentional for development: saving QML in the checkout reloads the plugin.
-Enabling the plugin adds its single widget through Omarchy's supported plugin
-command; it does not overwrite Hyprland configuration.
+The configurator installs the user-owned phone bindings once and adds only its
+documented loader block. Enabling the plugin adds its single widget through
+Omarchy's supported plugin command.
 
 ## Pair a phone
 
@@ -178,8 +180,7 @@ survive **Start over**.
 | Setting | Default | Behavior |
 | --- | --- | --- |
 | **Keep phone connected** | Off | Retains an eligible trusted session while the panel is hidden. |
-| **Android-mode shortcuts** | Off | Enables the optional configured semantic routes only while the complete focused-phone predicate holds. |
-| **Command passthrough** | Off | With Android-mode shortcuts enabled and the phone eligible, off inhibits unconfigured bindings; on lets them continue to Omarchy. It does not disable configured Android routes. |
+| **Android-mode shortcuts** | On | Activates the configured `omarchy-android` submap only while the panel is interactive. |
 | **Preview scale** | 100% | Changes the embedded view from 50% through 150% in five-point steps without cropping. |
 | **Quality** | High | Selects Low, Medium, or High; changing it restarts only an active mirroring session. |
 | **Quick actions** | Back, Home, Recent apps | Assigns any of those three actions independently to each toolbar slot. |
@@ -188,91 +189,89 @@ Settings is keyboard navigable. Tab and Shift+Tab move through controls. Escape
 first closes an open selector or confirmation, then returns to the focused phone
 view.
 
-## Optional semantic-action integration
+## Phone-mode key bindings
 
-This integration is opt-in. The plugin never scans chords or binding files, and
-upgrades never rewrite the user's configuration. Copy the example only if the
-user-owned file does not already exist:
+Run the repository configurator after linking the plugin:
 
 ```bash
-test -e "$HOME/.config/hypr/omarchy-android.lua" || \
-  install -m644 integrations/config.example.lua \
-    "$HOME/.config/hypr/omarchy-android.lua"
+scripts/configure-phone-bindings install
 ```
 
-Load and configure the wrapper after Omarchy's bootstrap but before
-`require("default.hypr.omarchy")` registers default bindings:
+It uses `${XDG_CONFIG_HOME:-$HOME/.config}` for Hyprland configuration. On the
+first install it copies
+[`integrations/omarchy-android.lua.example`](integrations/omarchy-android.lua.example)
+to `hypr/omarchy-android.lua`. An existing file is always left byte-for-byte
+unchanged. It also adds only this exact block to `hypr/bindings.lua` when the
+block is absent:
 
 ```lua
-local android = dofile(
-  os.getenv("HOME") .. "/.config/omarchy/plugins/ollie.android/integrations/hyprland.lua"
-)
-android.configure(require("hypr.omarchy-android"))
+-- Omarchy Android plugin loader (managed)
+require("hypr.omarchy-android")
 ```
 
-After checking the user's active bindings for a conflict, the user may add this
-exact typed declaration wherever their ordinary `o.bind` declarations belong:
+The user module loads the plugin-owned
+[`integrations/phone-bindings.lua`](integrations/phone-bindings.lua) API and
+defines exactly one `omarchy-android` submap. Saving the module follows
+Omarchy's normal watched `require` reload path. The plugin does not scan,
+translate, infer, or rewrite binding declarations.
 
-```lua
-o.bind("SUPER + ALT + A", "Toggle Android panel", { omarchy = "toggle-android-panel" })
-```
+Phone mode is active only when the panel is open, **Android-mode shortcuts** is
+enabled, and the canonical application state is `interactive`. In that mode,
+configured chords belong only to Android. An unconfigured desktop chord is
+inert rather than falling through to its desktop action. Closing the panel,
+disabling Android-mode shortcuts, losing `interactive`, or restarting the
+helper resets the submap immediately. Outside phone mode, ordinary desktop
+bindings behave normally.
 
-The loader preserves the user-owned chord, description, and options and directly
-invokes `omarchy-shell ollie.android toggle`. This global lifecycle action is
-independent of phone focus, receives `dont_inhibit`, and has no fallback. Only
-the exact structured `omarchy` value matches; near matches, unsupported tables,
-and declarations with extra fields remain untouched.
+The installed template enables only these four bindings:
 
-After Omarchy defaults and ordinary user bindings have loaded, install any
-Android-only custom bindings from the user configuration:
-
-```lua
-android.install_custom_bindings()
-```
-
-The complete strict example is
-[`integrations/config.example.lua`](integrations/config.example.lua). Its
-`routes` table is the complete enabled route set; removing a route restores that
-source's ordinary behavior. Unknown fields, sources, targets, target shapes, or
-invalid package names reject the configuration atomically.
-
-Packaged source mappings and targets are defined in
-[`integrations/action-catalog.lua`](integrations/action-catalog.lua). The example
-enables:
-
-| Omarchy source | Android target | Focus/fallback behavior |
+| Chord | Description | Target |
 | --- | --- | --- |
-| `omarchy.android.panel.toggle` | `android.panel.toggle` | Global panel lifecycle; no phone focus and no fallback. |
-| `omarchy.browser` | `android.browser.default` | Uses Android's package-free standard browser intent when the phone accepts the attempt. |
-| `omarchy.window.close` | `android.navigate.home` | Goes Home on Android; it does not claim to close the Android app. |
+| `SUPER + ESCAPE` | Close Android panel | `android.close_panel` |
+| `SUPER + SHIFT + RETURN` | Browser | `android.browser.default` |
+| `SUPER + SHIFT + B` | Browser | `android.browser.default` |
+| `SUPER + W` | Close current window | `android.navigate.home` |
 
-The loader recognizes supported typed Omarchy declarations only when `omarchy`
-is the table's sole key, plus the verified opaque closure returned by
-`hl.dsp.window.close()`. It never guesses from a chord, label, shell string, or
-arbitrary function.
+The close callback synchronously resets Hyprland before requesting panel close,
+so a delayed close acknowledgement cannot strand keyboard ownership. The Home
+target leaves the current Android app; it does not claim to terminate it.
+Device- or package-dependent examples remain commented out.
 
-With **Android-mode shortcuts** enabled, a focused, visible, input-enabled ready
-preview gets first refusal for configured phone routes. If QML refuses before
-dispatch, the original browser command or close closure runs once. Once QML
-accepts an Android attempt, Android owns it: a later rejection, disconnect,
-unhandled backend result, mismatch, or timeout is consumed and does not duplicate
-the action on the desktop. Quick actions, pointer input, named key input, and
-text input remain independent of both shortcut settings.
+User additions use the same direct API:
 
-The current helper/QML contract is protocol v10; the bundled action manifest in
-[`actions.json`](actions.json) is schema version 3. Semantic attempts carry an
-absolute two-second expiry, use bounded IPC, and kill and reap expired Android
-work before returning a consumed result.
+```lua
+android.bind("CTRL + ALT + SHIFT + P", "My Android app", {
+  type = "android.app.launch",
+  package = "com.example.app",
+})
+```
 
-Saving the required user module is watched by Hyprland's wrapped `require`.
-After changing it, inspect errors with:
+Supported targets are `android.browser.default`, `android.navigate.home`,
+`android.navigate.back`, `android.recent-apps`, and a typed
+`android.app.launch` object with a validated package name. Arbitrary ADB or
+shell commands are not accepted.
+
+Each target dispatch sends one base64url-encoded JSON envelope to
+`omarchy-shell ollie.android phone-target`. The envelope has a unique
+`requestId`, the direct typed `target`, and a two-second absolute deadline. QML
+accepts it only in the interactive state, adds the current helper epoch and
+session generation, and sends protocol v11 to Rust. Stale, missing, invalid,
+failed, or timed-out attempts are consumed and never run a desktop fallback.
+
+After editing the user module, inspect normal Lua reload errors with:
 
 ```bash
 hyprctl configerrors
 ```
 
-Remove the loader/configure lines and `android.install_custom_bindings()` to
-disable the integration. The user-owned configuration file may remain.
+To remove the integration loader without deleting the user-owned module, run:
+
+```bash
+scripts/configure-phone-bindings uninstall
+```
+
+Install and uninstall are idempotent. Uninstall removes only the exact managed
+loader block and preserves all other Hyprland configuration bytes.
 
 ## Security and privacy
 
@@ -301,7 +300,7 @@ devices screen.
 ## Troubleshooting
 
 - **Widget or helper unavailable:** For a source setup, confirm the symlink is at
-  `~/.config/omarchy/plugins/ollie.android`, the two installed executables are in
+  `~/.config/omarchy/plugins/ollie.android`, the helper is installed in
   `~/.local/bin`, that directory is on the shell's inherited `PATH`, and then
   rescan and enable the plugin with the installation commands above.
 - **Local dependency unavailable:** Confirm `adb`, `avahi-browse`, and `scrcpy`
@@ -322,21 +321,21 @@ devices screen.
 - **Remembered phone cannot reconnect:** Restore the original trusted Wi-Fi and
   Wireless debugging first. If the phone was replaced or its pairing was reset,
   use **Start over** rather than editing the private state file.
-- **Semantic route does nothing:** Check `hyprctl configerrors`, confirm the
-  loader order and exact source/target IDs, enable **Android-mode shortcuts**,
-  close Settings, and focus the ready phone preview. An accepted but unhandled
-  attempt intentionally does not run desktop fallback.
+- **Phone shortcut does nothing:** Check `hyprctl configerrors`, confirm the
+  managed loader block and user module are present, enable **Android-mode
+  shortcuts**, close Settings, and wait for the phone state to become
+  interactive. Target failures are consumed and never invoke a desktop action.
 
 ## Remove a developer/source installation
 
-Disable the widget before removing its live checkout link and installed helper
-commands:
+Disable the widget and remove the managed Hyprland loader before deleting the
+live checkout link and installed helper:
 
 ```bash
 omarchy plugin disable ollie.android
+scripts/configure-phone-bindings uninstall
 rm "$HOME/.config/omarchy/plugins/ollie.android"
 rm -f "$HOME/.local/bin/omarchy-android-helper"
-rm -f "$HOME/.local/bin/omarchy-android-action"
 ```
 
 Private device identity and preferences remain under
@@ -355,10 +354,10 @@ From the repository root, run:
 ./scripts/check.sh
 ```
 
-The script validates the manifest, exercises the shell dispatcher and Lua
-integration, checks the cross-language action and protocol contracts, runs the
-tested ast-grep ownership rules, lints QML through a temporary Omarchy import
-map, runs Qt Quick Tests, and runs Rust format, Clippy-with-warnings-denied, and
+The script validates the manifest, exercises the phone-binding configurator and
+Lua API, checks cross-language target and protocol contracts, runs the tested
+ast-grep ownership rules, lints QML through a temporary Omarchy import map,
+runs Qt Quick Tests, and runs Rust format, Clippy-with-warnings-denied, and
 nextest checks. It requires the Omarchy Qt 6 environment, Lua, `ast-grep`, and
 `cargo-nextest`. Its automated tests use fake ADB, scrcpy, and mDNS boundaries;
 they do not pair, connect to, or alter a real phone.
@@ -371,9 +370,9 @@ Run the slower focused coverage and online dependency gates separately:
 ```
 
 Coverage requires `cargo-llvm-cov`, `llvm-cov`, `llvm-profdata`, and `jq`. It
-enforces measured line-coverage floors only for action results and resolution,
-input validation, pairing, protocol, persistence, preferences, and runtime
-deadline contracts. The supply-chain gate requires `cargo-deny` and
+enforces measured line-coverage floors for phone-target actions, input
+validation, pairing, protocol, persistence, preferences, and runtime deadline
+contracts. The supply-chain gate requires `cargo-deny` and
 `cargo-audit`; it denies known advisories, yanked crates, wildcard dependencies,
 unapproved licenses, and unknown registries or Git sources. These network-backed
 checks are intentionally separate from the deterministic local gate.
@@ -390,9 +389,9 @@ panel and phone behavior:
 2. Reconnect, both **Keep phone connected** close paths, and **Start over**.
 3. Live V4L2 video, rotation/aspect behavior, pointer input, ordinary text, and
    Back/Home/recent-apps.
-4. Focus-safe semantic routing, desktop behavior before QML acceptance, consumed
-   behavior after acceptance, immediate shortcut disable, and global panel
-   toggle.
+4. Phone-submap entry and reset, mandatory reset-before-close, direct target
+   dispatch without desktop fallback, Android-mode disable, and ordinary
+   unmodified typing while phone mode is active.
 5. Dependency, authorization, network, and recovery states without exposing an
    endpoint, code, secret, or complete subprocess output.
 
@@ -403,15 +402,13 @@ supported workflow.
 
 ## Project status
 
-The current evidence is specific to a CPH2719 running OxygenOS 16 / Android 16.
-It includes QR and six-digit pairing with cancel/retry, Avahi connection-service
-discovery, 1080×2392 QML playback, session/capture restart, pointer and ordinary
-text input, Back/Home/recent-apps, preference migrations, focused shortcut
-routing, shortcut inhibition, and the global panel toggle. A browser backend
-attempt in the Stage 7 run returned unhandled and was observed using the then
-applicable desktop fallback; it is not evidence that every Android action is
-handled, and the current accepted-attempt ownership rule supersedes that earlier
-fallback behavior.
+The current physical-device evidence is specific to a CPH2719 running OxygenOS
+16 / Android 16. It includes QR and six-digit pairing with cancel/retry, Avahi
+connection-service discovery, 1080×2392 QML playback, session/capture restart,
+pointer and ordinary text input, Back/Home/recent-apps, and preference
+persistence. Phone-submap ownership and the Browser and Home target adapters
+have automated contract coverage; they still require the real-phone acceptance
+run above before release or expansion of the enabled defaults.
 
 The complete V1 acceptance contract is still open. In particular, the manual
 address-and-port pairing fallback, broader recovery acceptance, modifier/layout
@@ -419,10 +416,6 @@ coverage, clipboard, provisional Actions UI, per-device profiles, and Android
 14/15 support are not shipped or claimed. Marketplace publication is a later
 release step.
 
-[`SPEC.md`](SPEC.md) is the V1 behavior contract and contains the complete
-verified-evidence record. [`PLAN.md`](PLAN.md) is the decision log.
-[`AGENTS.md`](AGENTS.md) defines the implementation and verification boundaries
-for contributors.
 
 ## Repository layout
 
@@ -431,10 +424,11 @@ for contributors.
 - `qml/` owns panel components and local UI state.
 - `helper/` contains the Rust protocol, persistence, ADB, Avahi, and scrcpy
   boundaries.
-- `actions.json` is the classified semantic-action contract.
-- `integrations/` contains the opt-in Hyprland loader and user configuration
-  example.
-- `scripts/omarchy-android-action` is the bounded semantic dispatcher.
+- `integrations/phone-bindings.lua` defines the plugin-owned phone-submap API,
+  and `integrations/omarchy-android.lua.example` is copied once as user-owned
+  configuration.
+- `scripts/configure-phone-bindings` installs or removes only the managed
+  Hyprland loader block.
 - `scripts/check.sh` is the non-interactive developer verification entry point.
 - `tests/` and `helper/tests/` cover QML, Lua, shell, and Rust behavior without a
   real phone.

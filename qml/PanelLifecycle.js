@@ -1,17 +1,7 @@
-function closeAction(keepConnected, sessionState, pairingStage, helperRunning) {
+function closeAction(helperRunning, sessionMayExist, keepConnected) {
     if (!helperRunning)
         return "none"
-
-    if (keepConnected
-            && (sessionState === "ready"
-                || pairingStage === "connected"
-                || pairingStage === "session-starting"))
-        return "retain"
-
-    if (sessionState === "ready"
-            || pairingStage === "connected"
-            || pairingStage === "session-starting")
-        return "stop-session"
-
-    return "cancel-pairing"
+    if (!sessionMayExist)
+        return "cancel-pairing"
+    return keepConnected ? "retain" : "stop-session"
 }

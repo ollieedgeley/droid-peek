@@ -8,18 +8,9 @@ use omarchy_android_helper::{
 #[test]
 fn phone_targets_are_a_small_typed_allowlist() {
     for (wire, expected) in [
-        (
-            r#""android.browser.default""#,
-            PhoneTarget::BrowserDefault,
-        ),
-        (
-            r#""android.navigate.home""#,
-            PhoneTarget::NavigateHome,
-        ),
-        (
-            r#""android.navigate.back""#,
-            PhoneTarget::NavigateBack,
-        ),
+        (r#""android.browser.default""#, PhoneTarget::BrowserDefault),
+        (r#""android.navigate.home""#, PhoneTarget::NavigateHome),
+        (r#""android.navigate.back""#, PhoneTarget::NavigateBack),
         (r#""android.recent-apps""#, PhoneTarget::RecentApps),
     ] {
         assert_eq!(
@@ -134,8 +125,7 @@ fn navigation_targets_use_only_the_declared_android_key() {
         ["KEYCODE_HOME", "KEYCODE_BACK", "KEYCODE_APP_SWITCH"]
     );
     assert!(runner.requests.iter().all(|request| {
-        request.arguments()[0..5]
-            == ["-s", "device.local:38100", "shell", "input", "keyevent"]
+        request.arguments()[0..5] == ["-s", "device.local:38100", "shell", "input", "keyevent"]
     }));
 }
 

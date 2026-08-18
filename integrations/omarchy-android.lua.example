@@ -1,0 +1,35 @@
+-- ~/.config/hypr/omarchy-android.lua
+--
+-- This file owns the keyboard only while the Android panel is open and the
+-- phone is interactive. Outside that state, normal Omarchy bindings apply.
+
+local android = dofile(
+  os.getenv("HOME")
+    .. "/.config/omarchy/plugins/ollie.android/integrations/phone-bindings.lua"
+)
+
+android.define_submap("omarchy-android", function()
+  -- Mandatory escape from phone mode. It intentionally has no desktop effect
+  -- because this submap is inactive after the panel closes.
+  android.bind("SUPER + ESCAPE", "Close Android panel", android.close_panel)
+
+  -- Generic defaults preserve familiar Omarchy chords and descriptions.
+  android.bind("SUPER + SHIFT + RETURN", "Browser", "android.browser.default")
+  android.bind("SUPER + SHIFT + B", "Browser", "android.browser.default")
+  android.bind("SUPER + W", "Close current window", "android.navigate.home")
+
+  -- Device- and package-dependent examples stay disabled until the user picks
+  -- a target that works on their phone.
+  -- android.bind("SUPER + SPACE", "Omarchy menu", "android.launcher.search")
+  -- android.bind("SUPER + SHIFT + F", "File manager", {
+  --   type = "android.app.launch", package = "com.example.files"
+  -- })
+  -- android.bind("SUPER + SHIFT + M", "Music", {
+  --   type = "android.app.launch", package = "com.example.music"
+  -- })
+
+  -- User additions use the same form with any non-conflicting chord.
+  -- android.bind("CTRL + ALT + SHIFT + P", "My Android app", {
+  --   type = "android.app.launch", package = "com.example.app"
+  -- })
+end)

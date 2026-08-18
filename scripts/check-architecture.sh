@@ -24,24 +24,35 @@ for file in ./*.qml qml/**/*.qml; do
   fi
 done
 
-semantic_ipc="ollie.android"
-semantic_ipc+=" action"
+phone_target_ipc="ollie.android"
+phone_target_ipc+=" phone-target"
+
+for retired in \
+  actions.json \
+  integrations/action-catalog.lua \
+  integrations/config.example.lua \
+  integrations/hyprland.lua \
+  scripts/omarchy-android-action; do
+  if [[ -e "$retired" ]]; then
+    printf 'retired phone-binding asset remains: %s\n' "$retired" >&2
+    exit 1
+  fi
+done
 
 for file in integrations/*.lua; do
-  [[ "$file" == "integrations/hyprland.lua" ]] && continue
+  [[ "$file" == "integrations/phone-bindings.lua" ]] && continue
   content="$(<"$file")"
-  if [[ "$content" == *'omarchy-android-action'* || "$content" == *"$semantic_ipc"* ]]; then
-    printf 'Lua semantic dispatch belongs in integrations/hyprland.lua: %s\n' "$file" >&2
+  if [[ "$content" == *"$phone_target_ipc"* ]]; then
+    printf 'phone-target dispatch belongs in integrations/phone-bindings.lua: %s\n' "$file" >&2
     exit 1
   fi
 done
 
 for file in scripts/*; do
-  [[ "$file" == "scripts/omarchy-android-action" ]] && continue
   [[ -f "$file" ]] || continue
   content="$(<"$file")"
-  if [[ "$content" == *"$semantic_ipc"* ]]; then
-    printf 'Shell semantic dispatch belongs in scripts/omarchy-android-action: %s\n' "$file" >&2
+  if [[ "$content" == *"$phone_target_ipc"* ]]; then
+    printf 'shell scripts must not dispatch phone targets: %s\n' "$file" >&2
     exit 1
   fi
 done

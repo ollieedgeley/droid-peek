@@ -62,6 +62,21 @@ local original_time = os.time
 os.time = function()
   return now_seconds
 end
+local now_milliseconds = 1700000000125
+local original_popen = io.popen
+io.popen = function(command, mode)
+  assert(command == "/usr/bin/date +%s%3N", "deadline clock command must be fixed")
+  assert(mode == "r", "deadline clock must be read-only")
+  return {
+    read = function(_, format)
+      assert(format == "*l")
+      return tostring(now_milliseconds)
+    end,
+    close = function()
+      return true
+    end,
+  }
+end
 
 local function decode_base64url(encoded)
   local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
@@ -160,10 +175,11 @@ assert(execution_events[2].kind == "command")
 assert(execution_events[2].command == "omarchy-shell ollie.android close")
 
 now_seconds = 1700000030
+now_milliseconds = 1700000030125
 bindings[2].dispatcher()
 local browser_json = command_envelope(execution_events[3].command)
 assert(json_string(browser_json, "target") == "android.browser.default")
-assert(json_integer(browser_json, "expiresAtUnixMs") == 1700000032000)
+assert(json_integer(browser_json, "expiresAtUnixMs") == 1700000032125)
 local first_request_id = json_string(browser_json, "requestId")
 assert(first_request_id ~= nil and first_request_id:match("^[A-Za-z0-9-]+$"))
 
@@ -179,7 +195,7 @@ local package_json = command_envelope(execution_events[5].command)
 assert(package_json:match('"target"%s*:%s*{'), "typed target must stay an object")
 assert(json_string(package_json, "type") == "android.app.launch")
 assert(json_string(package_json, "package") == "com.example.files")
-assert(json_integer(package_json, "expiresAtUnixMs") == 1700000032000)
+assert(json_integer(package_json, "expiresAtUnixMs") == 1700000032125)
 
 local invalid_target_ok, invalid_target_error = pcall(bindings[5].dispatcher)
 assert(invalid_target_ok, tostring(invalid_target_error))
@@ -191,3 +207,4 @@ assert(
 )
 
 os.time = original_time
+io.popen = original_popen

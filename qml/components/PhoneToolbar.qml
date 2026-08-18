@@ -11,7 +11,8 @@ NestedEscapeScope {
     property var actions: ["back", "home", "recent-apps"]
     property bool keepConnected: false
     property bool settingsOpen: false
-    property bool controlsEnabled: true
+    property string applicationState: "closed"
+    readonly property bool controlsEnabled: applicationState === "interactive"
     property color foreground: Color.foreground
 
     signal actionRequested(string action)

@@ -1,13 +1,12 @@
 import QtQuick
-import QtQuick.Window
+import Quickshell
 import Quickshell.Io
-import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
+import "qml/PanelLifecycle.js" as PanelLifecycle
 import "qml/state"
 import "qml/components"
 import "qml/PreviewGeometry.js" as PreviewGeometry
-import "qml/PanelLifecycle.js" as PanelLifecycle
 
 Panel {
     id: root
@@ -21,8 +20,14 @@ Panel {
     property var helperCommand: ["omarchy-android-helper", "--acceptance-log"]
     property bool helperShutdownPending: false
     property bool settingsOpen: false
+    property bool managementOpen: false
+    property int helperEpochCounter: 0
+    property string acceptedHelperEpoch: ""
+    readonly property var helperLaunchCommand: helperCommand.concat(
+                                                    ["--helper-epoch",
+                                                     acceptedHelperEpoch])
     readonly property var barIdentity: hostWidget || root
-    readonly property string sessionState: pairingState.sessionState
+    readonly property string applicationState: applicationStateModel.applicationState
     readonly property color contentForeground: root.barForeground
     readonly property color contentBackground: Color.background
     readonly property var phonePreview: phonePreviewLoader.item
@@ -45,10 +50,15 @@ Panel {
     }
 
     function desiredPanelWidth() {
-        if (pairingState.sessionState === "ready") {
-            if (root.settingsOpen)
+        if (root.applicationState === "interactive"
+                || root.applicationState === "management"
+                || pairingState.sessionStarted) {
+            if (root.managementOpen)
                 return Style.space(400);
-            return horizontalPanelInset() + Math.max(phoneToolbar.implicitWidth, desiredViewportSize(panel.availableCardHeight).width);
+            return horizontalPanelInset()
+                    + Math.max(phoneToolbar.implicitWidth,
+                               desiredViewportSize(
+                                   panel.availableCardHeight).width);
         }
         return Style.space(320);
     }
@@ -58,6 +68,7 @@ Panel {
     }
 
     function openSettings() {
+        managementOpen = true;
         settingsOpen = true;
         Qt.callLater(function () {
             phoneToolbar.forceSettingsFocus();
@@ -66,10 +77,22 @@ Panel {
 
     function closeSettings() {
         settingsOpen = false;
+        managementOpen = startOverDialog.opened;
+    }
+
+    function quickActionKey(action) {
+        switch (action) {
+        case "back": return "back";
+        case "home": return "home";
+        case "recent-apps": return "app-switch";
+        default: return "";
+        }
     }
 
     function runQuickAction(action) {
-        var key = semanticActionRouter.quickActionKey(action);
+        if (root.applicationState !== "interactive")
+            return;
+        var key = quickActionKey(action);
         if (key === "")
             return;
         pairingState.sendKeyInput(key);
@@ -81,20 +104,37 @@ Panel {
         }
     }
 
-    function updatePreferences(keepConnected, scale, quality, actions, androidModeShortcuts, commandPassthrough) {
-        pairingState.setPreferences(keepConnected, scale, quality, actions, androidModeShortcuts, commandPassthrough);
+    function updatePreferences(keepConnected, scale, quality, actions,
+                               androidModeShortcuts) {
+        pairingState.setPreferences(keepConnected, scale, quality, actions,
+                                    androidModeShortcuts);
+    }
+
+    function helperCloseAction() {
+        var sessionMayExist = pairingState.sessionStarted
+                || pairingState.pairingStage === "connected"
+                || pairingState.pairingStage === "session-starting"
+                || pairingState.pairingStage === "session-started";
+        return PanelLifecycle.closeAction(helperProcess.running, sessionMayExist,
+                                          pairingState.keepConnected);
     }
 
     function requestStartOver() {
-        if (!pairingState.helperReady || !pairingState.hasTrustedDevice || pairingState.startOverPending)
+        if (!pairingState.helperReady || !pairingState.hasTrustedDevice
+                || pairingState.startOverPending)
             return;
+        managementOpen = true;
         startOverDialog.selectedIndex = 0;
         startOverDialog.opened = true;
         startOverDialog.forceActiveFocus();
     }
 
-    function triggerSemanticAction(actionId, requestId, expiresAtUnixMs, actionArgument) {
-        return semanticActionRouter.trigger(actionId, requestId, expiresAtUnixMs, actionArgument);
+    function acceptPhoneTarget(request) {
+        return phoneTargetRouter.acceptPhoneTarget(request);
+    }
+
+    function requestClose() {
+        submapController.closePanel();
     }
 
     function activatePrimary() {
@@ -105,29 +145,43 @@ Panel {
             manualCode.text = "";
     }
 
+    function launchHelper() {
+        if (helperProcess.running)
+            return;
+        helperEpochCounter += 1;
+        acceptedHelperEpoch = String(helperEpochCounter);
+        submapController.helperRestarted();
+        helperProcess.running = true;
+    }
+
     function finishHelperShutdown() {
         if (!helperShutdownPending)
             return;
         helperShutdownPending = false;
         helperStopTimer.stop();
         helperProcess.running = false;
+        acceptedHelperEpoch = "";
         pairingState.reset();
+        submapController.helperRestarted();
     }
 
     onOpenedChanged: {
         if (opened) {
             helperShutdownPending = false;
             helperStopTimer.stop();
-            helperProcess.running = true;
+            launchHelper();
             pairingState.automaticPairingEnabled = true;
-            if (pairingState.helperReady && pairingState.sessionState === "unpaired")
+            if (pairingState.helperReady
+                    && pairingState.sessionState === "unpaired")
                 pairingState.startQrPairing();
         } else {
+            submapController.helperRestarted();
             manualCode.text = "";
             startOverDialog.opened = false;
             pairingState.automaticPairingEnabled = false;
-            var closeAction = PanelLifecycle.closeAction(pairingState.keepConnected, pairingState.sessionState, pairingState.pairingStage, helperProcess.running);
-            if (closeAction === "stop-session" || closeAction === "cancel-pairing") {
+            var closeAction = helperCloseAction();
+            if (closeAction === "stop-session"
+                    || closeAction === "cancel-pairing") {
                 helperShutdownPending = true;
                 if (closeAction === "stop-session")
                     pairingState.stopSession();
@@ -136,11 +190,38 @@ Panel {
                 helperStopTimer.restart();
             }
             settingsOpen = false;
+            managementOpen = false;
         }
+    }
+
+    ApplicationState {
+        id: applicationStateModel
+        factsExternallyManaged: true
+        panelOpen: root.opened
+        managementOpen: root.managementOpen
+        helperReady: pairingState.helperReady
+        hasTrustedDevice: pairingState.hasTrustedDevice
+        helperEpoch: root.acceptedHelperEpoch
+        sessionGeneration: pairingState.sessionGeneration
+        sessionStarted: pairingState.sessionStarted
+        captureAvailable: root.phonePreview !== null
+                              && root.phonePreview.captureAvailable
+        captureActive: root.phonePreview !== null && root.phonePreview.active
+        firstValidFrameReceived: root.phonePreview !== null
+                                   && root.phonePreview.firstValidFrameReceived
+        displayWidth: root.phonePreview !== null
+                      ? root.phonePreview.displayWidth : 0
+        displayHeight: root.phonePreview !== null
+                       ? root.phonePreview.displayHeight : 0
+        previewInputEnabled: root.phonePreview !== null
+                             && root.phonePreview.previewInputEnabled
+        helperActivity: pairingState.activity
+        helperReason: pairingState.reason
     }
 
     PairingState {
         id: pairingState
+        helperEpoch: root.acceptedHelperEpoch
         onCommandRequested: function (command) {
             if (!helperProcess.running) {
                 pairingState.protocolFailure();
@@ -151,7 +232,8 @@ Panel {
         onPairingCancellationConfirmed: {
             if (root.helperShutdownPending) {
                 root.finishHelperShutdown();
-            } else if (root.opened && pairingState.helperReady && pairingState.sessionState === "unpaired") {
+            } else if (root.opened && pairingState.helperReady
+                       && pairingState.sessionState === "unpaired") {
                 pairingState.startQrPairing();
             }
         }
@@ -159,31 +241,93 @@ Panel {
             if (root.helperShutdownPending)
                 root.finishHelperShutdown();
         }
+        onPhoneTargetCompleted: function (requestId, outcome,
+                                          notificationCode) {
+            phoneTargetRouter.consumePhoneTargetResult(outcome,
+                                                       notificationCode);
+        }
+        onPreferenceUpdateFailed: function (reason) {
+            Quickshell.execDetached([
+                "omarchy-notification-send",
+                "Android settings could not be saved.",
+                "--app-name", "omarchy-android",
+                "-u", "normal",
+                "--hint=boolean:transient:true"
+            ]);
+        }
+        onLifecycleFailure: function (reason) {
+            startOverDialog.opened = false;
+            root.settingsOpen = false;
+            root.managementOpen = false;
+        }
     }
 
-    SemanticActionRouter {
-        id: semanticActionRouter
-        semanticIntegrationEnabled: pairingState.androidModeShortcuts
-        commandPassthrough: pairingState.commandPassthrough
-        sessionReady: pairingState.sessionState === "ready"
-        panelOpen: root.opened
-        settingsOpen: root.settingsOpen
-        phoneVisible: root.phonePreview !== null && root.phonePreview.visible
-        phoneEnabled: root.phonePreview !== null && root.phonePreview.inputActive
-        phoneFocused: root.phonePreview !== null && root.phonePreview.inputFocused
-        phoneInteractionReady: root.phonePreview !== null && root.phonePreview.interactionReady
-        onKeyRequested: function (key) {
-            pairingState.sendKeyInput(key);
+    PhoneTargetRouter {
+        id: phoneTargetRouter
+        applicationState: root.applicationState
+        helperEpoch: root.acceptedHelperEpoch
+        sessionGeneration: pairingState.sessionGeneration
+        onPhoneTargetRequested: function (request) {
+            pairingState.sendPhoneTarget(request.requestId, request.target,
+                                         request.expiresAtUnixMs);
         }
-        onSemanticActionRequested: function (actionId, requestId, expiresAtUnixMs, actionArgument) {
-            pairingState.sendSemanticAction(actionId, requestId, expiresAtUnixMs, actionArgument);
+        onPhoneTargetFailureNotificationRequested: function (message,
+                                                               coalesceKey) {
+            Quickshell.execDetached([
+                "omarchy-notification-send", message,
+                "--app-name", "omarchy-android",
+                "-u", "normal",
+                "--hint=boolean:transient:true"
+            ]);
         }
     }
 
-    ShortcutInhibitor {
-        window: panel
-        enabled: semanticActionRouter.shortcutInhibitionRequested
+    SubmapController {
+        id: submapController
+        applicationState: root.applicationState
+        androidModeShortcuts: pairingState.androidModeShortcuts
+        onSubmapCommandRequested: function (submap) {
+            if (submap !== "omarchy-android" && submap !== "reset") {
+                submapController.dispatchFailed();
+                pairingState.localIntegrationFailure();
+                return;
+            }
+            submapProcess.running = false;
+            submapProcess.dispatchedSubmap = submap;
+            submapProcess.command = [
+                "hyprctl", "dispatch", "submap", submap
+            ];
+            submapProcess.running = true;
+        }
+        onPanelCloseRequested: root.close()
     }
+
+    Process {
+        id: submapProcess
+        property string dispatchedSubmap: "reset"
+        running: false
+    }
+    Connections {
+        target: submapProcess
+        function onExited(exitCode) {
+            if (exitCode === 0)
+                return;
+            pairingState.localIntegrationFailure();
+            if (submapProcess.dispatchedSubmap === "reset") {
+                submapResetRetry.restart();
+            } else {
+                submapController.dispatchFailed();
+            }
+        }
+    }
+
+    Timer {
+        id: submapResetRetry
+        interval: 1000
+        repeat: false
+        onTriggered: submapController.forceReset()
+    }
+
 
     Timer {
         id: helperStopTimer
@@ -201,7 +345,7 @@ Panel {
 
     Process {
         id: helperProcess
-        command: root.helperCommand
+        command: root.helperLaunchCommand
         stdinEnabled: true
         running: false
         stdout: SplitParser {
@@ -210,8 +354,12 @@ Panel {
             }
         }
         onRunningChanged: {
-            if (!running && root.opened)
-                pairingState.protocolFailure();
+            if (!running && root.acceptedHelperEpoch !== "") {
+                root.acceptedHelperEpoch = "";
+                submapController.helperRestarted();
+                if (root.opened)
+                    pairingState.protocolFailure();
+            }
         }
     }
 
@@ -228,11 +376,15 @@ Panel {
         PanelKeyCatcher {
             id: keyCatcher
             anchors.fill: parent
-            blocked: root.settingsOpen || startOverDialog.opened || manualCode.activeFocus || (root.phonePreview !== null && root.phonePreview.inputFocused)
+            blocked: root.settingsOpen || startOverDialog.opened
+                     || manualCode.activeFocus
+                     || (root.phonePreview !== null
+                         && root.phonePreview.inputFocused)
             onActivateRequested: root.activatePrimary()
-            onCloseRequested: root.close()
+            onCloseRequested: submapController.closePanel()
             onTextKey: function (text) {
-                pairingState.sendTextInput(text);
+                if (root.applicationState === "interactive")
+                    pairingState.sendTextInput(text);
             }
 
             Column {
@@ -242,7 +394,8 @@ Panel {
 
                 PanelHero {
                     width: parent.width
-                    visible: pairingState.sessionState !== "ready"
+                    visible: root.applicationState === "setup"
+                             || root.applicationState === "recovering"
                     title: root.settingsOpen ? "Settings" : pairingState.statusTitle
                     meta: "Omarchy Android"
                     detail: root.settingsOpen ? "" : pairingState.sessionState
@@ -250,7 +403,9 @@ Panel {
                 }
 
                 Text {
-                    visible: pairingState.sessionState !== "ready" && !root.settingsOpen
+                    visible: (root.applicationState === "setup"
+                              || root.applicationState === "recovering")
+                             && !root.settingsOpen
                     width: parent.width
                     text: pairingState.statusDescription
                     color: Qt.darker(root.contentForeground, 1.25)
@@ -261,11 +416,12 @@ Panel {
                 PhoneToolbar {
                     id: phoneToolbar
                     width: parent.width
-                    visible: pairingState.sessionState === "ready"
+                    visible: root.applicationState === "interactive"
+                             || root.applicationState === "management"
                     actions: pairingState.quickActions
                     keepConnected: pairingState.keepConnected
                     settingsOpen: root.settingsOpen
-                    controlsEnabled: pairingState.sessionState === "ready"
+                    applicationState: root.applicationState
                     foreground: root.contentForeground
                     onActionRequested: function (action) {
                         root.runQuickAction(action);
@@ -273,24 +429,34 @@ Panel {
                     onSettingsRequested: root.openSettings()
                     onBackRequested: root.closeSettings()
                     onKeepConnectedRequested: function (keepConnected) {
-                        root.updatePreferences(keepConnected, pairingState.previewScale, pairingState.videoQuality, pairingState.quickActions, pairingState.androidModeShortcuts, pairingState.commandPassthrough);
+                        root.updatePreferences(keepConnected,
+                                               pairingState.previewScale,
+                                               pairingState.videoQuality,
+                                               pairingState.quickActions,
+                                               pairingState.androidModeShortcuts);
                     }
                 }
 
                 Rectangle {
-                    visible: pairingState.sessionState === "ready" && !root.settingsOpen
+                    visible: root.applicationState === "interactive"
+                             && !root.managementOpen
                     width: parent.width
-                    height: root.desiredPreviewHeight(panel.availableCardHeight)
+                    height: root.desiredPreviewHeight(
+                                panel.availableCardHeight)
                     color: root.contentBackground
                     radius: Style.cornerRadius
                     clip: true
+
                     Loader {
                         id: phonePreviewLoader
                         anchors.centerIn: parent
-                        width: root.desiredViewportSize(panel.availableCardHeight).width
-                        height: root.desiredViewportSize(panel.availableCardHeight).height
-                        active: parent.visible && root.opened
-                        source: Qt.resolvedUrl("qml/components/PhonePreview.qml")
+                        width: root.desiredViewportSize(
+                                   panel.availableCardHeight).width
+                        height: root.desiredViewportSize(
+                                    panel.availableCardHeight).height
+                        active: root.opened && pairingState.sessionStarted
+                        source: Qt.resolvedUrl(
+                                    "qml/components/PhonePreview.qml")
                         onLoaded: {
                             item.background = Qt.binding(function () {
                                 return root.contentBackground;
@@ -298,9 +464,21 @@ Panel {
                             item.foreground = Qt.binding(function () {
                                 return root.contentForeground;
                             });
-                            item.captureRequested = true;
+                            item.captureRequested = Qt.binding(function () {
+                                return root.opened
+                                        && pairingState.sessionStarted;
+                            });
+                            item.helperEpoch = Qt.binding(function () {
+                                return root.acceptedHelperEpoch;
+                            });
+                            item.sessionGeneration = Qt.binding(function () {
+                                return pairingState.sessionGeneration;
+                            });
+                            item.applicationState = Qt.binding(function () {
+                                return root.applicationState;
+                            });
                             item.inputEnabled = Qt.binding(function () {
-                                return root.opened && !root.settingsOpen;
+                                return root.opened && !root.managementOpen;
                             });
                         }
                     }
@@ -308,17 +486,41 @@ Panel {
                     Connections {
                         target: phonePreviewLoader.item
                         enabled: target !== null
-                        function onTapRequested(x, y, displayWidth, displayHeight) {
-                            pairingState.sendPointerTap(x, y, displayWidth, displayHeight);
+
+                        function onTapRequested(x, y, displayWidth,
+                                                displayHeight, helperEpoch,
+                                                sessionGeneration) {
+                            if (helperEpoch === root.acceptedHelperEpoch
+                                    && sessionGeneration
+                                       === pairingState.sessionGeneration)
+                                pairingState.sendPointerTap(
+                                            x, y, displayWidth, displayHeight);
                         }
-                        function onSwipeRequested(startX, startY, endX, endY, displayWidth, displayHeight, durationMs) {
-                            pairingState.sendPointerSwipe(startX, startY, endX, endY, displayWidth, displayHeight, durationMs);
+                        function onSwipeRequested(startX, startY, endX, endY,
+                                                  displayWidth, displayHeight,
+                                                  durationMs, helperEpoch,
+                                                  sessionGeneration) {
+                            if (helperEpoch === root.acceptedHelperEpoch
+                                    && sessionGeneration
+                                       === pairingState.sessionGeneration)
+                                pairingState.sendPointerSwipe(
+                                            startX, startY, endX, endY,
+                                            displayWidth, displayHeight,
+                                            durationMs);
                         }
-                        function onKeyRequested(key) {
-                            pairingState.sendKeyInput(key);
+                        function onKeyRequested(key, helperEpoch,
+                                                sessionGeneration) {
+                            if (helperEpoch === root.acceptedHelperEpoch
+                                    && sessionGeneration
+                                       === pairingState.sessionGeneration)
+                                pairingState.sendKeyInput(key);
                         }
-                        function onTextRequested(text) {
-                            pairingState.sendTextInput(text);
+                        function onTextRequested(text, helperEpoch,
+                                                 sessionGeneration) {
+                            if (helperEpoch === root.acceptedHelperEpoch
+                                    && sessionGeneration
+                                       === pairingState.sessionGeneration)
+                                pairingState.sendTextInput(text);
                         }
                     }
                 }
@@ -326,18 +528,26 @@ Panel {
                 Settings {
                     id: settingsView
                     width: parent.width
-                    maximumHeight: Math.max(1, panel.availableCardHeight - panel.verticalContentInset - phoneToolbar.implicitHeight - content.spacing)
-                    visible: pairingState.sessionState === "ready" && root.settingsOpen
+                    maximumHeight: Math.max(
+                                       1, panel.availableCardHeight
+                                       - panel.verticalContentInset
+                                       - phoneToolbar.implicitHeight
+                                       - content.spacing)
+                    visible: root.applicationState === "management"
+                             && root.settingsOpen
                     keepConnected: pairingState.keepConnected
                     previewScale: pairingState.previewScale
                     videoQuality: pairingState.videoQuality
                     quickActions: pairingState.quickActions
                     androidModeShortcuts: pairingState.androidModeShortcuts
-                    commandPassthrough: pairingState.commandPassthrough
                     foreground: root.contentForeground
                     onBackRequested: root.closeSettings()
-                    onPreferencesRequested: function (keepConnected, scale, quality, actions, androidModeShortcuts, commandPassthrough) {
-                        root.updatePreferences(keepConnected, scale, quality, actions, androidModeShortcuts, commandPassthrough);
+                    onPreferencesRequested: function (keepConnected, scale,
+                                                       quality, actions,
+                                                       androidModeShortcuts) {
+                        root.updatePreferences(keepConnected, scale, quality,
+                                               actions,
+                                               androidModeShortcuts);
                     }
                     onStartOverRequested: root.requestStartOver()
                 }
@@ -401,7 +611,10 @@ Panel {
                         onClicked: pairingState.reconnectTrustedDevice()
                     }
                     Button {
-                        visible: pairingState.helperReady && pairingState.hasTrustedDevice && pairingState.sessionState !== "ready" && !pairingState.startOverPending
+                        visible: pairingState.helperReady
+                                 && pairingState.hasTrustedDevice
+                                 && root.applicationState !== "interactive"
+                                 && !pairingState.startOverPending
                         text: pairingState.pairingStage === "start-over-failed" ? "Retry start over" : "Start over"
                         onClicked: root.requestStartOver()
                     }
@@ -426,12 +639,15 @@ Panel {
 
                 onCanceled: {
                     opened = false;
+                    root.managementOpen = root.settingsOpen;
                     keyCatcher.forceActiveFocus();
                 }
                 onConfirmed: {
+                    if (!pairingState.startOver())
+                        return;
                     opened = false;
                     root.settingsOpen = false;
-                    pairingState.startOver();
+                    root.managementOpen = false;
                     keyCatcher.forceActiveFocus();
                 }
             }

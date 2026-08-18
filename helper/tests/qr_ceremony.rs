@@ -18,9 +18,11 @@ use omarchy_android_helper::qr::{
 use omarchy_android_helper::{
     process::{CommandFailure, CommandOutput, CommandRequest, CommandRunner},
     protocol::{Event, PROTOCOL_VERSION, PairingBackend, ProtocolEngine},
-    runtime::{ProtocolSink, RuntimePairingBackend},
+    runtime::{ProtocolSink, RuntimeDependencies, RuntimePairingBackend},
     wireless::{CancellationToken, DiscoveryFailure, PairingEndpoint, WirelessDiscovery},
 };
+
+const HELPER_EPOCH: &str = "73001";
 
 struct SequenceEntropy {
     next: u8,
@@ -238,13 +240,16 @@ fn runtime_backend_expires_the_artifact_and_emits_timeout() {
         directory.path(),
         directory.path().join("state"),
         Duration::from_millis(20),
+        HELPER_EPOCH,
         sink.clone(),
-        SequencedDiscovery {
-            calls: Arc::new(AtomicUsize::new(0)),
-            requested_services: Arc::new(Mutex::new(Vec::new())),
-        },
-        SuccessfulRunner,
-        None,
+        RuntimeDependencies::new(
+            SequencedDiscovery {
+                calls: Arc::new(AtomicUsize::new(0)),
+                requested_services: Arc::new(Mutex::new(Vec::new())),
+            },
+            SuccessfulRunner,
+            None,
+        ),
     )
     .expect("runtime QR backend");
 
@@ -262,7 +267,10 @@ fn runtime_backend_expires_the_artifact_and_emits_timeout() {
     assert!(!presentation.artifact.exists());
     assert_eq!(
         *sink.lines.lock().expect("memory sink lock"),
-        [Event::QrTimedOut.to_line()]
+        [Event::QrTimedOut {
+            helper_epoch: HELPER_EPOCH.to_owned(),
+        }
+        .to_line()]
     );
 }
 
@@ -367,13 +375,16 @@ fn cancellation_waits_for_the_active_worker_to_finish() {
         directory.path(),
         directory.path().join("state"),
         Duration::from_secs(1),
+        HELPER_EPOCH,
         MemorySink::default(),
-        CancellationObservedDiscovery {
-            started: Arc::clone(&started),
-            finished: Arc::clone(&finished),
-        },
-        SuccessfulRunner,
-        None,
+        RuntimeDependencies::new(
+            CancellationObservedDiscovery {
+                started: Arc::clone(&started),
+                finished: Arc::clone(&finished),
+            },
+            SuccessfulRunner,
+            None,
+        ),
     )
     .expect("runtime pairing backend");
 
@@ -400,15 +411,18 @@ fn replacement_uses_active_qr_material_and_suppresses_stale_worker_events() {
         directory.path(),
         directory.path().join("state"),
         Duration::from_secs(1),
+        HELPER_EPOCH,
         sink.clone(),
-        SequencedDiscovery {
-            calls: Arc::clone(&calls),
-            requested_services: Arc::clone(&requested_services),
-        },
-        RecordingRunner {
-            requests: Arc::clone(&requests),
-        },
-        None,
+        RuntimeDependencies::new(
+            SequencedDiscovery {
+                calls: Arc::clone(&calls),
+                requested_services: Arc::clone(&requested_services),
+            },
+            RecordingRunner {
+                requests: Arc::clone(&requests),
+            },
+            None,
+        ),
     )
     .expect("runtime pairing backend");
 
@@ -437,10 +451,15 @@ fn replacement_uses_active_qr_material_and_suppresses_stale_worker_events() {
         *sink.lines.lock().expect("memory sink lock"),
         [
             Event::Pairing {
+                helper_epoch: HELPER_EPOCH.to_owned(),
                 method: omarchy_android_helper::protocol::PairingMethod::Qr,
             }
             .to_line(),
-            Event::Paired.to_line(),
+            Event::Paired {
+                helper_epoch: HELPER_EPOCH.to_owned(),
+                session_generation: "1".to_owned(),
+            }
+            .to_line(),
         ]
     );
     assert!(!second.artifact.exists());
@@ -510,16 +529,15 @@ fn manual_worker_starts_after_the_synchronous_pairing_event() {
         directory.path(),
         directory.path().join("state"),
         Duration::from_secs(1),
+        HELPER_EPOCH,
         sink.clone(),
-        ManualDiscovery,
-        SuccessfulRunner,
-        None,
+        RuntimeDependencies::new(ManualDiscovery, SuccessfulRunner, None),
     )
     .expect("runtime pairing backend");
-    let mut engine = ProtocolEngine::new(backend);
+    let mut engine = ProtocolEngine::new(backend, HELPER_EPOCH);
 
     let responses = engine.handle_line(&format!(
-        r#"{{"version":{PROTOCOL_VERSION},"type":"submit-manual-code","code":"482913"}}"#
+        r#"{{"version":{PROTOCOL_VERSION},"type":"submit-manual-code","helperEpoch":"{HELPER_EPOCH}","code":"482913"}}"#
     ));
     assert!(sink.lines.lock().expect("memory sink lock").is_empty());
     for response in responses {
@@ -537,10 +555,15 @@ fn manual_worker_starts_after_the_synchronous_pairing_event() {
         *sink.lines.lock().expect("memory sink lock"),
         [
             Event::Pairing {
+                helper_epoch: HELPER_EPOCH.to_owned(),
                 method: omarchy_android_helper::protocol::PairingMethod::ManualCode,
             }
             .to_line(),
-            Event::Paired.to_line(),
+            Event::Paired {
+                helper_epoch: HELPER_EPOCH.to_owned(),
+                session_generation: "1".to_owned(),
+            }
+            .to_line(),
         ]
     );
 }

@@ -1,15 +1,15 @@
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::{
-    action_results::validate_request_id,
-    actions::{SemanticAction, valid_android_package},
+    actions::PhoneTarget,
     input::{AndroidKey, DisplayGeometry, NormalizedPoint},
-    preferences::Preferences,
+    preferences::{Preferences, PreviewScale, QuickAction, VideoQuality},
 };
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
-pub const PROTOCOL_VERSION: u8 = 10;
+pub const PROTOCOL_VERSION: u8 = 11;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -21,6 +21,35 @@ pub enum FailureReason {
     PairingRejected,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ActionFailureCode {
+    InvalidTarget,
+    TargetFailed,
+    TargetTimedOut,
+    InvalidDeadline,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ActionOutcome {
+    Completed,
+    Failed,
+    StaleSession,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PhoneTargetFailure {
+    ActionOnly(ActionFailureCode),
+    Lifecycle(FailureReason),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PairingRequestFailure {
+    InvalidState,
+    Backend(FailureReason),
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct QrPresentation {
     pub artifact: PathBuf,
@@ -28,17 +57,22 @@ pub struct QrPresentation {
 }
 
 pub trait PairingBackend {
-    fn start_qr_pairing(&mut self) -> Result<QrPresentation, FailureReason>;
+    fn start_qr_pairing(&mut self) -> Result<QrPresentation, PairingRequestFailure>;
     fn cancel_pairing(&mut self);
 
     fn shutdown(&mut self) {
         self.cancel_pairing();
         self.stop_session();
     }
-    fn submit_manual_code(&mut self, code: &str) -> Result<(), FailureReason>;
+
+    fn submit_manual_code(&mut self, code: &str) -> Result<(), PairingRequestFailure>;
 
     fn has_trusted_device(&self) -> bool {
         false
+    }
+
+    fn session_generation(&self) -> u64 {
+        0
     }
 
     fn reconnect_trusted_device(&mut self) -> Result<(), FailureReason> {
@@ -77,14 +111,15 @@ pub trait PairingBackend {
         Err(FailureReason::Disconnected)
     }
 
-    fn semantic_action(
+    fn phone_target(
         &mut self,
-        _action: SemanticAction,
-        _action_argument: Option<&str>,
+        _target: PhoneTarget,
         _request_id: &str,
         _expires_at_unix_ms: u64,
-    ) -> Result<bool, FailureReason> {
-        Ok(false)
+    ) -> Result<(), PhoneTargetFailure> {
+        Err(PhoneTargetFailure::ActionOnly(
+            ActionFailureCode::TargetFailed,
+        ))
     }
 
     fn preferences(&self) -> Preferences {
@@ -100,12 +135,16 @@ pub trait PairingBackend {
 
 pub struct ProtocolEngine<B> {
     backend: B,
+    helper_epoch: String,
 }
 
 impl<B> ProtocolEngine<B> {
     #[must_use]
-    pub fn new(backend: B) -> Self {
-        Self { backend }
+    pub fn new(backend: B, helper_epoch: impl Into<String>) -> Self {
+        Self {
+            backend,
+            helper_epoch: helper_epoch.into(),
+        }
     }
 
     #[must_use]
@@ -128,61 +167,92 @@ impl<B: PairingBackend> ProtocolEngine<B> {
     pub fn handle_line(&mut self, line: &str) -> Vec<Event> {
         let command = match parse_command(line) {
             Ok(command) => command,
-            Err(reason) => return vec![Event::ProtocolError { reason }],
+            Err(reason) => return vec![self.protocol_error(reason)],
         };
+        if matches!(
+            &command,
+            Command::PhoneTarget { request_id, .. } if !valid_request_id(request_id)
+        ) {
+            return vec![self.protocol_error(ProtocolErrorReason::InvalidCommand)];
+        }
+        if command.helper_epoch() != Some(self.helper_epoch.as_str()) {
+            return vec![self.stale_result(command.request_id())];
+        }
+        if command.is_session_bound() {
+            let generation = self.generation();
+            if command.session_generation() != Some(generation.as_str()) {
+                return vec![self.stale_result(command.request_id())];
+            }
+        }
 
         match command {
-            Command::StartQrPairing => vec![match self.backend.start_qr_pairing() {
+            Command::StartQrPairing { .. } => vec![match self.backend.start_qr_pairing() {
                 Ok(presentation) => Event::QrWaiting {
+                    helper_epoch: self.helper_epoch.clone(),
                     artifact: presentation.artifact,
                     expires_in_seconds: presentation.expires_in_seconds,
                 },
-                Err(reason) => Event::Failure { reason },
+                Err(PairingRequestFailure::InvalidState) => {
+                    self.protocol_error(ProtocolErrorReason::InvalidCommand)
+                }
+                Err(PairingRequestFailure::Backend(reason)) => self.failure(reason),
             }],
-            Command::ReconnectTrustedDevice => {
+            Command::ReconnectTrustedDevice { .. } => {
                 vec![match self.backend.reconnect_trusted_device() {
-                    Ok(()) => Event::Connecting,
-                    Err(reason) => Event::Failure { reason },
+                    Ok(()) => self.session_event(SessionEvent::Connecting),
+                    Err(reason) => self.failure(reason),
                 }]
             }
-            Command::StopSession => {
+            Command::StopSession { .. } => {
                 self.backend.stop_session();
-                vec![Event::SessionStopped]
+                vec![self.session_event(SessionEvent::Stopped)]
             }
-            Command::StartOver => vec![match self.backend.start_over() {
-                Ok(()) => Event::StartOverComplete,
-                Err(reason) => Event::Failure { reason },
+            Command::StartOver { .. } => vec![match self.backend.start_over() {
+                Ok(()) => self.session_event(SessionEvent::StartOverComplete),
+                Err(reason) => self.failure(reason),
             }],
-            Command::CancelPairing => {
+            Command::CancelPairing { .. } => {
                 self.backend.cancel_pairing();
-                vec![Event::PairingCancelled]
+                vec![Event::PairingCancelled {
+                    helper_epoch: self.helper_epoch.clone(),
+                }]
             }
-            Command::UseManualCode => {
+            Command::UseManualCode { .. } => {
                 self.backend.cancel_pairing();
-                vec![Event::ManualCodeRequired]
+                vec![Event::ManualCodeRequired {
+                    helper_epoch: self.helper_epoch.clone(),
+                }]
             }
-            Command::SubmitManualCode { code } => {
+            Command::SubmitManualCode { code, .. } => {
                 let code = Zeroizing::new(code);
                 if code.len() != 6 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
-                    return vec![Event::ProtocolError {
-                        reason: ProtocolErrorReason::InvalidCommand,
-                    }];
+                    return vec![self.protocol_error(ProtocolErrorReason::InvalidCommand)];
                 }
-                let mut events = vec![Event::Pairing {
-                    method: PairingMethod::ManualCode,
-                }];
-                if let Err(reason) = self.backend.submit_manual_code(code.as_str()) {
-                    events.push(Event::Failure { reason });
+                match self.backend.submit_manual_code(code.as_str()) {
+                    Ok(()) => vec![Event::Pairing {
+                        helper_epoch: self.helper_epoch.clone(),
+                        method: PairingMethod::ManualCode,
+                    }],
+                    Err(PairingRequestFailure::InvalidState) => {
+                        vec![self.protocol_error(ProtocolErrorReason::InvalidCommand)]
+                    }
+                    Err(PairingRequestFailure::Backend(reason)) => vec![
+                        Event::Pairing {
+                            helper_epoch: self.helper_epoch.clone(),
+                            method: PairingMethod::ManualCode,
+                        },
+                        self.failure(reason),
+                    ],
                 }
-                events
             }
             Command::PointerTap {
                 x,
                 y,
                 display_width,
                 display_height,
-            } => handle_input(
-                validate_geometry(display_width, display_height)
+                ..
+            } => {
+                let result = validate_geometry(display_width, display_height)
                     .zip(validate_point(x, y))
                     .ok_or(InputCommandFailure::Protocol(
                         ProtocolErrorReason::InvalidCommand,
@@ -191,8 +261,9 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                         self.backend
                             .pointer_tap(geometry, point)
                             .map_err(InputCommandFailure::Backend)
-                    }),
-            ),
+                    });
+                self.handle_input(result)
+            }
             Command::PointerSwipe {
                 start_x,
                 start_y,
@@ -201,8 +272,9 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                 display_width,
                 display_height,
                 duration_ms,
-            } => handle_input(
-                validate_geometry(display_width, display_height)
+                ..
+            } => {
+                let result = validate_geometry(display_width, display_height)
                     .zip(validate_point(start_x, start_y))
                     .zip(validate_point(end_x, end_y))
                     .filter(|_| (1..=60_000).contains(&duration_ms))
@@ -213,15 +285,18 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                         self.backend
                             .pointer_swipe(geometry, start, end, duration_ms)
                             .map_err(InputCommandFailure::Backend)
-                    }),
-            ),
-            Command::KeyInput { key } => handle_input(
-                self.backend
+                    });
+                self.handle_input(result)
+            }
+            Command::KeyInput { key, .. } => {
+                let result = self
+                    .backend
                     .key_input(key)
-                    .map_err(InputCommandFailure::Backend),
-            ),
-            Command::TextInput { text } => handle_input(
-                validate_text(&text)
+                    .map_err(InputCommandFailure::Backend);
+                self.handle_input(result)
+            }
+            Command::TextInput { text, .. } => {
+                let result = validate_text(&text)
                     .ok_or(InputCommandFailure::Protocol(
                         ProtocolErrorReason::InvalidCommand,
                     ))
@@ -229,39 +304,49 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                         self.backend
                             .text_input(text)
                             .map_err(InputCommandFailure::Backend)
-                    }),
-            ),
-            Command::SemanticAction {
-                action_id,
-                action_argument,
+                    });
+                self.handle_input(result)
+            }
+            Command::PhoneTarget {
+                target,
                 request_id,
                 expires_at_unix_ms,
+                session_generation,
+                ..
             } => {
-                let action_argument =
-                    validate_action_argument(action_id, action_argument.as_deref());
-                if validate_request_id(&request_id).is_err() || action_argument.is_none() {
-                    return vec![Event::ProtocolError {
-                        reason: ProtocolErrorReason::InvalidCommand,
-                    }];
-                }
-                match self.backend.semantic_action(
-                    action_id,
-                    action_argument.flatten(),
-                    &request_id,
-                    expires_at_unix_ms,
-                ) {
-                    Ok(handled) => vec![Event::ActionResult {
-                        action_id,
-                        request_id,
-                        handled,
-                    }],
-                    Err(reason) => vec![
-                        Event::ActionResult {
-                            action_id,
-                            request_id,
-                            handled: false,
-                        },
-                        Event::Failure { reason },
+                let action_generation = session_generation.unwrap_or_else(|| self.generation());
+                let Some(target) = target else {
+                    return vec![self.action_result(
+                        action_generation,
+                        Some(request_id),
+                        ActionOutcome::Failed,
+                        Some(ActionFailureCode::InvalidTarget),
+                    )];
+                };
+                match self
+                    .backend
+                    .phone_target(target, &request_id, expires_at_unix_ms)
+                {
+                    Ok(()) => vec![self.action_result(
+                        action_generation,
+                        Some(request_id),
+                        ActionOutcome::Completed,
+                        None,
+                    )],
+                    Err(PhoneTargetFailure::ActionOnly(code)) => vec![self.action_result(
+                        action_generation,
+                        Some(request_id),
+                        ActionOutcome::Failed,
+                        Some(code),
+                    )],
+                    Err(PhoneTargetFailure::Lifecycle(reason)) => vec![
+                        self.action_result(
+                            action_generation,
+                            Some(request_id),
+                            ActionOutcome::Failed,
+                            Some(ActionFailureCode::TargetFailed),
+                        ),
+                        self.lifecycle_failure(reason),
                     ],
                 }
             }
@@ -271,42 +356,113 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                 video_quality,
                 quick_actions,
                 android_mode_shortcuts,
-                command_passthrough,
+                ..
             } => vec![match self.backend.set_preferences(Preferences {
                 keep_connected,
                 preview_scale,
                 video_quality,
                 quick_actions,
                 android_mode_shortcuts,
-                command_passthrough,
             }) {
                 Ok(session_restarted) => Event::PreferencesUpdated {
+                    helper_epoch: self.helper_epoch.clone(),
+                    session_generation: self.generation(),
                     preferences: self.backend.preferences(),
                     session_restarted,
                 },
-                Err(reason) => Event::Failure { reason },
+                Err(reason) => self.failure(reason),
             }],
         }
     }
+
+    fn generation(&self) -> String {
+        self.backend.session_generation().to_string()
+    }
+
+    fn protocol_error(&self, reason: ProtocolErrorReason) -> Event {
+        Event::ProtocolError {
+            helper_epoch: self.helper_epoch.clone(),
+            reason,
+        }
+    }
+
+    fn failure(&self, reason: FailureReason) -> Event {
+        Event::Failure {
+            helper_epoch: self.helper_epoch.clone(),
+            reason,
+        }
+    }
+
+    fn lifecycle_failure(&self, reason: FailureReason) -> Event {
+        Event::LifecycleFailure {
+            helper_epoch: self.helper_epoch.clone(),
+            session_generation: self.generation(),
+            reason,
+        }
+    }
+
+    fn session_event(&self, event: SessionEvent) -> Event {
+        let helper_epoch = self.helper_epoch.clone();
+        let session_generation = self.generation();
+        match event {
+            SessionEvent::Connecting => Event::Connecting {
+                helper_epoch,
+                session_generation,
+            },
+            SessionEvent::Stopped => Event::SessionStopped {
+                helper_epoch,
+                session_generation,
+            },
+            SessionEvent::StartOverComplete => Event::StartOverComplete {
+                helper_epoch,
+                session_generation,
+            },
+        }
+    }
+
+    fn action_result(
+        &self,
+        session_generation: String,
+        request_id: Option<String>,
+        outcome: ActionOutcome,
+        notification_code: Option<ActionFailureCode>,
+    ) -> Event {
+        Event::ActionResult {
+            helper_epoch: self.helper_epoch.clone(),
+            session_generation,
+            request_id,
+            outcome,
+            notification_code,
+        }
+    }
+
+    fn stale_result(&self, request_id: Option<String>) -> Event {
+        self.action_result(
+            self.generation(),
+            request_id,
+            ActionOutcome::StaleSession,
+            None,
+        )
+    }
+
+    fn handle_input(&self, result: Result<(), InputCommandFailure>) -> Vec<Event> {
+        match result {
+            Ok(()) => Vec::new(),
+            Err(InputCommandFailure::Protocol(reason)) => vec![self.protocol_error(reason)],
+            Err(InputCommandFailure::Backend(reason)) => vec![self.lifecycle_failure(reason)],
+        }
+    }
+}
+
+enum SessionEvent {
+    Connecting,
+    Stopped,
+    StartOverComplete,
 }
 
 enum InputCommandFailure {
     Protocol(ProtocolErrorReason),
     Backend(FailureReason),
-}
-
-impl From<ProtocolErrorReason> for InputCommandFailure {
-    fn from(reason: ProtocolErrorReason) -> Self {
-        Self::Protocol(reason)
-    }
-}
-
-fn handle_input(result: Result<(), InputCommandFailure>) -> Vec<Event> {
-    match result {
-        Ok(()) => Vec::new(),
-        Err(InputCommandFailure::Protocol(reason)) => vec![Event::ProtocolError { reason }],
-        Err(InputCommandFailure::Backend(reason)) => vec![Event::Failure { reason }],
-    }
 }
 
 fn validate_geometry(width: u32, height: u32) -> Option<DisplayGeometry> {
@@ -318,38 +474,58 @@ fn validate_point(x: f64, y: f64) -> Option<NormalizedPoint> {
 }
 
 fn validate_text(text: &str) -> Option<&str> {
-    (!text.is_empty() && text.len() <= 256 && !text.chars().any(|character| character.is_control()))
-        .then_some(text)
+    (!text.is_empty() && text.len() <= 256 && !text.chars().any(char::is_control)).then_some(text)
 }
 
-fn validate_action_argument(
-    action: SemanticAction,
-    argument: Option<&str>,
-) -> Option<Option<&str>> {
-    match action {
-        SemanticAction::AndroidLaunchApp => argument
-            .filter(|package| valid_android_package(package))
-            .map(Some),
-        _ => match argument {
-            None | Some("") => Some(None),
-            Some(_) => None,
-        },
-    }
+fn valid_request_id(request_id: &str) -> bool {
+    !request_id.is_empty()
+        && request_id.len() <= 64
+        && request_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
 enum Command {
-    StartQrPairing,
-    CancelPairing,
-    UseManualCode,
+    StartQrPairing {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+    },
+    CancelPairing {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+    },
+    UseManualCode {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+    },
     SubmitManualCode {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
         code: String,
     },
-    ReconnectTrustedDevice,
-    StopSession,
-    StartOver,
+    ReconnectTrustedDevice {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+    },
+    StopSession {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+        #[serde(rename = "sessionGeneration", default)]
+        session_generation: Option<String>,
+    },
+    StartOver {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+        #[serde(rename = "sessionGeneration", default)]
+        session_generation: Option<String>,
+    },
     PointerTap {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+        #[serde(rename = "sessionGeneration", default)]
+        session_generation: Option<String>,
         x: f64,
         y: f64,
         #[serde(rename = "displayWidth")]
@@ -358,6 +534,10 @@ enum Command {
         display_height: u32,
     },
     PointerSwipe {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+        #[serde(rename = "sessionGeneration", default)]
+        session_generation: Option<String>,
         #[serde(rename = "startX")]
         start_x: f64,
         #[serde(rename = "startY")]
@@ -374,35 +554,120 @@ enum Command {
         duration_ms: u32,
     },
     KeyInput {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+        #[serde(rename = "sessionGeneration", default)]
+        session_generation: Option<String>,
         key: AndroidKey,
     },
     TextInput {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+        #[serde(rename = "sessionGeneration", default)]
+        session_generation: Option<String>,
         text: String,
     },
-    SemanticAction {
-        #[serde(rename = "actionId")]
-        action_id: SemanticAction,
-        #[serde(rename = "actionArgument", default)]
-        action_argument: Option<String>,
+    PhoneTarget {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+        #[serde(rename = "sessionGeneration", default)]
+        session_generation: Option<String>,
         #[serde(rename = "requestId")]
         request_id: String,
         #[serde(rename = "expiresAtUnixMs")]
         expires_at_unix_ms: u64,
+        #[serde(default, deserialize_with = "deserialize_phone_target")]
+        target: Option<PhoneTarget>,
     },
     SetPreferences {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
         #[serde(rename = "keepConnected")]
         keep_connected: bool,
         #[serde(rename = "previewScale")]
-        preview_scale: crate::preferences::PreviewScale,
+        preview_scale: PreviewScale,
         #[serde(rename = "videoQuality")]
-        video_quality: crate::preferences::VideoQuality,
+        video_quality: VideoQuality,
         #[serde(rename = "quickActions")]
-        quick_actions: [crate::preferences::QuickAction; 3],
+        quick_actions: [QuickAction; 3],
         #[serde(rename = "androidModeShortcuts")]
         android_mode_shortcuts: bool,
-        #[serde(rename = "commandPassthrough")]
-        command_passthrough: bool,
     },
+}
+
+impl Command {
+    fn helper_epoch(&self) -> Option<&str> {
+        match self {
+            Self::StartQrPairing { helper_epoch }
+            | Self::CancelPairing { helper_epoch }
+            | Self::UseManualCode { helper_epoch }
+            | Self::SubmitManualCode { helper_epoch, .. }
+            | Self::ReconnectTrustedDevice { helper_epoch }
+            | Self::StopSession { helper_epoch, .. }
+            | Self::StartOver { helper_epoch, .. }
+            | Self::PointerTap { helper_epoch, .. }
+            | Self::PointerSwipe { helper_epoch, .. }
+            | Self::KeyInput { helper_epoch, .. }
+            | Self::TextInput { helper_epoch, .. }
+            | Self::PhoneTarget { helper_epoch, .. }
+            | Self::SetPreferences { helper_epoch, .. } => helper_epoch.as_deref(),
+        }
+    }
+
+    fn session_generation(&self) -> Option<&str> {
+        match self {
+            Self::StopSession {
+                session_generation, ..
+            }
+            | Self::StartOver {
+                session_generation, ..
+            }
+            | Self::PointerTap {
+                session_generation, ..
+            }
+            | Self::PointerSwipe {
+                session_generation, ..
+            }
+            | Self::KeyInput {
+                session_generation, ..
+            }
+            | Self::TextInput {
+                session_generation, ..
+            }
+            | Self::PhoneTarget {
+                session_generation, ..
+            } => session_generation.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn is_session_bound(&self) -> bool {
+        matches!(
+            self,
+            Self::StopSession { .. }
+                | Self::StartOver { .. }
+                | Self::PointerTap { .. }
+                | Self::PointerSwipe { .. }
+                | Self::KeyInput { .. }
+                | Self::TextInput { .. }
+                | Self::PhoneTarget { .. }
+        )
+    }
+
+    fn request_id(&self) -> Option<String> {
+        match self {
+            Self::PhoneTarget { request_id, .. } => Some(request_id.clone()),
+            _ => None,
+        }
+    }
+}
+
+fn deserialize_phone_target<'de, D>(deserializer: D) -> Result<Option<PhoneTarget>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).ok())
 }
 
 fn parse_command(line: &str) -> Result<Command, ProtocolErrorReason> {
@@ -412,11 +677,9 @@ fn parse_command(line: &str) -> Result<Command, ProtocolErrorReason> {
         .get("version")
         .and_then(serde_json::Value::as_u64)
         .ok_or(ProtocolErrorReason::InvalidCommand)?;
-
     if version != u64::from(PROTOCOL_VERSION) {
         return Err(ProtocolErrorReason::VersionMismatch);
     }
-
     value
         .as_object_mut()
         .ok_or(ProtocolErrorReason::InvalidCommand)?
@@ -435,51 +698,126 @@ struct EventEnvelope<'a> {
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Event {
     Ready {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
         #[serde(rename = "hasTrustedDevice")]
         has_trusted_device: bool,
         preferences: Preferences,
     },
     QrWaiting {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
         artifact: PathBuf,
         #[serde(rename = "expiresInSeconds")]
         expires_in_seconds: u64,
     },
     Pairing {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
         method: PairingMethod,
     },
-    PairingCancelled,
-    QrTimedOut,
-    ManualCodeRequired,
-    Paired,
-    Connecting,
-    Connected,
-    SessionStarting,
+    PairingCancelled {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+    },
+    QrTimedOut {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+    },
+    ManualCodeRequired {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+    },
+    Paired {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
+    },
+    Connecting {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
+    },
+    Connected {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
+    },
+    SessionStarting {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
+    },
     SessionStarted {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
         #[serde(rename = "physicalWidthMm", skip_serializing_if = "Option::is_none")]
         physical_width_mm: Option<u16>,
         #[serde(rename = "physicalHeightMm", skip_serializing_if = "Option::is_none")]
         physical_height_mm: Option<u16>,
     },
-    SessionEnded,
-    SessionStopped,
-    StartOverComplete,
+    SessionEnded {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
+    },
+    SessionStopped {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
+    },
+    StartOverComplete {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
+    },
     PreferencesUpdated {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
         #[serde(flatten)]
         preferences: Preferences,
         #[serde(rename = "sessionRestarted")]
         session_restarted: bool,
     },
     Failure {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        reason: FailureReason,
+    },
+    LifecycleFailure {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
         reason: FailureReason,
     },
     ActionResult {
-        #[serde(rename = "actionId")]
-        action_id: SemanticAction,
-        #[serde(rename = "requestId")]
-        request_id: String,
-        handled: bool,
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
+        #[serde(rename = "requestId", skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+        outcome: ActionOutcome,
+        #[serde(rename = "notificationCode", skip_serializing_if = "Option::is_none")]
+        notification_code: Option<ActionFailureCode>,
     },
     ProtocolError {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
         reason: ProtocolErrorReason,
     },
 }
@@ -497,6 +835,16 @@ impl Event {
         })
         .expect("protocol events contain only serializable enum values")
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PairingEvent {
+    Pairing { method: PairingMethod },
+    PairingCancelled,
+    QrTimedOut,
+    Paired,
+    Connected,
+    Failure { reason: FailureReason },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

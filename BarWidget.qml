@@ -14,21 +14,44 @@ BarWidget {
     }
 
     function close() {
-        if (panel) panel.close()
+        if (!panel)
+            return;
+        if ("requestClose" in panel)
+            panel.requestClose();
+        else
+            panel.close();
     }
 
     function togglePanel() {
-        if (panel) panel.toggle()
+        if (!panel)
+            return;
+        if (opened)
+            close();
+        else
+            panel.open();
     }
 
-    function runSemanticAction(actionId, actionArgument, requestId, expiresAtUnixMs) {
-        if (actionId === "toggle-android-panel") {
-            root.togglePanel()
-            return true
+    function decodePhoneTarget(encodedEnvelope) {
+        if (typeof encodedEnvelope !== "string" || encodedEnvelope.length === 0
+                || encodedEnvelope.length > 4096
+                || !/^[A-Za-z0-9_-]+$/.test(encodedEnvelope))
+            return null;
+        var base64 = encodedEnvelope.replace(/-/g, "+").replace(/_/g, "/");
+        while (base64.length % 4 !== 0)
+            base64 += "=";
+        try {
+            return JSON.parse(Qt.atob(base64));
+        } catch (error) {
+            return null;
         }
-        if (root.panel && "triggerSemanticAction" in root.panel)
-            return root.panel.triggerSemanticAction(actionId, requestId, expiresAtUnixMs, actionArgument)
-        return false
+    }
+
+    function phoneTarget(encodedEnvelope) {
+        var request = decodePhoneTarget(encodedEnvelope);
+        if (request === null || !root.panel
+                || !("acceptPhoneTarget" in root.panel))
+            return false;
+        return root.panel.acceptPhoneTarget(request);
     }
 
     function injectPanel() {
@@ -63,7 +86,7 @@ BarWidget {
         function show() { root.open() }
         function hide() { root.close() }
         function toggle() { root.togglePanel() }
-        function action(actionId: string, actionArgument: string, requestId: string, expiresAtUnixMs: real): bool { return root.runSemanticAction(actionId, actionArgument, requestId, expiresAtUnixMs) }
+        function phoneTarget(encodedEnvelope: string): bool { return root.phoneTarget(encodedEnvelope) }
     }
 
     WidgetButton {

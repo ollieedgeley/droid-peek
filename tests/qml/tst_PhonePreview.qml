@@ -88,8 +88,9 @@ TestCase {
         var oldCaptureEpoch = preview.captureEpoch
         var oldCapturePipeline = preview.capturePipeline
         verify(preview.acceptCaptureSource(
-                   oldCaptureEpoch, preview.deviceId, preview.deviceDescription))
-        verify(preview.acceptRenderedFrame(oldCaptureEpoch))
+                   oldCaptureEpoch, "17", "1",
+                   preview.deviceId, preview.deviceDescription))
+        verify(preview.acceptRenderedFrame(oldCaptureEpoch, "17", "1"))
         compare(preview.firstValidFrameReceived, true)
 
         preview.sessionGeneration = "2"
@@ -97,23 +98,33 @@ TestCase {
         verify(preview.captureEpoch > oldCaptureEpoch)
         verify(preview.capturePipeline !== oldCapturePipeline)
         compare(preview.firstValidFrameReceived, false)
+        compare(preview.capturePipeline.epoch, preview.captureEpoch)
+        compare(preview.capturePipeline.helperEpochSnapshot, "17")
+        compare(preview.capturePipeline.sessionGenerationSnapshot, "2")
         compare(preview.interactionReady, false)
     }
 
-    function test_old_capture_callbacks_cannot_restore_current_frame() {
+    function test_old_capture_callbacks_cannot_adopt_the_new_identity() {
         preview.captureRequested = true
         var oldCaptureEpoch = preview.captureEpoch
         verify(preview.acceptCaptureSource(
-                   oldCaptureEpoch, preview.deviceId, preview.deviceDescription))
+                   oldCaptureEpoch, "17", "1",
+                   preview.deviceId, preview.deviceDescription))
 
         preview.sessionGeneration = "2"
         var currentCaptureEpoch = preview.captureEpoch
 
-        verify(!preview.acceptRenderedFrame(oldCaptureEpoch))
+        verify(!preview.acceptCaptureSource(
+                   currentCaptureEpoch, "17", "1",
+                   preview.deviceId, preview.deviceDescription))
+        verify(!preview.acceptRenderedFrame(
+                   currentCaptureEpoch, "17", "1"))
         compare(preview.firstValidFrameReceived, false)
         verify(preview.acceptCaptureSource(
-                   currentCaptureEpoch, preview.deviceId, preview.deviceDescription))
-        verify(preview.acceptRenderedFrame(currentCaptureEpoch))
+                   currentCaptureEpoch, "17", "2",
+                   preview.deviceId, preview.deviceDescription))
+        verify(preview.acceptRenderedFrame(
+                   currentCaptureEpoch, "17", "2"))
         compare(preview.firstValidFrameReceived, true)
     }
 
@@ -122,12 +133,13 @@ TestCase {
         var currentCaptureEpoch = preview.captureEpoch
 
         verify(!preview.acceptCaptureSource(
-                   currentCaptureEpoch - 1,
+                   currentCaptureEpoch - 1, "17", "1",
                    preview.deviceId, preview.deviceDescription))
         verify(!preview.acceptCaptureSource(
-                   currentCaptureEpoch,
+                   currentCaptureEpoch, "17", "1",
                    "/dev/video41", preview.deviceDescription))
-        verify(!preview.acceptRenderedFrame(currentCaptureEpoch))
+        verify(!preview.acceptRenderedFrame(
+                   currentCaptureEpoch, "17", "1"))
         compare(preview.firstValidFrameReceived, false)
     }
 
@@ -135,8 +147,10 @@ TestCase {
         preview.captureRequested = true
         var currentCaptureEpoch = preview.captureEpoch
         verify(preview.acceptCaptureSource(
-                   currentCaptureEpoch, preview.deviceId, preview.deviceDescription))
-        verify(preview.acceptRenderedFrame(currentCaptureEpoch))
+                   currentCaptureEpoch, "17", "1",
+                   preview.deviceId, preview.deviceDescription))
+        verify(preview.acceptRenderedFrame(
+                   currentCaptureEpoch, "17", "1"))
 
         preview.captureRequested = false
 
@@ -168,10 +182,21 @@ TestCase {
         compare(swipeSpy.signalArguments[0][7], "17")
         compare(swipeSpy.signalArguments[0][8], "1")
     }
+    function test_pointer_release_from_old_generation_is_rejected() {
+        var content = Qt.rect(20, 40, 200, 400)
+        preview.sessionGeneration = "2"
+
+        verify(!preview.dispatchPointer(
+                   120, 240, 122, 242, 80, content, 1080, 2400,
+                   "17", "1"))
+        compare(tapSpy.count, 0)
+    }
+
 
     function test_ordinary_unmodified_text_and_keys_remain_eligible() {
         preview.applicationState = "interactive"
         preview.inputEnabled = true
+        preview.captureRequested = true
         verify(preview.dispatchKeyEvent(Qt.Key_A, Qt.NoModifier, "a"))
         verify(preview.dispatchKeyEvent(Qt.Key_Left, Qt.NoModifier, ""))
 

@@ -15,7 +15,7 @@ pub use crate::process::CancellationToken;
 use crate::{
     persistence::TrustedDevice,
     process::{CommandFailure, CommandRequest, CommandRunner},
-    protocol::{Event, FailureReason, PairingMethod},
+    protocol::{FailureReason, PairingEvent as Event, PairingMethod},
 };
 
 /// A local endpoint discovered for an Android Wireless debugging service.

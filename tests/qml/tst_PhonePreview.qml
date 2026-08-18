@@ -1,5 +1,6 @@
 import QtQuick
 import QtTest
+import qs.Commons
 import "../../qml/components"
 import "../../qml/PreviewGeometry.js" as PreviewGeometry
 
@@ -59,6 +60,21 @@ TestCase {
         fallbackFocus.forceActiveFocus()
         wait(0)
     }
+
+    function test_default_surface_uses_live_popup_roles() {
+        compare(Color.popups.text, "#123456")
+        compare(Color.popups.background, "#f0e1d2")
+
+        Color.popups.text = "#abcdef"
+        Color.popups.background = "#010203"
+        wait(0)
+        compare(preview.foreground, "#abcdef")
+        compare(preview.background, "#010203")
+
+        Color.popups.text = "#123456"
+        Color.popups.background = "#f0e1d2"
+    }
+
 
     function test_capture_identity_is_exact_and_unique() {
         compare(preview.deviceId, "/dev/video42")

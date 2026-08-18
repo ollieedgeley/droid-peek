@@ -1,5 +1,6 @@
 import QtQuick
 import QtMultimedia
+import qs.Commons
 
 pragma ComponentBehavior: Bound
 
@@ -13,8 +14,9 @@ Item {
     property string applicationState: "closed"
     readonly property string deviceId: "/dev/video42"
     readonly property string deviceDescription: "Omarchy Android"
-    property color foreground: "white"
-    property color background: "#101418"
+    readonly property var popupPalette: Color.popups
+    property color foreground: popupPalette.text
+    property color background: popupPalette.background
     property bool firstValidFrameReceived: false
     property bool captureSourceAcknowledged: false
     property int captureEpoch: 0

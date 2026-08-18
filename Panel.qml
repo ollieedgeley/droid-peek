@@ -28,8 +28,9 @@ Panel {
                                                      acceptedHelperEpoch])
     readonly property var barIdentity: hostWidget || root
     readonly property string applicationState: applicationStateModel.applicationState
-    readonly property color contentForeground: root.barForeground
-    readonly property color contentBackground: Color.background
+    readonly property var popupPalette: Color.popups
+    readonly property color contentForeground: popupPalette.text
+    readonly property color contentBackground: popupPalette.background
     readonly property var phonePreview: phonePreviewLoader.item
 
     implicitWidth: 320
@@ -408,7 +409,7 @@ Panel {
                              && !root.settingsOpen
                     width: parent.width
                     text: pairingState.statusDescription
-                    color: Qt.darker(root.contentForeground, 1.25)
+                    color: root.contentForeground
                     font.family: Style.fontFamily
                     font.pixelSize: Style.fontBaseSize
                     wrapMode: Text.Wrap
@@ -587,6 +588,7 @@ Panel {
                     placeholderText: "Pairing code"
                     inputMethodHints: Qt.ImhDigitsOnly
                     maximumLength: 6
+                    foreground: root.contentForeground
                     onAccepted: root.activatePrimary()
                 }
 
@@ -596,18 +598,21 @@ Panel {
                     Button {
                         visible: pairingState.sessionState === "qr-waiting" && pairingState.pairingStage !== "manual-code"
                         text: "Pair by code"
+                        foreground: root.contentForeground
                         onClicked: pairingState.useManualCode()
                     }
 
                     Button {
                         visible: pairingState.pairingStage === "manual-code"
                         text: "Pair"
+                        foreground: root.contentForeground
                         onClicked: root.activatePrimary()
                     }
 
                     Button {
                         visible: pairingState.sessionState === "disconnected"
                         text: "Reconnect"
+                        foreground: root.contentForeground
                         onClicked: pairingState.reconnectTrustedDevice()
                     }
                     Button {
@@ -616,6 +621,7 @@ Panel {
                                  && root.applicationState !== "interactive"
                                  && !pairingState.startOverPending
                         text: pairingState.pairingStage === "start-over-failed" ? "Retry start over" : "Start over"
+                        foreground: root.contentForeground
                         onClicked: root.requestStartOver()
                     }
                 }

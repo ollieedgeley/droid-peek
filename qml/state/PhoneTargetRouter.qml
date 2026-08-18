@@ -43,17 +43,27 @@ QtObject {
                     packageName);
     }
 
+    function validKeyName(keyName) {
+        if (typeof keyName !== "string")
+            return false;
+        var match = /^[a-z]+(-[a-z]+)*/.exec(keyName);
+        return match !== null && match[0].length === keyName.length;
+    }
+
     function validTarget(target) {
         if (typeof target === "string")
             return validNamedTarget(target);
-        if (!target || Array.isArray(target)
-                || target.type !== "android.app.launch"
-                || !validPackage(target.package))
+        if (!target || typeof target !== "object" || Array.isArray(target))
             return false;
         var keys = Object.keys(target);
-        return keys.length === 2
-                && keys.indexOf("type") >= 0
-                && keys.indexOf("package") >= 0;
+        if (keys.length !== 2 || keys.indexOf("type") < 0)
+            return false;
+        if (target.type === "android.app.launch")
+            return keys.indexOf("package") >= 0
+                    && validPackage(target.package);
+        if (target.type === "android.keyevent")
+            return keys.indexOf("key") >= 0 && validKeyName(target.key);
+        return false;
     }
 
     function consumePhoneTargetResult(outcome, notificationCode) {

@@ -53,10 +53,20 @@ pub enum AndroidKey {
     ArrowRight,
     Tab,
     Space,
+    VolumeUp,
+    VolumeDown,
+    VolumeMute,
+    MediaPlayPause,
+    MediaNext,
+    MediaPrevious,
+    Copy,
+    Cut,
+    Paste,
 }
 
 impl AndroidKey {
-    fn keycode(self) -> &'static str {
+    #[must_use]
+    pub const fn keycode(self) -> &'static str {
         match self {
             Self::Back => "KEYCODE_BACK",
             Self::Home => "KEYCODE_HOME",
@@ -70,6 +80,15 @@ impl AndroidKey {
             Self::ArrowRight => "KEYCODE_DPAD_RIGHT",
             Self::Tab => "KEYCODE_TAB",
             Self::Space => "KEYCODE_SPACE",
+            Self::VolumeUp => "KEYCODE_VOLUME_UP",
+            Self::VolumeDown => "KEYCODE_VOLUME_DOWN",
+            Self::VolumeMute => "KEYCODE_VOLUME_MUTE",
+            Self::MediaPlayPause => "KEYCODE_MEDIA_PLAY_PAUSE",
+            Self::MediaNext => "KEYCODE_MEDIA_NEXT",
+            Self::MediaPrevious => "KEYCODE_MEDIA_PREVIOUS",
+            Self::Copy => "KEYCODE_COPY",
+            Self::Cut => "KEYCODE_CUT",
+            Self::Paste => "KEYCODE_PASTE",
         }
     }
 }

@@ -18,7 +18,9 @@ use crate::{
     persistence::{FileTrustedDeviceStore, TrustedDevice},
     preferences::{FilePreferenceStore, Preferences, VideoQuality},
     private_fs::ensure_private_directory,
-    process::{AdbCommandRunner, CancellationToken, CommandFailure, CommandRequest, CommandRunner},
+    process::{
+        ActionExecutionFailure, AdbCommandRunner, CancellationToken, CommandRequest, CommandRunner,
+    },
     protocol::{
         ActionFailureCode, Event, FailureReason, PairingBackend, PairingEvent, PairingMethod,
         PairingRequestFailure, PhoneTargetFailure, QrPresentation,
@@ -1028,20 +1030,24 @@ where
         };
         match result {
             Ok(true) => Ok(()),
-            Ok(false) | Err(CommandFailure::DependencyUnavailable) => Err(
+            Ok(false) | Err(ActionExecutionFailure::DependencyUnavailable) => Err(
                 PhoneTargetFailure::ActionOnly(ActionFailureCode::TargetFailed),
             ),
-            Err(CommandFailure::Cancelled)
+            Err(ActionExecutionFailure::Cancelled)
                 if target_cancellation.is_cancelled() && !session_cancellation.is_cancelled() =>
             {
                 Err(PhoneTargetFailure::ActionOnly(
                     ActionFailureCode::TargetTimedOut,
                 ))
             }
-            Err(CommandFailure::Cancelled) => Err(PhoneTargetFailure::ActionOnly(
+            Err(ActionExecutionFailure::Cancelled) => Err(PhoneTargetFailure::ActionOnly(
                 ActionFailureCode::TargetFailed,
             )),
-            Err(CommandFailure::Unauthorized) => {
+            Err(ActionExecutionFailure::Disconnected) => {
+                self.session.invalidate_and_wait();
+                Err(PhoneTargetFailure::Lifecycle(FailureReason::Disconnected))
+            }
+            Err(ActionExecutionFailure::Unauthorized) => {
                 self.session.invalidate_and_wait();
                 Err(PhoneTargetFailure::Lifecycle(FailureReason::Unauthorized))
             }

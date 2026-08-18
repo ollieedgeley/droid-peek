@@ -419,6 +419,7 @@ fn typed_phone_targets_are_correlated_and_forwarded_with_identity() {
             "package",
             r#"{"type":"android.app.launch","package":"com.example.notes"}"#,
         ),
+        ("volume", r#"{"type":"android.keyevent","key":"volume-up"}"#),
     ] {
         assert_eq!(
             wire_lines(engine.handle_line(&format!(
@@ -431,13 +432,19 @@ fn typed_phone_targets_are_correlated_and_forwarded_with_identity() {
     }
 
     let backend = engine.into_backend();
-    assert_eq!(backend.phone_targets.len(), 3);
+    assert_eq!(backend.phone_targets.len(), 4);
     assert_eq!(backend.phone_targets[0].0, PhoneTarget::BrowserDefault);
     assert_eq!(backend.phone_targets[1].0, PhoneTarget::NavigateHome);
     assert_eq!(
         backend.phone_targets[2].0,
         PhoneTarget::AppLaunch {
             package: "com.example.notes".to_owned()
+        }
+    );
+    assert_eq!(
+        backend.phone_targets[3].0,
+        PhoneTarget::KeyEvent {
+            key: AndroidKey::VolumeUp
         }
     );
 }
@@ -453,28 +460,35 @@ fn action_only_failure_is_typed_and_does_not_emit_a_lifecycle_failure() {
 
     assert_eq!(
         wire_lines(engine.handle_line(
-            r#"{"version":11,"type":"phone-target","helperEpoch":"73001","sessionGeneration":"0","requestId":"failed-browser","expiresAtUnixMs":1750000000001,"target":"android.browser.default"}"#,
+            r#"{"version":11,"type":"phone-target","helperEpoch":"73001","sessionGeneration":"0","requestId":"failed-key","expiresAtUnixMs":1750000000001,"target":{"type":"android.keyevent","key":"volume-down"}}"#,
         )),
-        [r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"0","requestId":"failed-browser","outcome":"failed","notificationCode":"target-failed"}"#]
+        [r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"0","requestId":"failed-key","outcome":"failed","notificationCode":"target-failed"}"#]
     );
 }
 
 #[test]
-fn proven_transport_failure_is_a_separate_generation_advancing_lifecycle_event() {
-    let mut engine = engine(FakePairingBackend {
-        phone_target_failure: Some(PhoneTargetFailure::Lifecycle(FailureReason::Disconnected)),
-        ..FakePairingBackend::default()
-    });
+fn proven_transport_failures_follow_the_action_result_and_advance_generation() {
+    for (reason, reason_wire) in [
+        (FailureReason::Disconnected, "disconnected"),
+        (FailureReason::Unauthorized, "unauthorized"),
+    ] {
+        let mut engine = engine(FakePairingBackend {
+            phone_target_failure: Some(PhoneTargetFailure::Lifecycle(reason)),
+            ..FakePairingBackend::default()
+        });
 
-    assert_eq!(
-        wire_lines(engine.handle_line(
-            r#"{"version":11,"type":"phone-target","helperEpoch":"73001","sessionGeneration":"0","requestId":"lost-device","expiresAtUnixMs":1750000000001,"target":"android.navigate.home"}"#,
-        )),
-        [
-            r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"0","requestId":"lost-device","outcome":"failed","notificationCode":"target-failed"}"#,
-            r#"{"version":11,"type":"lifecycle-failure","helperEpoch":"73001","sessionGeneration":"1","reason":"disconnected"}"#,
-        ]
-    );
+        assert_eq!(
+            wire_lines(engine.handle_line(
+                r#"{"version":11,"type":"phone-target","helperEpoch":"73001","sessionGeneration":"0","requestId":"lost-device","expiresAtUnixMs":1750000000001,"target":{"type":"android.keyevent","key":"volume-up"}}"#,
+            )),
+            [
+                r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"0","requestId":"lost-device","outcome":"failed","notificationCode":"target-failed"}"#.to_owned(),
+                format!(
+                    r#"{{"version":11,"type":"lifecycle-failure","helperEpoch":"73001","sessionGeneration":"1","reason":"{reason_wire}"}}"#
+                ),
+            ]
+        );
+    }
 }
 
 #[test]
@@ -484,6 +498,9 @@ fn malformed_or_unknown_targets_fail_closed_before_android_work() {
         r#""not-declared""#,
         r#"{"type":"android.app.launch","package":"bad package"}"#,
         r#"{"type":"adb.command","command":"shell id"}"#,
+        r#"{"type":"android.keyevent","key":"brightness-up"}"#,
+        r#"{"type":"android.keyevent","key":"KEYCODE_HOME"}"#,
+        r#"{"type":"android.keyevent","key":"volume-up","command":"id"}"#,
     ] {
         assert_eq!(
             wire_lines(engine.handle_line(&format!(

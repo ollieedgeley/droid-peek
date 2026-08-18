@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Deserializer};
 
-use crate::process::{CancellationToken, CommandFailure, CommandRequest, CommandRunner};
+use crate::{
+    input::AndroidKey,
+    process::{ActionExecutionFailure, CancellationToken, CommandRequest, CommandRunner},
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PhoneTarget {
@@ -11,6 +14,7 @@ pub enum PhoneTarget {
     NavigateBack,
     RecentApps,
     AppLaunch { package: String },
+    KeyEvent { key: AndroidKey },
 }
 
 #[derive(Deserialize)]
@@ -18,6 +22,7 @@ pub enum PhoneTarget {
 enum PhoneTargetWire {
     Named(NamedPhoneTarget),
     AppLaunch(AppLaunchTarget),
+    KeyEvent(KeyEventTarget),
 }
 
 #[derive(Deserialize)]
@@ -46,6 +51,20 @@ enum AppLaunchType {
     AppLaunch,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KeyEventTarget {
+    #[serde(rename = "type")]
+    target_type: KeyEventType,
+    key: AndroidKey,
+}
+
+#[derive(Deserialize)]
+enum KeyEventType {
+    #[serde(rename = "android.keyevent")]
+    KeyEvent,
+}
+
 impl<'de> Deserialize<'de> for PhoneTarget {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -63,6 +82,10 @@ impl<'de> Deserialize<'de> for PhoneTarget {
             PhoneTargetWire::AppLaunch(_) => {
                 Err(serde::de::Error::custom("invalid Android package"))
             }
+            PhoneTargetWire::KeyEvent(KeyEventTarget {
+                target_type: KeyEventType::KeyEvent,
+                key,
+            }) => Ok(Self::KeyEvent { key }),
         }
     }
 }
@@ -97,7 +120,7 @@ impl<'a> AdbActionAdapter<'a> {
         &mut self,
         selected_device: &str,
         target: &PhoneTarget,
-    ) -> Result<bool, CommandFailure> {
+    ) -> Result<bool, ActionExecutionFailure> {
         let arguments = match target {
             PhoneTarget::BrowserDefault => vec![
                 "-s",
@@ -114,9 +137,9 @@ impl<'a> AdbActionAdapter<'a> {
             .into_iter()
             .map(str::to_owned)
             .collect(),
-            PhoneTarget::NavigateHome => key_arguments(selected_device, "KEYCODE_HOME"),
-            PhoneTarget::NavigateBack => key_arguments(selected_device, "KEYCODE_BACK"),
-            PhoneTarget::RecentApps => key_arguments(selected_device, "KEYCODE_APP_SWITCH"),
+            PhoneTarget::NavigateHome => key_arguments(selected_device, AndroidKey::Home),
+            PhoneTarget::NavigateBack => key_arguments(selected_device, AndroidKey::Back),
+            PhoneTarget::RecentApps => key_arguments(selected_device, AndroidKey::AppSwitch),
             PhoneTarget::AppLaunch { package } => {
                 if !valid_android_package(package) {
                     return Ok(false);
@@ -136,16 +159,24 @@ impl<'a> AdbActionAdapter<'a> {
                 .map(str::to_owned)
                 .collect()
             }
+            PhoneTarget::KeyEvent { key } => key_arguments(selected_device, *key),
         };
         self.runner
-            .run(CommandRequest::new("adb", arguments), self.cancellation)
+            .run_phone_target(CommandRequest::new("adb", arguments), self.cancellation)
             .map(|output| output.succeeded)
     }
 }
 
-fn key_arguments(selected_device: &str, keycode: &str) -> Vec<String> {
-    ["-s", selected_device, "shell", "input", "keyevent", keycode]
-        .into_iter()
-        .map(str::to_owned)
-        .collect()
+fn key_arguments(selected_device: &str, key: AndroidKey) -> Vec<String> {
+    [
+        "-s",
+        selected_device,
+        "shell",
+        "input",
+        "keyevent",
+        key.keycode(),
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
 }

@@ -9,15 +9,22 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use omarchy_android_helper::{
+    actions::PhoneTarget,
     input::{AndroidKey, DisplayGeometry, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
     preferences::{FilePreferenceStore, Preferences, PreviewScale, QuickAction, VideoQuality},
-    process::{CancellationToken, CommandFailure, CommandOutput, CommandRequest, CommandRunner},
-    protocol::{Event, PairingBackend, PairingEvent, ProtocolEngine},
+    process::{
+        ActionExecutionFailure, CancellationToken, CommandFailure, CommandOutput, CommandRequest,
+        CommandRunner,
+    },
+    protocol::{
+        ActionFailureCode, Event, FailureReason, PairingBackend, PairingEvent, PhoneTargetFailure,
+        ProtocolEngine,
+    },
     runtime::{ProtocolSink, RuntimeDependencies, RuntimePairingBackend},
     scrcpy_config::{FileScrcpyConfigStore, ScrcpyConfiguration},
     session::{SessionExit, SessionFailure, SessionRunner},
@@ -129,6 +136,32 @@ impl CommandRunner for SharedRunner {
             .expect("output lock")
             .pop_front()
             .expect("fake command output")
+    }
+}
+
+#[derive(Clone)]
+struct PhoneTargetRunner {
+    result: Result<CommandOutput, ActionExecutionFailure>,
+    requests: Arc<Mutex<Vec<CommandRequest>>>,
+}
+
+impl CommandRunner for PhoneTargetRunner {
+    fn run(
+        &mut self,
+        request: CommandRequest,
+        _cancellation: &CancellationToken,
+    ) -> Result<CommandOutput, CommandFailure> {
+        self.requests.lock().expect("request lock").push(request);
+        Ok(CommandOutput { succeeded: true })
+    }
+
+    fn run_phone_target(
+        &mut self,
+        request: CommandRequest,
+        _cancellation: &CancellationToken,
+    ) -> Result<CommandOutput, ActionExecutionFailure> {
+        self.requests.lock().expect("request lock").push(request);
+        self.result
     }
 }
 
@@ -371,6 +404,19 @@ fn live_runtime(
     session: Box<dyn SessionRunner + Send>,
     outputs: VecDeque<Result<CommandOutput, CommandFailure>>,
 ) -> LiveRuntime {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let runner = SharedRunner {
+        outputs: Arc::new(Mutex::new(outputs)),
+        requests: Arc::clone(&requests),
+    };
+    live_runtime_with_runner(session, runner, requests)
+}
+
+fn live_runtime_with_runner(
+    session: Box<dyn SessionRunner + Send>,
+    runner: impl CommandRunner + Send + 'static,
+    requests: Arc<Mutex<Vec<CommandRequest>>>,
+) -> LiveRuntime {
     let directory = tempfile::tempdir().expect("temporary runtime");
     let state_directory = directory.path().join("state");
     FileTrustedDeviceStore::new(&state_directory)
@@ -378,7 +424,6 @@ fn live_runtime(
         .expect("seed trusted-device state");
     let runtime_directory = directory.path().join("runtime");
     let sink = MemorySink::default();
-    let requests = Arc::new(Mutex::new(Vec::new()));
     let mut backend = RuntimePairingBackend::with_dependencies(
         &runtime_directory,
         &state_directory,
@@ -391,10 +436,7 @@ fn live_runtime(
                     .map_err(|_| DiscoveryFailure::NetworkUnavailable),
                 requested_devices: Vec::new(),
             },
-            SharedRunner {
-                outputs: Arc::new(Mutex::new(outputs)),
-                requests: Arc::clone(&requests),
-            },
+            runner,
             Some(session),
         ),
     )
@@ -526,6 +568,99 @@ fn every_input_backend_failure_reaps_the_session_before_emitting_the_new_generat
         assert_eq!(backend.session_generation(), 2);
         assert!(stopped.load(Ordering::Acquire));
     }
+}
+
+#[test]
+fn phone_target_transport_failures_invalidate_and_wait_for_the_active_session() {
+    for (failure, reason) in [
+        (
+            ActionExecutionFailure::Disconnected,
+            FailureReason::Disconnected,
+        ),
+        (
+            ActionExecutionFailure::Unauthorized,
+            FailureReason::Unauthorized,
+        ),
+    ] {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let mut live = live_runtime_with_runner(
+            Box::new(BlockingSession {
+                target: Arc::new(Mutex::new(None)),
+                stopped: Arc::clone(&stopped),
+                quality: VideoQuality::default(),
+                qualities: Arc::new(Mutex::new(Vec::new())),
+            }),
+            PhoneTargetRunner {
+                result: Err(failure),
+                requests: Arc::clone(&requests),
+            },
+            requests,
+        );
+        let expires_at_unix_ms = u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock after epoch")
+                .as_millis(),
+        )
+        .expect("current time fits u64")
+            + 1_000;
+
+        assert_eq!(
+            live.backend.phone_target(
+                PhoneTarget::KeyEvent {
+                    key: AndroidKey::VolumeUp,
+                },
+                "transport-failure",
+                expires_at_unix_ms,
+            ),
+            Err(PhoneTargetFailure::Lifecycle(reason))
+        );
+        assert!(stopped.load(Ordering::Acquire));
+        assert_eq!(live.backend.session_generation(), 2);
+    }
+}
+
+#[test]
+fn ordinary_phone_target_nonzero_is_action_only_and_keeps_the_session() {
+    let stopped = Arc::new(AtomicBool::new(false));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut live = live_runtime_with_runner(
+        Box::new(BlockingSession {
+            target: Arc::new(Mutex::new(None)),
+            stopped: Arc::clone(&stopped),
+            quality: VideoQuality::default(),
+            qualities: Arc::new(Mutex::new(Vec::new())),
+        }),
+        PhoneTargetRunner {
+            result: Ok(CommandOutput { succeeded: false }),
+            requests: Arc::clone(&requests),
+        },
+        requests,
+    );
+    let expires_at_unix_ms = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after epoch")
+            .as_millis(),
+    )
+    .expect("current time fits u64")
+        + 1_000;
+
+    assert_eq!(
+        live.backend.phone_target(
+            PhoneTarget::KeyEvent {
+                key: AndroidKey::VolumeUp,
+            },
+            "ordinary-failure",
+            expires_at_unix_ms,
+        ),
+        Err(PhoneTargetFailure::ActionOnly(
+            ActionFailureCode::TargetFailed
+        ))
+    );
+    assert!(!stopped.load(Ordering::Acquire));
+    assert_eq!(live.backend.session_generation(), 1);
 }
 
 #[test]

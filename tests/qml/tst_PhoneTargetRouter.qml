@@ -67,6 +67,67 @@ TestCase {
         compare(targetSpy.signalArguments[0][0].target, request.target)
     }
 
+    function test_key_event_targets_are_admitted_lexically_data() {
+        return [
+            {
+                tag: "supported key",
+                target: {
+                    type: "android.keyevent",
+                    key: "volume-up"
+                }
+            },
+            {
+                tag: "unsupported but lexically valid key",
+                target: {
+                    type: "android.keyevent",
+                    key: "future-key"
+                }
+            }
+        ]
+    }
+
+    function test_key_event_targets_are_admitted_lexically(data) {
+        var request = envelope("request-key-event", data.target)
+
+        verify(router.acceptPhoneTarget(request))
+        compare(targetSpy.count, 1)
+        compare(targetSpy.signalArguments[0][0], {
+            requestId: request.requestId,
+            target: data.target,
+            expiresAtUnixMs: request.expiresAtUnixMs,
+            helperEpoch: "17",
+            sessionGeneration: "3"
+        })
+    }
+
+    function test_malformed_key_event_targets_are_rejected_data() {
+        return [
+            { tag: "target array", target: ["android.keyevent", "volume-up"] },
+            { tag: "missing type", target: { key: "volume-up" } },
+            { tag: "missing key", target: { type: "android.keyevent" } },
+            { tag: "extra field", target: { type: "android.keyevent", key: "volume-up", repeat: 2 } },
+            { tag: "key array", target: { type: "android.keyevent", key: ["volume-up"] } },
+            { tag: "empty key", target: { type: "android.keyevent", key: "" } },
+            { tag: "uppercase key", target: { type: "android.keyevent", key: "Volume-Up" } },
+            { tag: "underscore", target: { type: "android.keyevent", key: "volume_up" } },
+            { tag: "leading hyphen", target: { type: "android.keyevent", key: "-volume-up" } },
+            { tag: "trailing hyphen", target: { type: "android.keyevent", key: "volume-up-" } },
+            { tag: "empty segment", target: { type: "android.keyevent", key: "volume--up" } },
+            { tag: "whitespace", target: { type: "android.keyevent", key: "volume up" } },
+            { tag: "numeric segment", target: { type: "android.keyevent", key: "volume-2" } },
+            { tag: "trailing newline", target: { type: "android.keyevent", key: "volume-up\n" } },
+            { tag: "trailing carriage return", target: { type: "android.keyevent", key: "volume-up\r" } },
+            { tag: "trailing line separator", target: { type: "android.keyevent", key: "volume-up\u2028" } },
+            { tag: "trailing paragraph separator", target: { type: "android.keyevent", key: "volume-up\u2029" } }
+        ]
+    }
+
+    function test_malformed_key_event_targets_are_rejected(data) {
+        verify(!router.acceptPhoneTarget(
+                   envelope("request-invalid-key-event", data.target)))
+        compare(targetSpy.count, 0)
+    }
+
     function test_only_interactive_state_admits_phone_targets_data() {
         return [
             { tag: "closed", state: "closed" },
@@ -101,6 +162,32 @@ TestCase {
         compare(targetSpy.count, 0)
     }
 
+    function test_stale_request_identity_is_rejected_data() {
+        return [
+            {
+                tag: "stale helper epoch",
+                propertyName: "helperEpoch",
+                value: "16"
+            },
+            {
+                tag: "stale session generation",
+                propertyName: "sessionGeneration",
+                value: "2"
+            }
+        ]
+    }
+
+    function test_stale_request_identity_is_rejected(data) {
+        var request = envelope("request-stale-identity", {
+            type: "android.keyevent",
+            key: "volume-up"
+        })
+        request[data.propertyName] = data.value
+
+        verify(!router.acceptPhoneTarget(request))
+        compare(targetSpy.count, 0)
+    }
+
     function test_invalid_envelopes_are_rejected_data() {
         return [
             { tag: "missing request id", request: envelope("", "android.navigate.home") },
@@ -110,7 +197,9 @@ TestCase {
             { tag: "bad package", request: envelope("request-package", { type: "android.app.launch", package: "bad package" }) },
             { tag: "expired", request: envelope("request-expired", "android.navigate.home", Date.now() - 1) },
             { tag: "deadline too far", request: envelope("request-late", "android.navigate.home", Date.now() + 3000) },
-            { tag: "fractional deadline", request: envelope("request-fraction", "android.navigate.home", Date.now() + 1000.5) }
+            { tag: "fractional deadline", request: envelope("request-fraction", "android.navigate.home", Date.now() + 1000.5) },
+            { tag: "request array", request: ["request-array"] },
+            { tag: "missing target", request: { requestId: "request-missing-target", expiresAtUnixMs: Date.now() + 1000 } }
         ]
     }
 

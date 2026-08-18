@@ -10,7 +10,10 @@ use std::{
 };
 
 use omarchy_android_helper::{
-    process::{AdbCommandRunner, CancellationToken, CommandFailure, CommandRequest, CommandRunner},
+    process::{
+        ActionExecutionFailure, AdbCommandRunner, CancellationToken, CommandFailure,
+        CommandRequest, CommandRunner,
+    },
     wireless::{AvahiDiscovery, DiscoveryFailure, PairingEndpoint, WirelessDiscovery},
 };
 use zeroize::Zeroizing;
@@ -67,6 +70,118 @@ fn adb_runner_uses_separated_arguments_private_stdin_and_discards_output() {
 }
 
 #[test]
+fn adb_runner_classifies_only_bounded_phone_target_output() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
+    let directory = tempfile::tempdir().expect("temporary directory");
+    for (name, body, expected) in [
+        (
+            "absent-adb",
+            "printf \"error: device 'selected-device' not found\" >&2\nexit 1",
+            ActionExecutionFailure::Disconnected,
+        ),
+        (
+            "offline-adb",
+            "printf 'error: device offline' >&2\nexit 1",
+            ActionExecutionFailure::Disconnected,
+        ),
+        (
+            "unauthorized-adb",
+            "printf 'error: device unauthorized' >&2\nexit 1",
+            ActionExecutionFailure::Unauthorized,
+        ),
+    ] {
+        let fake_adb = executable(directory.path(), name, body);
+        let mut runner = AdbCommandRunner::new(fake_adb, Duration::from_millis(2));
+        let result = runner.run_phone_target(
+            CommandRequest::new(
+                "adb",
+                vec![
+                    "-s".to_owned(),
+                    "selected-device".to_owned(),
+                    "shell".to_owned(),
+                    "input".to_owned(),
+                    "keyevent".to_owned(),
+                    "KEYCODE_HOME".to_owned(),
+                ],
+            ),
+            &CancellationToken::new(),
+        );
+        assert_eq!(result, Err(expected));
+        assert!(!format!("{result:?}").contains("selected-device"));
+    }
+
+    let bounded_adb = executable(
+        directory.path(),
+        "bounded-adb",
+        "for ((i = 0; i < 9000; i++)); do printf x >&2; done\nprintf 'device unauthorized' >&2\nexit 1",
+    );
+    let mut runner = AdbCommandRunner::new(bounded_adb, Duration::from_millis(2));
+    assert_eq!(
+        runner.run_phone_target(
+            CommandRequest::new(
+                "adb",
+                vec![
+                    "-s".to_owned(),
+                    "selected-device".to_owned(),
+                    "shell".to_owned(),
+                    "input".to_owned(),
+                    "keyevent".to_owned(),
+                    "KEYCODE_HOME".to_owned(),
+                ],
+            ),
+            &CancellationToken::new(),
+        ),
+        Ok(omarchy_android_helper::process::CommandOutput { succeeded: false })
+    );
+}
+
+#[test]
+fn adb_runner_preserves_generic_nonzero_results_for_other_commands_and_actions() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let ordinary_adb = executable(
+        directory.path(),
+        "ordinary-adb",
+        "printf 'synthetic ordinary failure with private detail' >&2\nexit 1",
+    );
+    let mut runner = AdbCommandRunner::new(ordinary_adb, Duration::from_millis(2));
+
+    let result = runner.run_phone_target(
+        CommandRequest::new(
+            "adb",
+            vec![
+                "-s".to_owned(),
+                "selected-device".to_owned(),
+                "shell".to_owned(),
+                "input".to_owned(),
+                "keyevent".to_owned(),
+                "KEYCODE_HOME".to_owned(),
+            ],
+        ),
+        &CancellationToken::new(),
+    );
+    assert_eq!(
+        result,
+        Ok(omarchy_android_helper::process::CommandOutput { succeeded: false })
+    );
+    assert!(!format!("{result:?}").contains("private detail"));
+
+    let unauthorized_adb = executable(
+        directory.path(),
+        "ordinary-unauthorized-adb",
+        "printf 'error: device unauthorized' >&2\nexit 1",
+    );
+    let mut runner = AdbCommandRunner::new(unauthorized_adb, Duration::from_millis(2));
+    assert_eq!(
+        runner.run(
+            CommandRequest::new("adb", vec!["devices".to_owned()]),
+            &CancellationToken::new(),
+        ),
+        Ok(omarchy_android_helper::process::CommandOutput { succeeded: false })
+    );
+}
+
+#[test]
 fn adb_runner_deadline_kills_and_reaps_a_long_running_process() {
     let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -107,6 +222,42 @@ fn adb_runner_deadline_kills_and_reaps_a_long_running_process() {
     assert!(
         !Path::new("/proc").join(pid).exists(),
         "cancelled ADB child was not killed and waited"
+    );
+}
+
+#[test]
+fn adb_phone_target_deadline_ignores_descendant_output_pipe_lifetime() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fake_adb = executable(
+        directory.path(),
+        "adb",
+        "sleep 2 &\nwhile true; do sleep 1; done",
+    );
+    let mut runner = AdbCommandRunner::new(fake_adb, Duration::from_millis(2));
+    let cancellation = CancellationToken::new().child_with_timeout(Duration::from_millis(100));
+    let started = Instant::now();
+
+    assert_eq!(
+        runner.run_phone_target(
+            CommandRequest::new(
+                "adb",
+                vec![
+                    "-s".to_owned(),
+                    "selected-device".to_owned(),
+                    "shell".to_owned(),
+                    "input".to_owned(),
+                    "keyevent".to_owned(),
+                    "KEYCODE_HOME".to_owned(),
+                ],
+            ),
+            &cancellation,
+        ),
+        Err(ActionExecutionFailure::Cancelled)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "descendant-held output pipes defeated the action deadline"
     );
 }
 

@@ -68,10 +68,12 @@ approved device with:
 v4l2-ctl --list-devices
 ```
 
-The output must associate `Omarchy Android` with `/dev/video42`. The helper can
-use another private sink path when `OMARCHY_ANDROID_V4L2_SINK` is present in the
-environment inherited by `omarchy-shell`, but QML still selects the camera by
-the exact `Omarchy Android` label.
+The output must associate `Omarchy Android` with `/dev/video42`. This fixed
+path-and-label pair is the capture endpoint contract: the helper accepts only
+that direct character device with matching sysfs identity, and QML accepts
+exactly one camera whose ID is `/dev/video42` and label is `Omarchy Android`.
+Remove any `OMARCHY_ANDROID_V4L2_SINK` override from the environment before
+upgrading; alternate sink paths are no longer supported.
 
 ## Installation
 

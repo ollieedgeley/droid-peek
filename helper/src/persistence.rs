@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::private_fs::atomic_replace;
+use crate::private_fs::{atomic_replace, remove_file_if_present};
 use serde::{Deserialize, Serialize};
 
 const STATE_VERSION: u8 = 1;
@@ -62,11 +62,7 @@ impl FileTrustedDeviceStore {
     }
 
     pub fn remove(&self) -> io::Result<()> {
-        match fs::remove_file(self.path()) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
-        }
+        remove_file_if_present(&self.path())
     }
 
     pub fn load(&self) -> io::Result<Option<TrustedDevice>> {
@@ -83,11 +79,7 @@ impl FileTrustedDeviceStore {
                 .flatten()
         });
         if device.is_none() {
-            match fs::remove_file(path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
-            }
+            remove_file_if_present(&path)?;
         }
         Ok(device)
     }

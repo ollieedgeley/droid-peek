@@ -125,67 +125,54 @@ impl<B> ProtocolEngine<B> {
 
 impl<B: PairingBackend> ProtocolEngine<B> {
     #[must_use]
-    pub fn handle_line(&mut self, line: &str) -> Vec<String> {
+    pub fn handle_line(&mut self, line: &str) -> Vec<Event> {
         let command = match parse_command(line) {
             Ok(command) => command,
-            Err(reason) => return vec![Event::ProtocolError { reason }.to_line()],
+            Err(reason) => return vec![Event::ProtocolError { reason }],
         };
 
         match command {
-            Command::StartQrPairing => vec![
-                match self.backend.start_qr_pairing() {
-                    Ok(presentation) => Event::QrWaiting {
-                        artifact: presentation.artifact,
-                        expires_in_seconds: presentation.expires_in_seconds,
-                    },
-                    Err(reason) => Event::Failure { reason },
-                }
-                .to_line(),
-            ],
-            Command::ReconnectTrustedDevice => vec![
-                match self.backend.reconnect_trusted_device() {
+            Command::StartQrPairing => vec![match self.backend.start_qr_pairing() {
+                Ok(presentation) => Event::QrWaiting {
+                    artifact: presentation.artifact,
+                    expires_in_seconds: presentation.expires_in_seconds,
+                },
+                Err(reason) => Event::Failure { reason },
+            }],
+            Command::ReconnectTrustedDevice => {
+                vec![match self.backend.reconnect_trusted_device() {
                     Ok(()) => Event::Connecting,
                     Err(reason) => Event::Failure { reason },
-                }
-                .to_line(),
-            ],
+                }]
+            }
             Command::StopSession => {
                 self.backend.stop_session();
-                vec![Event::SessionStopped.to_line()]
+                vec![Event::SessionStopped]
             }
-            Command::StartOver => vec![
-                match self.backend.start_over() {
-                    Ok(()) => Event::StartOverComplete,
-                    Err(reason) => Event::Failure { reason },
-                }
-                .to_line(),
-            ],
+            Command::StartOver => vec![match self.backend.start_over() {
+                Ok(()) => Event::StartOverComplete,
+                Err(reason) => Event::Failure { reason },
+            }],
             Command::CancelPairing => {
                 self.backend.cancel_pairing();
-                vec![Event::PairingCancelled.to_line()]
+                vec![Event::PairingCancelled]
             }
             Command::UseManualCode => {
                 self.backend.cancel_pairing();
-                vec![Event::ManualCodeRequired.to_line()]
+                vec![Event::ManualCodeRequired]
             }
             Command::SubmitManualCode { code } => {
                 let code = Zeroizing::new(code);
                 if code.len() != 6 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
-                    return vec![
-                        Event::ProtocolError {
-                            reason: ProtocolErrorReason::InvalidCommand,
-                        }
-                        .to_line(),
-                    ];
+                    return vec![Event::ProtocolError {
+                        reason: ProtocolErrorReason::InvalidCommand,
+                    }];
                 }
-                let mut events = vec![
-                    Event::Pairing {
-                        method: PairingMethod::ManualCode,
-                    }
-                    .to_line(),
-                ];
+                let mut events = vec![Event::Pairing {
+                    method: PairingMethod::ManualCode,
+                }];
                 if let Err(reason) = self.backend.submit_manual_code(code.as_str()) {
-                    events.push(Event::Failure { reason }.to_line());
+                    events.push(Event::Failure { reason });
                 }
                 events
             }
@@ -253,12 +240,9 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                 let action_argument =
                     validate_action_argument(action_id, action_argument.as_deref());
                 if validate_request_id(&request_id).is_err() || action_argument.is_none() {
-                    return vec![
-                        Event::ProtocolError {
-                            reason: ProtocolErrorReason::InvalidCommand,
-                        }
-                        .to_line(),
-                    ];
+                    return vec![Event::ProtocolError {
+                        reason: ProtocolErrorReason::InvalidCommand,
+                    }];
                 }
                 match self.backend.semantic_action(
                     action_id,
@@ -266,22 +250,18 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                     &request_id,
                     expires_at_unix_ms,
                 ) {
-                    Ok(handled) => vec![
-                        Event::ActionResult {
-                            action_id,
-                            request_id,
-                            handled,
-                        }
-                        .to_line(),
-                    ],
+                    Ok(handled) => vec![Event::ActionResult {
+                        action_id,
+                        request_id,
+                        handled,
+                    }],
                     Err(reason) => vec![
                         Event::ActionResult {
                             action_id,
                             request_id,
                             handled: false,
-                        }
-                        .to_line(),
-                        Event::Failure { reason }.to_line(),
+                        },
+                        Event::Failure { reason },
                     ],
                 }
             }
@@ -292,23 +272,20 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                 quick_actions,
                 android_mode_shortcuts,
                 command_passthrough,
-            } => vec![
-                match self.backend.set_preferences(Preferences {
-                    keep_connected,
-                    preview_scale,
-                    video_quality,
-                    quick_actions,
-                    android_mode_shortcuts,
-                    command_passthrough,
-                }) {
-                    Ok(session_restarted) => Event::PreferencesUpdated {
-                        preferences: self.backend.preferences(),
-                        session_restarted,
-                    },
-                    Err(reason) => Event::Failure { reason },
-                }
-                .to_line(),
-            ],
+            } => vec![match self.backend.set_preferences(Preferences {
+                keep_connected,
+                preview_scale,
+                video_quality,
+                quick_actions,
+                android_mode_shortcuts,
+                command_passthrough,
+            }) {
+                Ok(session_restarted) => Event::PreferencesUpdated {
+                    preferences: self.backend.preferences(),
+                    session_restarted,
+                },
+                Err(reason) => Event::Failure { reason },
+            }],
         }
     }
 }
@@ -324,13 +301,11 @@ impl From<ProtocolErrorReason> for InputCommandFailure {
     }
 }
 
-fn handle_input(result: Result<(), InputCommandFailure>) -> Vec<String> {
+fn handle_input(result: Result<(), InputCommandFailure>) -> Vec<Event> {
     match result {
         Ok(()) => Vec::new(),
-        Err(InputCommandFailure::Protocol(reason)) => {
-            vec![Event::ProtocolError { reason }.to_line()]
-        }
-        Err(InputCommandFailure::Backend(reason)) => vec![Event::Failure { reason }.to_line()],
+        Err(InputCommandFailure::Protocol(reason)) => vec![Event::ProtocolError { reason }],
+        Err(InputCommandFailure::Backend(reason)) => vec![Event::Failure { reason }],
     }
 }
 
@@ -456,7 +431,7 @@ struct EventEnvelope<'a> {
     event: &'a Event,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Event {
     Ready {
@@ -531,7 +506,7 @@ pub enum PairingMethod {
     ManualCode,
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProtocolErrorReason {
     InvalidCommand,

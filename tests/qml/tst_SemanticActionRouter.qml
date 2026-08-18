@@ -30,6 +30,7 @@ TestCase {
         router.phoneVisible = true
         router.phoneEnabled = true
         router.phoneFocused = true
+        router.phoneInteractionReady = true
     }
 
     function init() {
@@ -40,6 +41,7 @@ TestCase {
         router.phoneVisible = false
         router.phoneEnabled = false
         router.phoneFocused = false
+        router.phoneInteractionReady = false
         router.commandPassthrough = false
         keySpy.clear()
         actionSpy.clear()
@@ -136,6 +138,7 @@ TestCase {
             { tag: "settings open", propertyName: "settingsOpen", value: true },
             { tag: "preview hidden", propertyName: "phoneVisible", value: false },
             { tag: "preview disabled", propertyName: "phoneEnabled", value: false },
+            { tag: "preview has no current frame", propertyName: "phoneInteractionReady", value: false },
             { tag: "preview unfocused", propertyName: "phoneFocused", value: false }
         ]
     }

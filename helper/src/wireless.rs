@@ -16,7 +16,6 @@ use crate::{
     persistence::TrustedDevice,
     process::{CommandFailure, CommandRequest, CommandRunner},
     protocol::{Event, FailureReason, PairingMethod},
-    qr::{Clock, EntropySource, QrCeremony, QrRenderer},
 };
 
 /// A local endpoint discovered for an Android Wireless debugging service.
@@ -419,27 +418,6 @@ where
     D: WirelessDiscovery,
     R: CommandRunner,
 {
-    #[must_use]
-    pub fn pair(
-        &mut self,
-        method: PairingMethod,
-        requested_service: &str,
-        pairing_code: &str,
-        cancellation: &CancellationToken,
-    ) -> Vec<String> {
-        self.paired_device = None;
-        self.connected_target = None;
-        let mut events = Vec::new();
-        self.pair_with(
-            method,
-            requested_service,
-            pairing_code,
-            cancellation,
-            |event| events.push(event.to_line()),
-        );
-        events
-    }
-
     pub fn pair_with(
         &mut self,
         method: PairingMethod,
@@ -505,17 +483,6 @@ where
             false,
             emit,
         );
-    }
-
-    #[must_use]
-    pub fn reconnect(
-        &mut self,
-        device: &TrustedDevice,
-        cancellation: &CancellationToken,
-    ) -> Vec<String> {
-        let mut events = Vec::new();
-        self.reconnect_with(device, cancellation, |event| events.push(event.to_line()));
-        events
     }
 
     pub fn reconnect_with(
@@ -640,25 +607,6 @@ where
         self.paired_device = self.discovery.take_paired_device();
         emit(Event::Paired);
     }
-}
-
-pub fn pair_active_qr<E, C, Q, D, R>(
-    ceremony: &mut QrCeremony<E, C, Q>,
-    flow: &mut PairingFlow<D, R>,
-    cancellation: &CancellationToken,
-) -> Vec<String>
-where
-    E: EntropySource,
-    C: Clock,
-    Q: QrRenderer,
-    D: WirelessDiscovery,
-    R: CommandRunner,
-{
-    let events = ceremony.with_pairing_material(|requested_service, secret| {
-        flow.pair(PairingMethod::Qr, requested_service, secret, cancellation)
-    });
-    ceremony.cancel();
-    events.unwrap_or_else(|| vec![Event::QrTimedOut.to_line()])
 }
 
 fn pairing_discovery_failure(failure: DiscoveryFailure, method: PairingMethod) -> Event {

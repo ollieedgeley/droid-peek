@@ -143,11 +143,11 @@ struct MemorySink {
 impl ProtocolSink for MemorySink {
     type Error = Infallible;
 
-    fn emit_line(&self, line: &str) -> Result<(), Self::Error> {
+    fn emit_event(&self, event: &Event) -> Result<(), Self::Error> {
         self.lines
             .lock()
             .expect("memory sink lock")
-            .push(line.to_owned());
+            .push(event.to_line());
         Ok(())
     }
 }
@@ -214,7 +214,7 @@ fn runtime_rejects_expired_actions_and_consumes_slow_accepted_actions() {
     let action_reported_success = Arc::new(AtomicBool::new(false));
     let session_stopped = Arc::new(AtomicBool::new(false));
     let sink = MemorySink::default();
-    let mut backend = RuntimePairingBackend::with_adapters_store_and_session(
+    let mut backend = RuntimePairingBackend::with_dependencies(
         &runtime_directory,
         &state_directory,
         Duration::from_secs(1),
@@ -227,9 +227,9 @@ fn runtime_rejects_expired_actions_and_consumes_slow_accepted_actions() {
             action_cancelled: Arc::clone(&action_cancelled),
             action_reported_success: Arc::clone(&action_reported_success),
         },
-        BlockingSession {
+        Some(Box::new(BlockingSession {
             stopped: Arc::clone(&session_stopped),
-        },
+        })),
     )
     .expect("runtime backend");
 
@@ -322,7 +322,7 @@ fn runtime_bounds_input_and_start_over_disconnect_commands() {
     let cancelled_calls = Arc::new(AtomicUsize::new(0));
     let session_stopped = Arc::new(AtomicBool::new(false));
     let sink = MemorySink::default();
-    let mut backend = RuntimePairingBackend::with_adapters_store_and_session(
+    let mut backend = RuntimePairingBackend::with_dependencies(
         &runtime_directory,
         &state_directory,
         Duration::from_secs(1),
@@ -334,9 +334,9 @@ fn runtime_bounds_input_and_start_over_disconnect_commands() {
             calls: Arc::clone(&calls),
             cancelled_calls: Arc::clone(&cancelled_calls),
         },
-        BlockingSession {
+        Some(Box::new(BlockingSession {
             stopped: Arc::clone(&session_stopped),
-        },
+        })),
     )
     .expect("runtime backend");
 

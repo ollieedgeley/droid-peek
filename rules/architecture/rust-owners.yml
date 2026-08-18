@@ -31,7 +31,16 @@ rule:
     - pattern: fs::write($$$ARGS)
     - pattern: std::fs::write($$$ARGS)
     - pattern: File::create($$$ARGS)
-    - pattern: OpenOptions::new()
+    - all:
+        - pattern: $OPTIONS.create(true)
+        - has:
+            pattern: OpenOptions::new()
+            stopBy: end
+    - all:
+        - pattern: $OPTIONS.create_new(true)
+        - has:
+            pattern: OpenOptions::new()
+            stopBy: end
 ---
 id: rust-json-boundary-owner
 language: Rust

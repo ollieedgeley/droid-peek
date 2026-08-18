@@ -40,6 +40,12 @@ fn fake_executable(directory: &Path, body: &str) -> PathBuf {
     path
 }
 
+fn writable_sink(directory: &Path) -> PathBuf {
+    let sink = directory.join("video42");
+    fs::write(&sink, []).expect("create writable video sink");
+    sink
+}
+
 #[test]
 fn scrcpy_uses_a_private_headless_v4l2_command() {
     let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
@@ -49,8 +55,10 @@ fn scrcpy_uses_a_private_headless_v4l2_command() {
         directory.path(),
         &format!("printf '%s\\n' \"$@\" > '{}'", arguments_file.display()),
     );
-    let mut runner = ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2))
-        .with_display_probe(NoDisplayProbe);
+    let sink = writable_sink(directory.path());
+    let mut runner =
+        ScrcpySessionRunner::new_with_test_sink(executable, &sink, Duration::from_millis(2))
+            .with_display_probe(NoDisplayProbe);
     let mut started = |_| {};
 
     assert_eq!(
@@ -59,15 +67,18 @@ fn scrcpy_uses_a_private_headless_v4l2_command() {
     );
     assert_eq!(
         fs::read_to_string(arguments_file).expect("captured arguments"),
-        concat!(
-            "--serial=192.0.2.20:38100\n",
-            "--no-window\n",
-            "--no-audio\n",
-            "--no-control\n",
-            "--v4l2-sink=/dev/video42\n",
-            "--max-size=0\n",
-            "--video-bit-rate=16M\n",
-            "--max-fps=60\n",
+        format!(
+            concat!(
+                "--serial=192.0.2.20:38100\n",
+                "--no-window\n",
+                "--no-audio\n",
+                "--no-control\n",
+                "--v4l2-sink={}\n",
+                "--max-size=0\n",
+                "--video-bit-rate=16M\n",
+                "--max-fps=60\n",
+            ),
+            sink.display()
         )
     );
 }
@@ -97,9 +108,12 @@ fn scrcpy_applies_the_selected_video_quality_profile() {
             directory.path(),
             &format!("printf '%s\\n' \"$@\" > '{}'", arguments_file.display()),
         );
-        let mut runner =
-            ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2))
-                .with_display_probe(NoDisplayProbe);
+        let mut runner = ScrcpySessionRunner::new_with_test_sink(
+            executable,
+            writable_sink(directory.path()),
+            Duration::from_millis(2),
+        )
+        .with_display_probe(NoDisplayProbe);
         runner.set_quality(quality);
 
         assert_eq!(
@@ -121,9 +135,13 @@ fn scrcpy_reports_start_then_stops_its_child_on_cancellation() {
     fs::write(&readiness_file, "capture\n").expect("write ready sink state");
     let executable = fake_executable(directory.path(), "exec sleep 30");
     let runner = Arc::new(Mutex::new(
-        ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2))
-            .with_readiness_path(&readiness_file)
-            .with_display_probe(NoDisplayProbe),
+        ScrcpySessionRunner::new_with_test_sink(
+            executable,
+            writable_sink(directory.path()),
+            Duration::from_millis(2),
+        )
+        .with_readiness_path(&readiness_file)
+        .with_display_probe(NoDisplayProbe),
     ));
     let cancellation = CancellationToken::new();
     let worker_runner = Arc::clone(&runner);
@@ -158,9 +176,13 @@ fn scrcpy_reports_started_only_after_the_sink_is_capture_ready() {
     fs::write(&readiness_file, "output\n").expect("write initial sink state");
     let executable = fake_executable(directory.path(), "exec sleep 30");
     let runner = Arc::new(Mutex::new(
-        ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2))
-            .with_readiness_path(&readiness_file)
-            .with_display_probe(NoDisplayProbe),
+        ScrcpySessionRunner::new_with_test_sink(
+            executable,
+            writable_sink(directory.path()),
+            Duration::from_millis(2),
+        )
+        .with_readiness_path(&readiness_file)
+        .with_display_probe(NoDisplayProbe),
     ));
     let cancellation = CancellationToken::new();
     let worker_runner = Arc::clone(&runner);
@@ -189,20 +211,42 @@ fn scrcpy_reports_started_only_after_the_sink_is_capture_ready() {
 }
 
 #[test]
+fn scrcpy_rejects_an_unwritable_sink_before_spawning() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
+    let directory = tempdir().expect("temporary directory");
+    let spawned = directory.path().join("spawned");
+    let executable = fake_executable(directory.path(), &format!("touch '{}'", spawned.display()));
+    let mut runner = ScrcpySessionRunner::new_with_test_sink(
+        executable,
+        directory.path(),
+        Duration::from_millis(2),
+    )
+    .with_display_probe(NoDisplayProbe);
+
+    assert_eq!(
+        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {}),
+        Err(SessionFailure::DependencyUnavailable)
+    );
+    assert!(!spawned.exists());
+}
+
+#[test]
 fn scrcpy_failures_are_fixed_categories() {
     let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
     let directory = tempdir().expect("temporary directory");
     let executable = fake_executable(directory.path(), "exit 1");
-    let mut runner = ScrcpySessionRunner::new(executable, "/dev/video42", Duration::from_millis(2))
-        .with_display_probe(NoDisplayProbe);
+    let sink = writable_sink(directory.path());
+    let mut runner =
+        ScrcpySessionRunner::new_with_test_sink(executable, &sink, Duration::from_millis(2))
+            .with_display_probe(NoDisplayProbe);
 
     assert_eq!(
         runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {},),
         Err(SessionFailure::Disconnected)
     );
-    let mut missing = ScrcpySessionRunner::new(
+    let mut missing = ScrcpySessionRunner::new_with_test_sink(
         directory.path().join("missing-scrcpy"),
-        "/dev/video42",
+        sink,
         Duration::from_millis(2),
     );
     missing = missing.with_display_probe(NoDisplayProbe);

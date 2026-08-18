@@ -24,7 +24,6 @@ QtObject {
     signal commandRequested(string command)
     signal pairingCancellationConfirmed()
     signal sessionStopConfirmed()
-    signal startOverConfirmed()
     signal semanticActionCompleted(string actionId, string requestId, bool handled)
 
     function reset() {
@@ -141,38 +140,14 @@ QtObject {
                 && /^[A-Za-z0-9-]{1,64}$/.test(requestId)
     }
 
-    function validActionDeadline(expiresAtUnixMs) {
-        return typeof expiresAtUnixMs === "number"
-                && isFinite(expiresAtUnixMs)
-                && expiresAtUnixMs > 0
-                && Math.floor(expiresAtUnixMs) === expiresAtUnixMs
-                && expiresAtUnixMs > Date.now()
-    }
-
     function sendSemanticAction(actionId, requestId, expiresAtUnixMs, actionArgument) {
-        actionArgument = actionArgument || ""
-        var knownAction = actionId === "omarchy-close-current-window"
-                || actionId === "omarchy-browser"
-                || actionId === "omarchy-menu"
-                || actionId === "android-back"
-                || actionId === "android-home"
-                || actionId === "android-recent-apps"
-                || actionId === "android-launch-app"
-        var validArgument = actionId === "android-launch-app"
-                ? /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(actionArgument)
-                : actionArgument === ""
-        if (!knownAction || !validArgument
-                || !validActionRequestId(requestId)
-                || !validActionDeadline(expiresAtUnixMs))
-            return false
         sendCommand({
                         type: "semantic-action",
                         actionId: actionId,
-                        actionArgument: actionArgument,
+                        actionArgument: actionArgument || "",
                         requestId: requestId,
                         expiresAtUnixMs: expiresAtUnixMs
                     })
-        return true
     }
 
     function validPreference(value, allowed) {
@@ -407,7 +382,6 @@ QtObject {
             pairingStage = "starting"
             statusTitle = "Preparing QR code"
             statusDescription = "Open Wireless debugging on the phone you want to pair."
-            startOverConfirmed()
             if (automaticPairingEnabled)
                 startQrPairing()
             return

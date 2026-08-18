@@ -8,6 +8,10 @@ use omarchy_android_helper::protocol::{
 };
 use omarchy_android_helper::runtime::AcceptanceEventWriter;
 
+fn wire_lines(events: Vec<Event>) -> Vec<String> {
+    events.into_iter().map(|event| event.to_line()).collect()
+}
+
 #[derive(Default)]
 struct FakePairingBackend {
     manual_codes: Vec<String>,
@@ -159,13 +163,13 @@ fn qr_pairing_commands_emit_versioned_redacted_states() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
 
     assert_eq!(
-        engine.handle_line(r#"{"version":10,"type":"start-qr-pairing"}"#),
+        wire_lines(engine.handle_line(r#"{"version":10,"type":"start-qr-pairing"}"#)),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"qr-waiting","artifact":"/run/user/1000/omarchy-android/qr.svg","expiresInSeconds":120}}"#
         )]
     );
     assert_eq!(
-        engine.handle_line(r#"{"version":10,"type":"cancel-pairing"}"#),
+        wire_lines(engine.handle_line(r#"{"version":10,"type":"cancel-pairing"}"#)),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"pairing-cancelled"}}"#
         )]
@@ -178,14 +182,14 @@ fn manual_code_is_consumed_without_appearing_in_events() {
     let code = "482913";
 
     assert_eq!(
-        engine.handle_line(r#"{"version":10,"type":"use-manual-code"}"#),
+        wire_lines(engine.handle_line(r#"{"version":10,"type":"use-manual-code"}"#)),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"manual-code-required"}}"#
         )]
     );
-    let events = engine.handle_line(&format!(
+    let events = wire_lines(engine.handle_line(&format!(
         r#"{{"version":10,"type":"submit-manual-code","code":"{code}"}}"#
-    ));
+    )));
 
     assert_eq!(
         events,
@@ -215,9 +219,9 @@ fn manual_code_rejects_non_six_digit_values_before_the_backend() {
     for code in ["", "12345", "1234567", "12345a", "１２３４５６"] {
         let mut engine = ProtocolEngine::new(FakePairingBackend::default());
         assert_eq!(
-            engine.handle_line(&format!(
+            wire_lines(engine.handle_line(&format!(
                 r#"{{"version":10,"type":"submit-manual-code","code":"{code}"}}"#
-            )),
+            ))),
             expected
         );
         assert!(
@@ -232,7 +236,7 @@ fn reconnect_command_emits_redacted_progress_and_calls_backend() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
 
     assert_eq!(
-        engine.handle_line(r#"{"version":10,"type":"reconnect-trusted-device"}"#),
+        wire_lines(engine.handle_line(r#"{"version":10,"type":"reconnect-trusted-device"}"#)),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"connecting"}}"#
         )]
@@ -247,7 +251,7 @@ fn stop_session_confirms_cleanup_and_calls_backend() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
 
     assert_eq!(
-        engine.handle_line(r#"{"version":10,"type":"stop-session"}"#),
+        wire_lines(engine.handle_line(r#"{"version":10,"type":"stop-session"}"#)),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"session-stopped"}}"#
         )]
@@ -262,7 +266,7 @@ fn start_over_confirms_local_forgetting_and_calls_backend() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
 
     assert_eq!(
-        engine.handle_line(r#"{"version":10,"type":"start-over"}"#),
+        wire_lines(engine.handle_line(r#"{"version":10,"type":"start-over"}"#)),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"start-over-complete"}}"#
         )]
@@ -277,9 +281,9 @@ fn preferences_are_validated_forwarded_and_echoed() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
 
     assert_eq!(
-        engine.handle_line(
+        wire_lines(engine.handle_line(
             r#"{"version":10,"type":"set-preferences","keepConnected":true,"androidModeShortcuts":true,"commandPassthrough":true,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"]}"#,
-        ),
+        )),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"preferences-updated","keepConnected":true,"androidModeShortcuts":true,"commandPassthrough":true,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"],"sessionRestarted":true}}"#
         )]
@@ -321,7 +325,7 @@ fn invalid_preferences_do_not_reach_the_backend() {
 
     for command in invalid {
         assert_eq!(
-            engine.handle_line(command),
+            wire_lines(engine.handle_line(command)),
             [format!(
                 r#"{{"version":{PROTOCOL_VERSION},"type":"protocol-error","reason":"invalid-command"}}"#
             )]
@@ -378,9 +382,9 @@ fn semantic_actions_emit_correlated_handled_results() {
         ("omarchy-menu", "request-3", 1_750_000_000_003, false),
     ] {
         assert_eq!(
-            engine.handle_line(&format!(
+            wire_lines(engine.handle_line(&format!(
                 r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"{action_id}","requestId":"{request_id}","expiresAtUnixMs":{expires_at_unix_ms}}}"#
-            )),
+            ))),
             [format!(
                 r#"{{"version":{PROTOCOL_VERSION},"type":"action-result","actionId":"{action_id}","requestId":"{request_id}","handled":{handled}}}"#
             )]
@@ -388,9 +392,9 @@ fn semantic_actions_emit_correlated_handled_results() {
     }
 
     assert_eq!(
-        engine.handle_line(&format!(
+        wire_lines(engine.handle_line(&format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"android-launch-app","actionArgument":"com.example.notes","requestId":"request-package","expiresAtUnixMs":1750000000004}}"#
-        )),
+        ))),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"action-result","actionId":"android-launch-app","requestId":"request-package","handled":true}}"#
         )]
@@ -429,7 +433,7 @@ fn semantic_actions_emit_correlated_handled_results() {
         ),
     ] {
         assert_eq!(
-            engine.handle_line(&command),
+            wire_lines(engine.handle_line(&command)),
             [format!(
                 r#"{{"version":{PROTOCOL_VERSION},"type":"protocol-error","reason":"invalid-command"}}"#
             )]
@@ -493,9 +497,9 @@ fn failed_semantic_actions_still_emit_a_correlated_unhandled_result() {
 
     let mut engine = ProtocolEngine::new(FailedActionBackend);
     assert_eq!(
-        engine.handle_line(&format!(
+        wire_lines(engine.handle_line(&format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"semantic-action","actionId":"omarchy-browser","requestId":"request-failed","expiresAtUnixMs":1750000000008}}"#
-        )),
+        ))),
         [
             format!(
                 r#"{{"version":{PROTOCOL_VERSION},"type":"action-result","actionId":"omarchy-browser","requestId":"request-failed","handled":false}}"#
@@ -520,7 +524,7 @@ fn malformed_input_is_rejected_before_reaching_the_backend() {
     )];
 
     for command in invalid_commands {
-        assert_eq!(engine.handle_line(command), expected);
+        assert_eq!(wire_lines(engine.handle_line(command)), expected);
     }
 
     let backend = engine.into_backend();
@@ -534,9 +538,9 @@ fn malformed_unknown_and_mismatched_commands_fail_without_echoing_input() {
     let mut engine = ProtocolEngine::new(FakePairingBackend::default());
     let secret = "do-not-echo";
 
-    let malformed = engine.handle_line(&format!(r#"{{"secret":"{secret}"}}"#));
-    let unknown = engine.handle_line(r#"{"version":10,"type":"unknown"}"#);
-    let mismatched = engine.handle_line(r#"{"version":11,"type":"start-qr-pairing"}"#);
+    let malformed = wire_lines(engine.handle_line(&format!(r#"{{"secret":"{secret}"}}"#)));
+    let unknown = wire_lines(engine.handle_line(r#"{"version":10,"type":"unknown"}"#));
+    let mismatched = wire_lines(engine.handle_line(r#"{"version":11,"type":"start-qr-pairing"}"#));
 
     assert_eq!(
         malformed,
@@ -573,7 +577,7 @@ fn backend_failures_are_fixed_categories_not_raw_messages() {
     let mut engine = ProtocolEngine::new(UnavailableBackend);
 
     assert_eq!(
-        engine.handle_line(r#"{"version":10,"type":"start-qr-pairing"}"#),
+        wire_lines(engine.handle_line(r#"{"version":10,"type":"start-qr-pairing"}"#)),
         [format!(
             r#"{{"version":{PROTOCOL_VERSION},"type":"failure","reason":"dependency-unavailable"}}"#
         )]

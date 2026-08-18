@@ -57,7 +57,7 @@ fn main() -> io::Result<()> {
     let result = (|| {
         for line in stdin.lock().lines() {
             for event in engine.handle_line(&line?) {
-                sink.emit_line(&event)?;
+                sink.emit_event(&event)?;
             }
             engine.response_emitted();
         }

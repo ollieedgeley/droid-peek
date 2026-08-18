@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::private_fs::atomic_replace;
+use crate::private_fs::{atomic_replace, remove_file_if_present};
 use serde::{Deserialize, Serialize};
 
 const PREFERENCES_VERSION: u8 = 5;
@@ -153,7 +153,7 @@ impl FilePreferenceStore {
                     .map(StoredPreferencesV3::into_preferences)
             });
         let Some(preferences) = migrated_preferences else {
-            remove_if_present(&path)?;
+            remove_file_if_present(&path)?;
             return Ok(Preferences::default());
         };
 
@@ -175,12 +175,12 @@ impl FilePreferenceStore {
             .filter(|stored| stored.version == LEGACY_PREFERENCES_VERSION)
             .map(StoredRenderPreferences::into_preferences);
         let Some(preferences) = preferences else {
-            remove_if_present(&legacy_path)?;
+            remove_file_if_present(&legacy_path)?;
             return Ok(Preferences::default());
         };
 
         self.save(&preferences)?;
-        remove_if_present(&legacy_path)?;
+        remove_file_if_present(&legacy_path)?;
         Ok(preferences)
     }
 
@@ -298,13 +298,5 @@ impl StoredRenderPreferences {
             android_mode_shortcuts: false,
             command_passthrough: false,
         }
-    }
-}
-
-fn remove_if_present(path: &Path) -> io::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
     }
 }

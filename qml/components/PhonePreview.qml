@@ -6,19 +6,21 @@ Item {
 
     property bool captureRequested: false
     property bool inputEnabled: false
-    property string deviceDescription: "Omarchy Android"
+    readonly property string deviceId: "/dev/video42"
+    readonly property string deviceDescription: "Omarchy Android"
     property color foreground: "white"
     property color background: "#101418"
-    property int frameCount: 0
-    readonly property int deviceIndex: findDeviceIndex(mediaDevices.videoInputs, deviceDescription)
+    property bool firstValidFrameReceived: false
+    readonly property int deviceIndex: findDeviceIndex(mediaDevices.videoInputs, deviceId, deviceDescription)
     readonly property bool deviceAvailable: deviceIndex >= 0
     readonly property bool active: camera.active
-    readonly property string errorMessage: camera.errorString
     readonly property bool inputFocused: activeFocus
     readonly property bool inputActive: inputEnabled && captureRequested && deviceAvailable
     readonly property rect displayedContent: videoOutput.contentRect
     readonly property int displayWidth: Math.round(videoOutput.sourceRect.width)
     readonly property int displayHeight: Math.round(videoOutput.sourceRect.height)
+    readonly property bool interactionReady: active && firstValidFrameReceived
+                                                && displayWidth > 0 && displayHeight > 0
 
     signal tapRequested(real x, real y, int displayWidth, int displayHeight)
     signal swipeRequested(real startX, real startY, real endX, real endY, int displayWidth, int displayHeight, int durationMs)
@@ -30,21 +32,17 @@ Item {
     clip: true
     activeFocusOnTab: inputActive
 
-    function findDeviceIndex(inputs, description) {
+    function findDeviceIndex(inputs, id, description) {
+        var matchIndex = -1;
+        var idMatches = 0;
         for (var index = 0; index < inputs.length; ++index) {
+            if (inputs[index].id !== id)
+                continue;
+            ++idMatches;
             if (inputs[index].description === description)
-                return index;
+                matchIndex = index;
         }
-        return -1;
-    }
-
-    function fittedSize(maxWidth, maxHeight, sourceWidth, sourceHeight) {
-        var boundedWidth = Math.max(1, maxWidth);
-        var boundedHeight = Math.max(1, maxHeight);
-        var contentWidth = sourceWidth > 0 ? sourceWidth : 9;
-        var contentHeight = sourceHeight > 0 ? sourceHeight : 20;
-        var scale = Math.min(boundedWidth / contentWidth, boundedHeight / contentHeight);
-        return Qt.size(Math.max(1, Math.round(contentWidth * scale)), Math.max(1, Math.round(contentHeight * scale)));
+        return idMatches === 1 ? matchIndex : -1;
     }
 
     function normalizedPoint(x, y, contentRect) {
@@ -104,6 +102,9 @@ Item {
         else
             focus = false;
     }
+    function resetCurrentCaptureReadiness() {
+        firstValidFrameReceived = false;
+    }
 
     Keys.onPressed: function (event) {
         if (!root.inputActive)
@@ -131,7 +132,12 @@ Item {
         });
     }
 
-    onCaptureRequestedChanged: frameCount = 0
+    onCaptureRequestedChanged: resetCurrentCaptureReadiness()
+    onDeviceIndexChanged: resetCurrentCaptureReadiness()
+    onActiveChanged: {
+        if (!active)
+            resetCurrentCaptureReadiness();
+    }
 
     MediaDevices {
         id: mediaDevices
@@ -141,6 +147,7 @@ Item {
         camera: Camera {
             id: camera
             cameraDevice: root.deviceAvailable ? mediaDevices.videoInputs[root.deviceIndex] : mediaDevices.defaultVideoInput
+            onCameraDeviceChanged: root.resetCurrentCaptureReadiness()
             active: root.captureRequested && root.deviceAvailable
         }
         videoOutput: videoOutput
@@ -180,8 +187,9 @@ Item {
 
     Connections {
         target: videoOutput.videoSink
-        function onVideoFrameChanged() {
-            root.frameCount += 1;
+        function onVideoFrameChanged(frame) {
+            if (root.captureRequested && root.deviceAvailable && frame.isValid())
+                root.firstValidFrameReceived = true;
         }
     }
 

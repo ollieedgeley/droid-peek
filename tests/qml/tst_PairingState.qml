@@ -221,55 +221,34 @@ TestCase {
         compare(commandSpy.count, 2)
         compare(JSON.parse(commandSpy.signalArguments[1][0]).type, "reconnect-trusted-device")
     }
-    function test_semantic_action_commands_and_results_are_correlated() {
+    function test_semantic_action_serialization_is_exact_after_router_acceptance() {
         var expiresAtUnixMs = Date.now() + 2000
-        verify(state.sendSemanticAction(
-                   "omarchy-browser", "request-123", expiresAtUnixMs))
+        state.sendSemanticAction(
+                    "android-launch-app", "request-package", expiresAtUnixMs,
+                    "com.example.notes")
 
         compare(commandSpy.count, 1)
-        var command = JSON.parse(commandSpy.signalArguments[0][0])
-        compare(command.version, state.protocolVersion)
-        compare(command.type, "semantic-action")
-        compare(command.actionId, "omarchy-browser")
-        compare(command.actionArgument, "")
-        compare(command.requestId, "request-123")
-        compare(command.expiresAtUnixMs, expiresAtUnixMs)
+        compare(commandSpy.signalArguments[0][0], JSON.stringify({
+                    type: "semantic-action",
+                    actionId: "android-launch-app",
+                    actionArgument: "com.example.notes",
+                    requestId: "request-package",
+                    expiresAtUnixMs: expiresAtUnixMs,
+                    version: state.protocolVersion
+                }))
+    }
 
-        verify(state.sendSemanticAction(
-                   "android-launch-app", "request-package", expiresAtUnixMs,
-                   "com.example.notes"))
-        compare(commandSpy.count, 2)
-        var packageCommand = JSON.parse(commandSpy.signalArguments[1][0])
-        compare(packageCommand.actionId, "android-launch-app")
-        compare(packageCommand.actionArgument, "com.example.notes")
-        verify(!state.sendSemanticAction(
-                   "android-launch-app", "request-bad-package", expiresAtUnixMs,
-                   "bad package"))
-        compare(commandSpy.count, 2)
-
+    function test_semantic_action_results_are_correlated() {
         state.receiveLine(event("action-result", {
                                     actionId: "omarchy-browser",
                                     requestId: "request-123",
                                     handled: true
                                 }))
+
         compare(actionCompletedSpy.count, 1)
         compare(actionCompletedSpy.signalArguments[0][0], "omarchy-browser")
         compare(actionCompletedSpy.signalArguments[0][1], "request-123")
         compare(actionCompletedSpy.signalArguments[0][2], true)
-    }
-
-    function test_semantic_actions_reject_invalid_deadlines_before_emitting_commands() {
-        verify(!state.sendSemanticAction(
-                   "omarchy-browser", "request-missing"))
-        verify(!state.sendSemanticAction(
-                   "omarchy-browser", "request-string", String(Date.now() + 2000)))
-        verify(!state.sendSemanticAction(
-                   "omarchy-browser", "request-fraction", Date.now() + 2000.5))
-        verify(!state.sendSemanticAction(
-                   "omarchy-browser", "request-expired", Date.now() - 1))
-        verify(!state.sendSemanticAction(
-                   "omarchy-browser", "request-invalid", NaN))
-        compare(commandSpy.count, 0)
     }
 
     function test_start_over_forgets_the_device_then_requests_fresh_qr() {

@@ -11,8 +11,10 @@ QtObject {
     property bool phoneVisible: false
     property bool phoneEnabled: false
     property bool phoneFocused: false
+    property bool phoneInteractionReady: false
     readonly property bool phoneInteractionEligible: sessionReady && panelOpen && !settingsOpen
-                                                       && phoneVisible && phoneEnabled && phoneFocused
+                                                       && phoneVisible && phoneEnabled
+                                                       && phoneInteractionReady && phoneFocused
     readonly property bool actionEligible: semanticIntegrationEnabled
                                                 && phoneInteractionEligible
     readonly property bool shortcutInhibitionRequested: semanticIntegrationEnabled

@@ -221,11 +221,11 @@ struct MemorySink {
 impl ProtocolSink for MemorySink {
     type Error = Infallible;
 
-    fn emit_line(&self, line: &str) -> Result<(), Self::Error> {
+    fn emit_event(&self, event: &Event) -> Result<(), Self::Error> {
         self.lines
             .lock()
             .expect("memory sink lock")
-            .push(line.to_owned());
+            .push(event.to_line());
         Ok(())
     }
 }
@@ -234,14 +234,17 @@ impl ProtocolSink for MemorySink {
 fn runtime_backend_expires_the_artifact_and_emits_timeout() {
     let directory = tempfile::tempdir().expect("temporary runtime directory");
     let sink = MemorySink::default();
-    let mut backend = RuntimePairingBackend::with_adapters(
+    let mut backend = RuntimePairingBackend::with_dependencies(
         directory.path(),
+        directory.path().join("state"),
         Duration::from_millis(20),
         sink.clone(),
         SequencedDiscovery {
             calls: Arc::new(AtomicUsize::new(0)),
+            requested_services: Arc::new(Mutex::new(Vec::new())),
         },
         SuccessfulRunner,
+        None,
     )
     .expect("runtime QR backend");
 
@@ -265,14 +268,19 @@ fn runtime_backend_expires_the_artifact_and_emits_timeout() {
 
 struct SequencedDiscovery {
     calls: Arc<AtomicUsize>,
+    requested_services: Arc<Mutex<Vec<String>>>,
 }
 
 impl WirelessDiscovery for SequencedDiscovery {
     fn find_pairing_endpoint(
         &mut self,
-        _requested_service: &str,
+        requested_service: &str,
         cancellation: &CancellationToken,
     ) -> Result<PairingEndpoint, DiscoveryFailure> {
+        self.requested_services
+            .lock()
+            .expect("requested service lock")
+            .push(requested_service.to_owned());
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         if call == 0 {
             while !cancellation.is_cancelled() {
@@ -302,6 +310,22 @@ impl CommandRunner for SuccessfulRunner {
         _request: CommandRequest,
         _cancellation: &CancellationToken,
     ) -> Result<CommandOutput, CommandFailure> {
+        Ok(CommandOutput { succeeded: true })
+    }
+}
+
+#[derive(Clone)]
+struct RecordingRunner {
+    requests: Arc<Mutex<Vec<CommandRequest>>>,
+}
+
+impl CommandRunner for RecordingRunner {
+    fn run(
+        &mut self,
+        request: CommandRequest,
+        _cancellation: &CancellationToken,
+    ) -> Result<CommandOutput, CommandFailure> {
+        self.requests.lock().expect("request lock").push(request);
         Ok(CommandOutput { succeeded: true })
     }
 }
@@ -339,8 +363,9 @@ fn cancellation_waits_for_the_active_worker_to_finish() {
     let directory = tempfile::tempdir().expect("temporary runtime directory");
     let started = Arc::new(AtomicBool::new(false));
     let finished = Arc::new(AtomicBool::new(false));
-    let mut backend = RuntimePairingBackend::with_adapters(
+    let mut backend = RuntimePairingBackend::with_dependencies(
         directory.path(),
+        directory.path().join("state"),
         Duration::from_secs(1),
         MemorySink::default(),
         CancellationObservedDiscovery {
@@ -348,6 +373,7 @@ fn cancellation_waits_for_the_active_worker_to_finish() {
             finished: Arc::clone(&finished),
         },
         SuccessfulRunner,
+        None,
     )
     .expect("runtime pairing backend");
 
@@ -364,18 +390,25 @@ fn cancellation_waits_for_the_active_worker_to_finish() {
 }
 
 #[test]
-fn replacement_suppresses_stale_worker_events() {
+fn replacement_uses_active_qr_material_and_suppresses_stale_worker_events() {
     let directory = tempfile::tempdir().expect("temporary runtime directory");
     let sink = MemorySink::default();
     let calls = Arc::new(AtomicUsize::new(0));
-    let mut backend = RuntimePairingBackend::with_adapters(
+    let requested_services = Arc::new(Mutex::new(Vec::new()));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = RuntimePairingBackend::with_dependencies(
         directory.path(),
+        directory.path().join("state"),
         Duration::from_secs(1),
         sink.clone(),
         SequencedDiscovery {
             calls: Arc::clone(&calls),
+            requested_services: Arc::clone(&requested_services),
         },
-        SuccessfulRunner,
+        RecordingRunner {
+            requests: Arc::clone(&requests),
+        },
+        None,
     )
     .expect("runtime pairing backend");
 
@@ -411,6 +444,33 @@ fn replacement_suppresses_stale_worker_events() {
         ]
     );
     assert!(!second.artifact.exists());
+    let requested_services = requested_services.lock().expect("requested service lock");
+    assert_eq!(requested_services.len(), 2);
+    let active_service = &requested_services[1];
+    assert_ne!(&requested_services[0], active_service);
+    assert!(active_service.starts_with("studio-"));
+    assert_eq!(active_service.len(), 17);
+
+    let requests = requests.lock().expect("request lock");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].arguments(), ["pair", "pairing.local:37000"]);
+    let active_secret = requests[0]
+        .stdin()
+        .and_then(|stdin| stdin.strip_suffix('\n'))
+        .expect("newline-terminated QR pairing secret");
+    assert_eq!(active_secret.len(), 10);
+    assert!(
+        active_secret
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    );
+    assert!(
+        sink.lines
+            .lock()
+            .expect("memory sink lock")
+            .iter()
+            .all(|event| !event.contains(active_service) && !event.contains(active_secret))
+    );
 }
 
 struct ManualDiscovery;
@@ -446,12 +506,14 @@ impl WirelessDiscovery for ManualDiscovery {
 fn manual_worker_starts_after_the_synchronous_pairing_event() {
     let directory = tempfile::tempdir().expect("temporary runtime directory");
     let sink = MemorySink::default();
-    let backend = RuntimePairingBackend::with_adapters(
+    let backend = RuntimePairingBackend::with_dependencies(
         directory.path(),
+        directory.path().join("state"),
         Duration::from_secs(1),
         sink.clone(),
         ManualDiscovery,
         SuccessfulRunner,
+        None,
     )
     .expect("runtime pairing backend");
     let mut engine = ProtocolEngine::new(backend);
@@ -461,7 +523,7 @@ fn manual_worker_starts_after_the_synchronous_pairing_event() {
     ));
     assert!(sink.lines.lock().expect("memory sink lock").is_empty());
     for response in responses {
-        sink.emit_line(&response).expect("synchronous response");
+        sink.emit_event(&response).expect("synchronous response");
     }
     engine.response_emitted();
 

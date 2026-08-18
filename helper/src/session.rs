@@ -1,7 +1,8 @@
 //! Cancellable lifecycle boundary for the unmodified scrcpy client.
 use std::{
-    fs,
-    io::Read,
+    fs::{self, File, Metadata, OpenOptions},
+    io::{self, Read},
+    os::unix::fs::{FileTypeExt, MetadataExt},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::mpsc,
@@ -189,6 +190,66 @@ where
     }
 }
 
+const PRODUCTION_V4L2_SINK: &str = "/dev/video42";
+const PRODUCTION_V4L2_CARD: &str = "Omarchy Android";
+const PRODUCTION_V4L2_SYSFS: &str = "/sys/class/video4linux/video42";
+const SESSION_START_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SinkMetadata {
+    is_symlink: bool,
+    is_character_device: bool,
+    device: u64,
+    inode: u64,
+    rdev: u64,
+}
+
+impl SinkMetadata {
+    fn from_metadata(metadata: &Metadata) -> Self {
+        let file_type = metadata.file_type();
+        Self {
+            is_symlink: file_type.is_symlink(),
+            is_character_device: file_type.is_char_device(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            rdev: metadata.rdev(),
+        }
+    }
+}
+
+fn sysfs_attribute_value(contents: &str) -> Option<&str> {
+    let value = contents.strip_suffix('\n').unwrap_or(contents);
+    (!value.contains('\n') && !value.contains('\r')).then_some(value)
+}
+
+fn parse_sysfs_device(contents: &str) -> Option<(u64, u64)> {
+    let (major, minor) = sysfs_attribute_value(contents)?.split_once(':')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+// Decode Linux dev_t using the kernel/glibc layout without an FFI dependency.
+fn linux_device_numbers(device: u64) -> (u64, u64) {
+    (
+        ((device >> 8) & 0xfff) | ((device >> 32) & 0xffff_f000),
+        (device & 0xff) | ((device >> 12) & 0xffff_ff00),
+    )
+}
+
+fn validate_capture_sink_identity(
+    before_open: SinkMetadata,
+    opened: SinkMetadata,
+    after_open: SinkMetadata,
+    sysfs_device: &str,
+    sysfs_name: &str,
+) -> bool {
+    !before_open.is_symlink
+        && before_open.is_character_device
+        && before_open == opened
+        && opened == after_open
+        && parse_sysfs_device(sysfs_device) == Some(linux_device_numbers(opened.rdev))
+        && sysfs_attribute_value(sysfs_name) == Some(PRODUCTION_V4L2_CARD)
+}
+
 pub struct ScrcpySessionRunner {
     executable: PathBuf,
     v4l2_sink: PathBuf,
@@ -196,33 +257,49 @@ pub struct ScrcpySessionRunner {
     quality: VideoQuality,
     display_probe: Box<dyn PhysicalDisplayProbe + Send>,
     readiness_path: Option<PathBuf>,
+    validate_production_identity: bool,
 }
-
-const SESSION_START_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl ScrcpySessionRunner {
     #[must_use]
-    pub fn new(
+    pub fn new(executable: impl AsRef<Path>, poll_interval: Duration) -> Self {
+        Self::configured(
+            executable,
+            Path::new(PRODUCTION_V4L2_SINK),
+            poll_interval,
+            true,
+        )
+    }
+
+    /// Constructs a runner with an isolated sink for fake process tests.
+    ///
+    /// This constructor does not validate the injected sink as the production
+    /// Omarchy Android video device.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new_with_test_sink(
         executable: impl AsRef<Path>,
         v4l2_sink: impl AsRef<Path>,
         poll_interval: Duration,
     ) -> Self {
-        let v4l2_sink = v4l2_sink.as_ref().to_owned();
-        let readiness_path = if v4l2_sink.parent() == Some(Path::new("/dev")) {
-            v4l2_sink
-                .file_name()
-                .map(|name| Path::new("/sys/class/video4linux").join(name).join("state"))
-        } else {
-            None
-        };
+        Self::configured(executable, v4l2_sink, poll_interval, false)
+    }
 
+    fn configured(
+        executable: impl AsRef<Path>,
+        v4l2_sink: impl AsRef<Path>,
+        poll_interval: Duration,
+        validate_production_identity: bool,
+    ) -> Self {
         Self {
             executable: executable.as_ref().to_owned(),
-            v4l2_sink,
+            v4l2_sink: v4l2_sink.as_ref().to_owned(),
             poll_interval,
             quality: VideoQuality::default(),
-            readiness_path,
+            readiness_path: validate_production_identity
+                .then(|| Path::new(PRODUCTION_V4L2_SYSFS).join("state")),
             display_probe: Box::new(AdbPhysicalDisplayProbe::new("adb", poll_interval)),
+            validate_production_identity,
         }
     }
 
@@ -240,6 +317,38 @@ impl ScrcpySessionRunner {
 
     pub fn set_quality(&mut self, quality: VideoQuality) {
         self.quality = quality;
+    }
+
+    fn open_capture_sink(&self) -> io::Result<File> {
+        if !self.validate_production_identity {
+            return OpenOptions::new().write(true).open(&self.v4l2_sink);
+        }
+
+        let before_open = SinkMetadata::from_metadata(&fs::symlink_metadata(&self.v4l2_sink)?);
+        if before_open.is_symlink || !before_open.is_character_device {
+            return Err(io::Error::other(
+                "capture sink is not a direct character device",
+            ));
+        }
+        let sink = OpenOptions::new().write(true).open(&self.v4l2_sink)?;
+        let opened = SinkMetadata::from_metadata(&sink.metadata()?);
+        let after_open = SinkMetadata::from_metadata(&fs::symlink_metadata(&self.v4l2_sink)?);
+        let sysfs_device = fs::read_to_string(Path::new(PRODUCTION_V4L2_SYSFS).join("dev"))?;
+        let sysfs_name = fs::read_to_string(Path::new(PRODUCTION_V4L2_SYSFS).join("name"))?;
+
+        if validate_capture_sink_identity(
+            before_open,
+            opened,
+            after_open,
+            &sysfs_device,
+            &sysfs_name,
+        ) {
+            Ok(sink)
+        } else {
+            Err(io::Error::other(
+                "capture sink does not match the Omarchy Android video device",
+            ))
+        }
     }
 
     fn sink_is_capture_ready(&self) -> bool {
@@ -264,6 +373,9 @@ impl SessionRunner for ScrcpySessionRunner {
         if cancellation.is_cancelled() {
             return Ok(SessionExit::Stopped);
         }
+        let _validated_sink = self
+            .open_capture_sink()
+            .map_err(|_| SessionFailure::DependencyUnavailable)?;
         let physical_display = self.display_probe.probe(target, cancellation);
 
         let [max_size, bit_rate, max_fps] = match self.quality {
@@ -332,11 +444,12 @@ impl SessionRunner for ScrcpySessionRunner {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
+    use std::{fs, os::unix::fs::PermissionsExt, path::Path, time::Duration};
 
     use super::{
-        AdbPhysicalDisplayProbe, PhysicalDisplayProbe, PhysicalDisplaySize,
-        parse_surface_flinger_display,
+        AdbPhysicalDisplayProbe, PRODUCTION_V4L2_CARD, PRODUCTION_V4L2_SINK, PRODUCTION_V4L2_SYSFS,
+        PhysicalDisplayProbe, PhysicalDisplaySize, ScrcpySessionRunner, SinkMetadata,
+        parse_surface_flinger_display, validate_capture_sink_identity,
     };
     use crate::process::CancellationToken;
     use tempfile::tempdir;
@@ -393,5 +506,114 @@ mod tests {
             parse_surface_flinger_display("activeMode={resolution=1080x2392, dpi=20x20}"),
             None
         );
+    }
+
+    #[test]
+    fn production_runner_is_bound_to_the_fixed_capture_identity() {
+        let runner = ScrcpySessionRunner::new("scrcpy", Duration::from_millis(25));
+        let expected_readiness_path = Path::new(PRODUCTION_V4L2_SYSFS).join("state");
+
+        assert_eq!(runner.v4l2_sink.as_path(), Path::new(PRODUCTION_V4L2_SINK));
+        assert_eq!(
+            runner.readiness_path.as_deref(),
+            Some(expected_readiness_path.as_path())
+        );
+        assert!(runner.validate_production_identity);
+        assert_eq!(PRODUCTION_V4L2_CARD, "Omarchy Android");
+    }
+
+    fn valid_sink_metadata() -> SinkMetadata {
+        SinkMetadata {
+            is_symlink: false,
+            is_character_device: true,
+            device: 9,
+            inode: 42,
+            rdev: (81 << 8) | 42,
+        }
+    }
+
+    #[test]
+    fn strict_capture_identity_accepts_the_fixed_device_and_card() {
+        let metadata = valid_sink_metadata();
+
+        assert!(validate_capture_sink_identity(
+            metadata,
+            metadata,
+            metadata,
+            "81:42\n",
+            "Omarchy Android\n",
+        ));
+    }
+
+    #[test]
+    fn strict_capture_identity_rejects_ordinary_files_and_symlinks() {
+        let metadata = valid_sink_metadata();
+
+        assert!(!validate_capture_sink_identity(
+            SinkMetadata {
+                is_character_device: false,
+                ..metadata
+            },
+            metadata,
+            metadata,
+            "81:42\n",
+            "Omarchy Android\n",
+        ));
+        assert!(!validate_capture_sink_identity(
+            SinkMetadata {
+                is_symlink: true,
+                ..metadata
+            },
+            metadata,
+            metadata,
+            "81:42\n",
+            "Omarchy Android\n",
+        ));
+    }
+
+    #[test]
+    fn strict_capture_identity_rejects_device_replacement_during_open() {
+        let metadata = valid_sink_metadata();
+
+        assert!(!validate_capture_sink_identity(
+            metadata,
+            SinkMetadata {
+                inode: metadata.inode + 1,
+                ..metadata
+            },
+            metadata,
+            "81:42\n",
+            "Omarchy Android\n",
+        ));
+        assert!(!validate_capture_sink_identity(
+            metadata,
+            metadata,
+            SinkMetadata {
+                rdev: metadata.rdev + 1,
+                ..metadata
+            },
+            "81:42\n",
+            "Omarchy Android\n",
+        ));
+    }
+
+    #[test]
+    fn strict_capture_identity_rejects_wrong_sysfs_device_or_card() {
+        let metadata = valid_sink_metadata();
+
+        assert!(!validate_capture_sink_identity(
+            metadata,
+            metadata,
+            metadata,
+            "81:41\n",
+            "Omarchy Android\n",
+        ));
+        assert!(!validate_capture_sink_identity(
+            metadata,
+            metadata,
+            metadata,
+            "81:42\n",
+            "Omarchy Android Backup\n",
+        ));
     }
 }

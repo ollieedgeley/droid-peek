@@ -7,8 +7,10 @@ invalid:
 id: rust-private-write-owner
 valid:
   - atomic_replace(&path, |file| file.write_all(data));
+  - let sink = OpenOptions::new().write(true).open(path)?;
 invalid:
-  - let file = OpenOptions::new();
+  - let file = OpenOptions::new().write(true).create(true).open(path)?;
+  - let file = OpenOptions::new().write(true).create_new(true).open(path)?;
   - fs::write(path, data);
 ---
 id: rust-json-boundary-owner

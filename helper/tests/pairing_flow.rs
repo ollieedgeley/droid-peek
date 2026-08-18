@@ -1,19 +1,11 @@
-use std::{
-    cell::RefCell,
-    collections::VecDeque,
-    convert::Infallible,
-    path::{Path, PathBuf},
-    rc::Rc,
-    time::Duration,
-};
+use std::collections::VecDeque;
 
 use omarchy_android_helper::{
+    persistence::TrustedDevice,
     process::{CommandFailure, CommandOutput, CommandRequest, CommandRunner},
-    protocol::{Event, FailureReason, PROTOCOL_VERSION, PairingMethod},
-    qr::{Clock, EntropySource, QrArtifact, QrCeremony, QrRenderer},
+    protocol::{Event, FailureReason, PairingMethod},
     wireless::{
         CancellationToken, DiscoveryFailure, PairingEndpoint, PairingFlow, WirelessDiscovery,
-        pair_active_qr,
     },
 };
 
@@ -23,6 +15,7 @@ struct FakeDiscovery {
     requested_services: Vec<String>,
     connection_sources: Vec<PairingEndpoint>,
     cancel_after_pairing_discovery: bool,
+    paired_device: Option<TrustedDevice>,
 }
 
 impl WirelessDiscovery for FakeDiscovery {
@@ -38,6 +31,16 @@ impl WirelessDiscovery for FakeDiscovery {
         self.pairing.clone()
     }
 
+    fn find_manual_pairing_endpoint(
+        &mut self,
+        cancellation: &CancellationToken,
+    ) -> Result<PairingEndpoint, DiscoveryFailure> {
+        if self.cancel_after_pairing_discovery {
+            cancellation.cancel();
+        }
+        self.pairing.clone()
+    }
+
     fn find_connection_endpoint(
         &mut self,
         pairing_endpoint: &PairingEndpoint,
@@ -45,6 +48,10 @@ impl WirelessDiscovery for FakeDiscovery {
     ) -> Result<PairingEndpoint, DiscoveryFailure> {
         self.connection_sources.push(pairing_endpoint.clone());
         self.connection.clone()
+    }
+
+    fn take_paired_device(&mut self) -> Option<TrustedDevice> {
+        self.paired_device.take()
     }
 }
 
@@ -74,6 +81,9 @@ fn successful_flow() -> PairingFlow<FakeDiscovery, FakeRunner> {
             requested_services: Vec::new(),
             connection_sources: Vec::new(),
             cancel_after_pairing_discovery: false,
+            paired_device: Some(
+                TrustedDevice::new("adb-associated-connect").expect("trusted device"),
+            ),
         },
         FakeRunner {
             outputs: VecDeque::from([
@@ -85,6 +95,12 @@ fn successful_flow() -> PairingFlow<FakeDiscovery, FakeRunner> {
     )
 }
 
+fn collect_events(run: impl FnOnce(&mut dyn FnMut(Event))) -> Vec<Event> {
+    let mut events = Vec::new();
+    run(&mut |event| events.push(event));
+    events
+}
+
 #[test]
 fn pairs_and_connects_only_the_requested_qr_service() {
     let mut flow = successful_flow();
@@ -92,20 +108,34 @@ fn pairs_and_connects_only_the_requested_qr_service() {
     let requested_service = "_adb-tls-pairing._tcp.requested";
     let secret = "temporary-qr-secret";
 
-    let events = flow.pair(PairingMethod::Qr, requested_service, secret, &cancellation);
+    let events = collect_events(|emit| {
+        flow.pair_with(
+            PairingMethod::Qr,
+            requested_service,
+            secret,
+            &cancellation,
+            emit,
+        );
+    });
 
-    assert_eq!(
-        events,
+    assert!(matches!(
+        events.as_slice(),
         [
-            format!(r#"{{"version":{PROTOCOL_VERSION},"type":"pairing","method":"qr"}}"#),
-            format!(r#"{{"version":{PROTOCOL_VERSION},"type":"paired"}}"#),
+            Event::Pairing {
+                method: PairingMethod::Qr
+            },
+            Event::Paired
         ]
-    );
-    assert!(events.iter().all(|event| !event.contains(secret)));
-    assert!(events.iter().all(|event| !event.contains("pairing.local")));
+    ));
     assert_eq!(
         flow.take_connected_target().as_deref(),
         Some("connect.local:38000")
+    );
+    assert_eq!(
+        flow.take_paired_device()
+            .as_ref()
+            .map(TrustedDevice::service_name),
+        Some("adb-associated-connect")
     );
 
     let (discovery, runner) = flow.into_parts();
@@ -132,10 +162,10 @@ fn cancellation_stops_work_before_or_during_discovery() {
     cancellation.cancel();
     let mut flow = successful_flow();
 
-    assert_eq!(
-        flow.pair(PairingMethod::Qr, "service", "secret", &cancellation),
-        [Event::PairingCancelled.to_line()]
-    );
+    let events = collect_events(|emit| {
+        flow.pair_with(PairingMethod::Qr, "service", "secret", &cancellation, emit);
+    });
+    assert!(matches!(events.as_slice(), [Event::PairingCancelled]));
     let (discovery, runner) = flow.into_parts();
     assert!(discovery.requested_services.is_empty());
     assert!(runner.requests.is_empty());
@@ -143,89 +173,100 @@ fn cancellation_stops_work_before_or_during_discovery() {
     let cancellation = CancellationToken::new();
     let mut flow = successful_flow();
     flow.discovery_mut().cancel_after_pairing_discovery = true;
-    assert_eq!(
-        flow.pair(PairingMethod::Qr, "service", "secret", &cancellation),
-        [Event::PairingCancelled.to_line()]
-    );
+    let events = collect_events(|emit| {
+        flow.pair_with(PairingMethod::Qr, "service", "secret", &cancellation, emit);
+    });
+    assert!(matches!(events.as_slice(), [Event::PairingCancelled]));
     let (_, runner) = flow.into_parts();
     assert!(runner.requests.is_empty());
 }
 
 #[test]
 fn discovery_command_and_rejection_failures_are_redacted() {
+    enum ExpectedEvent {
+        QrTimedOut,
+        Failure(FailureReason),
+    }
+
     let cases = [
-        (DiscoveryFailure::TimedOut, Event::QrTimedOut.to_line()),
+        (DiscoveryFailure::TimedOut, ExpectedEvent::QrTimedOut),
         (
             DiscoveryFailure::NetworkUnavailable,
-            Event::Failure {
-                reason: FailureReason::NetworkUnavailable,
-            }
-            .to_line(),
+            ExpectedEvent::Failure(FailureReason::NetworkUnavailable),
         ),
         (
             DiscoveryFailure::DependencyUnavailable,
-            Event::Failure {
-                reason: FailureReason::DependencyUnavailable,
-            }
-            .to_line(),
+            ExpectedEvent::Failure(FailureReason::DependencyUnavailable),
         ),
     ];
 
     for (failure, expected) in cases {
         let mut flow = successful_flow();
         flow.discovery_mut().pairing = Err(failure);
-        assert_eq!(
-            flow.pair(
+        let events = collect_events(|emit| {
+            flow.pair_with(
                 PairingMethod::Qr,
                 "requested-service",
                 "secret",
                 &CancellationToken::new(),
-            ),
-            [expected]
-        );
+                emit,
+            );
+        });
+        let matches_expected = match (events.as_slice(), expected) {
+            ([Event::QrTimedOut], ExpectedEvent::QrTimedOut) => true,
+            ([Event::Failure { reason }], ExpectedEvent::Failure(expected_reason)) => {
+                *reason == expected_reason
+            }
+            _ => false,
+        };
+        assert!(matches_expected);
     }
 
     let mut flow = successful_flow();
     flow.runner_mut().outputs = VecDeque::from([Err(CommandFailure::Unauthorized)]);
-    assert_eq!(
-        flow.pair(
+    let events = collect_events(|emit| {
+        flow.pair_with(
             PairingMethod::Qr,
             "requested-service",
             "secret",
             &CancellationToken::new(),
-        ),
+            emit,
+        );
+    });
+    assert!(matches!(
+        events.as_slice(),
         [
             Event::Pairing {
-                method: PairingMethod::Qr,
-            }
-            .to_line(),
+                method: PairingMethod::Qr
+            },
             Event::Failure {
-                reason: FailureReason::Unauthorized,
+                reason: FailureReason::Unauthorized
             }
-            .to_line(),
         ]
-    );
+    ));
 
     let mut flow = successful_flow();
     flow.runner_mut().outputs = VecDeque::from([Ok(CommandOutput { succeeded: false })]);
-    assert_eq!(
-        flow.pair(
+    let events = collect_events(|emit| {
+        flow.pair_with(
             PairingMethod::Qr,
             "requested-service",
             "secret",
             &CancellationToken::new(),
-        ),
+            emit,
+        );
+    });
+    assert!(matches!(
+        events.as_slice(),
         [
             Event::Pairing {
-                method: PairingMethod::Qr,
-            }
-            .to_line(),
+                method: PairingMethod::Qr
+            },
             Event::Failure {
-                reason: FailureReason::PairingRejected,
+                reason: FailureReason::PairingRejected
             }
-            .to_line(),
         ]
-    );
+    ));
 }
 
 #[test]
@@ -236,105 +277,13 @@ fn failed_tls_connection_is_a_disconnected_state() {
         Ok(CommandOutput { succeeded: false }),
     ]);
 
-    assert_eq!(
-        flow.pair(
-            PairingMethod::ManualCode,
-            "requested-service",
-            "manual-code",
-            &CancellationToken::new(),
-        ),
-        [
-            Event::Pairing {
-                method: PairingMethod::ManualCode,
-            }
-            .to_line(),
-            Event::Failure {
-                reason: FailureReason::Disconnected,
-            }
-            .to_line(),
-        ]
-    );
-}
-
-struct FixedEntropy(u8);
-
-impl EntropySource for FixedEntropy {
-    type Error = Infallible;
-
-    fn fill(&mut self, bytes: &mut [u8]) -> Result<(), Self::Error> {
-        for byte in bytes {
-            *byte = self.0;
-            self.0 = self.0.wrapping_add(1);
-        }
-        Ok(())
-    }
-}
-
-struct FixedClock;
-
-impl Clock for FixedClock {
-    fn now(&self) -> Duration {
-        Duration::ZERO
-    }
-}
-
-struct MemoryArtifact(PathBuf);
-
-impl QrArtifact for MemoryArtifact {
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-struct CapturingRenderer(Rc<RefCell<Vec<String>>>);
-
-impl QrRenderer for CapturingRenderer {
-    type Artifact = MemoryArtifact;
-    type Error = Infallible;
-
-    fn render(&mut self, payload: &str) -> Result<Self::Artifact, Self::Error> {
-        self.0.borrow_mut().push(payload.to_owned());
-        Ok(MemoryArtifact(PathBuf::from("/runtime/qr.svg")))
-    }
-}
-
-#[test]
-fn active_qr_material_drives_the_flow_then_is_discarded() {
-    let payloads = Rc::new(RefCell::new(Vec::new()));
-    let mut ceremony = QrCeremony::new(
-        FixedEntropy(1),
-        FixedClock,
-        CapturingRenderer(Rc::clone(&payloads)),
-        Duration::from_secs(120),
-    );
-    ceremony.start().expect("active QR ceremony");
-    let mut flow = successful_flow();
-
-    let events = pair_active_qr(&mut ceremony, &mut flow, &CancellationToken::new());
-
-    assert_eq!(
-        events,
-        [
-            Event::Pairing {
-                method: PairingMethod::Qr,
-            }
-            .to_line(),
-            Event::Paired.to_line(),
-        ]
-    );
-    assert!(!ceremony.has_active_session());
-
-    let payload = &payloads.borrow()[0];
-    let (service, secret) = payload
-        .strip_prefix("WIFI:T:ADB;S:")
-        .and_then(|payload| payload.strip_suffix(";;"))
-        .and_then(|payload| payload.split_once(";P:"))
-        .expect("ADB QR payload fields");
-    let (discovery, runner) = flow.into_parts();
-    assert_eq!(discovery.requested_services, [service]);
-    assert_eq!(runner.requests[0].arguments().len(), 2);
-    assert_eq!(
-        runner.requests[0].stdin(),
-        Some(format!("{secret}\n").as_str())
-    );
+    let events = collect_events(|emit| {
+        flow.pair_manual_with("manual-code", &CancellationToken::new(), emit);
+    });
+    assert!(matches!(
+        events.as_slice(),
+        [Event::Failure {
+            reason: FailureReason::Disconnected
+        }]
+    ));
 }

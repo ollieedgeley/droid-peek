@@ -17,6 +17,14 @@ pub fn ensure_private_directory(path: &Path) -> io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
 }
 
+pub(crate) fn remove_file_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 fn temporary_file(directory: &Path) -> io::Result<tempfile::NamedTempFile> {
     ensure_private_directory(directory)?;
     let temporary = tempfile::Builder::new()

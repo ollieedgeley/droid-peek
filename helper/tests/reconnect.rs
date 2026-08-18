@@ -91,6 +91,12 @@ impl CommandRunner for SharedRunner {
     }
 }
 
+fn collect_events(run: impl FnOnce(&mut dyn FnMut(Event))) -> Vec<Event> {
+    let mut events = Vec::new();
+    run(&mut |event| events.push(event));
+    events
+}
+
 #[test]
 fn reconnect_resolves_the_remembered_service_and_never_emits_its_endpoint() {
     let device = TrustedDevice::new("adb-14141FD6F00081-TnSdi9").expect("trusted device");
@@ -106,14 +112,14 @@ fn reconnect_resolves_the_remembered_service_and_never_emits_its_endpoint() {
         },
     );
 
-    let events = flow.reconnect(&device, &CancellationToken::new());
+    let events = collect_events(|emit| {
+        flow.reconnect_with(&device, &CancellationToken::new(), emit);
+    });
 
-    assert_eq!(events, [Event::Connected.to_line()]);
-    assert!(events.iter().all(|event| !event.contains("192.168.50.4")));
-    assert!(
-        events
-            .iter()
-            .all(|event| !event.contains(device.service_name()))
+    assert!(matches!(events.as_slice(), [Event::Connected]));
+    assert_eq!(
+        flow.take_connected_target().as_deref(),
+        Some("192.168.50.4:37123")
     );
     let (discovery, runner) = flow.into_parts();
     assert_eq!(discovery.requested_devices, [device.service_name()]);
@@ -139,13 +145,15 @@ fn stale_remembered_service_reports_a_fixed_disconnected_failure() {
         },
     );
 
-    assert_eq!(
-        flow.reconnect(&device, &CancellationToken::new()),
+    let events = collect_events(|emit| {
+        flow.reconnect_with(&device, &CancellationToken::new(), emit);
+    });
+    assert!(matches!(
+        events.as_slice(),
         [Event::Failure {
-            reason: FailureReason::Disconnected,
-        }
-        .to_line()]
-    );
+            reason: FailureReason::Disconnected
+        }]
+    ));
     let (_, runner) = flow.into_parts();
     assert!(runner.requests.is_empty());
 }
@@ -158,11 +166,11 @@ struct MemorySink {
 impl ProtocolSink for MemorySink {
     type Error = Infallible;
 
-    fn emit_line(&self, line: &str) -> Result<(), Self::Error> {
+    fn emit_event(&self, event: &Event) -> Result<(), Self::Error> {
         self.lines
             .lock()
             .expect("memory sink lock")
-            .push(line.to_owned());
+            .push(event.to_line());
         Ok(())
     }
 }
@@ -246,7 +254,7 @@ fn runtime_loads_private_state_and_reconnects_after_the_sync_response() {
         .save(&device)
         .expect("seed trusted-device state");
     let sink = MemorySink::default();
-    let mut backend = RuntimePairingBackend::with_adapters_and_store(
+    let mut backend = RuntimePairingBackend::with_dependencies(
         directory.path().join("runtime"),
         &state_directory,
         Duration::from_secs(1),
@@ -260,6 +268,7 @@ fn runtime_loads_private_state_and_reconnects_after_the_sync_response() {
             outputs: VecDeque::from([Ok(CommandOutput { succeeded: true })]),
             requests: Vec::new(),
         },
+        None,
     )
     .expect("runtime backend");
 
@@ -294,7 +303,7 @@ fn runtime_starts_scrcpy_after_reconnect_and_stops_it_before_confirmation() {
         Ok(CommandOutput { succeeded: true }),
         Ok(CommandOutput { succeeded: true }),
     ])));
-    let mut backend = RuntimePairingBackend::with_adapters_store_and_session(
+    let mut backend = RuntimePairingBackend::with_dependencies(
         directory.path().join("runtime"),
         &state_directory,
         Duration::from_secs(1),
@@ -308,12 +317,12 @@ fn runtime_starts_scrcpy_after_reconnect_and_stops_it_before_confirmation() {
             outputs,
             requests: Arc::clone(&requests),
         },
-        BlockingSession {
+        Some(Box::new(BlockingSession {
             target: Arc::clone(&target),
             stopped: Arc::clone(&stopped),
             quality: VideoQuality::default(),
             qualities,
-        },
+        })),
     )
     .expect("runtime backend");
 
@@ -416,7 +425,7 @@ fn start_over_preserves_enabled_global_preference_across_a_different_device_relo
         Ok(CommandOutput { succeeded: true }),
         Err(CommandFailure::DependencyUnavailable),
     ])));
-    let mut backend = RuntimePairingBackend::with_adapters_store_and_session(
+    let mut backend = RuntimePairingBackend::with_dependencies(
         directory.path().join("runtime"),
         &state_directory,
         Duration::from_secs(1),
@@ -430,12 +439,12 @@ fn start_over_preserves_enabled_global_preference_across_a_different_device_relo
             outputs,
             requests: Arc::clone(&requests),
         },
-        BlockingSession {
+        Some(Box::new(BlockingSession {
             target: Arc::new(Mutex::new(None)),
             stopped: Arc::clone(&stopped),
             quality: VideoQuality::default(),
             qualities: Arc::new(Mutex::new(Vec::new())),
-        },
+        })),
     )
     .expect("runtime backend");
     assert_eq!(backend.preferences(), preferences);
@@ -480,7 +489,7 @@ fn start_over_preserves_enabled_global_preference_across_a_different_device_relo
     FileTrustedDeviceStore::new(&state_directory)
         .save(&TrustedDevice::new("adb-SECONDDEVICE123").expect("replacement trusted device"))
         .expect("seed replacement trusted-device state");
-    let reloaded_backend = RuntimePairingBackend::with_adapters_and_store(
+    let reloaded_backend = RuntimePairingBackend::with_dependencies(
         directory.path().join("reloaded-runtime"),
         &state_directory,
         Duration::from_secs(1),
@@ -493,6 +502,7 @@ fn start_over_preserves_enabled_global_preference_across_a_different_device_relo
             outputs: VecDeque::new(),
             requests: Vec::new(),
         },
+        None,
     )
     .expect("reloaded runtime backend");
 
@@ -511,7 +521,7 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
     let target = Arc::new(Mutex::new(None));
     let stopped = Arc::new(AtomicBool::new(false));
     let qualities = Arc::new(Mutex::new(Vec::new()));
-    let mut backend = RuntimePairingBackend::with_adapters_store_and_session(
+    let mut backend = RuntimePairingBackend::with_dependencies(
         directory.path().join("runtime"),
         &state_directory,
         Duration::from_secs(1),
@@ -525,12 +535,12 @@ fn quality_update_is_persisted_and_restarts_only_the_active_session() {
             outputs: VecDeque::from([Ok(CommandOutput { succeeded: true })]),
             requests: Vec::new(),
         },
-        BlockingSession {
+        Some(Box::new(BlockingSession {
             target,
             stopped: Arc::clone(&stopped),
             quality: VideoQuality::Low,
             qualities: Arc::clone(&qualities),
-        },
+        })),
     )
     .expect("runtime backend");
 
@@ -609,7 +619,7 @@ fn runtime_rejects_a_symlinked_private_state_root_before_loading() {
     let state_directory = directory.path().join("state");
     symlink(&target, &state_directory).expect("state symlink");
 
-    let result = RuntimePairingBackend::with_adapters_and_store(
+    let result = RuntimePairingBackend::with_dependencies(
         directory.path().join("runtime"),
         &state_directory,
         Duration::from_secs(1),
@@ -622,6 +632,7 @@ fn runtime_rejects_a_symlinked_private_state_root_before_loading() {
             outputs: VecDeque::new(),
             requests: Vec::new(),
         },
+        None,
     );
     let error = match result {
         Ok(_) => panic!("symlinked state root was accepted"),

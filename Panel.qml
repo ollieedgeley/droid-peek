@@ -111,8 +111,7 @@ Panel {
         helperShutdownPending = false;
         helperStopTimer.stop();
         helperProcess.running = false;
-        if (pairingState.sessionState !== "ready")
-            pairingState.reset();
+        pairingState.reset();
     }
 
     onOpenedChanged: {
@@ -172,6 +171,7 @@ Panel {
         phoneVisible: root.phonePreview !== null && root.phonePreview.visible
         phoneEnabled: root.phonePreview !== null && root.phonePreview.inputActive
         phoneFocused: root.phonePreview !== null && root.phonePreview.inputFocused
+        phoneInteractionReady: root.phonePreview !== null && root.phonePreview.interactionReady
         onKeyRequested: function (key) {
             pairingState.sendKeyInput(key);
         }

@@ -72,6 +72,7 @@ assert(template.smartDefaults == nil, "template must not hide routes behind smar
 assert(template.routes["omarchy.android.panel.toggle"] == "android.panel.toggle")
 assert(template.routes["omarchy.browser"] == "android.browser.default")
 assert(template.routes["omarchy.window.close"] == "android.navigate.home")
+assert(template.routes["omarchy.menu"] == nil, "template must not advertise unavailable launcher search")
 android.configure(template)
 
 local hidden_defaults_ok, hidden_defaults_error = pcall(android.configure, {

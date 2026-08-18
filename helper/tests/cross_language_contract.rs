@@ -41,31 +41,43 @@ fn manifest_ids() -> BTreeSet<String> {
         .collect()
 }
 
-fn qml_router_ids(input: &str) -> BTreeSet<String> {
-    input
-        .lines()
-        .filter_map(|line| {
-            line.trim()
-                .strip_prefix("case \"")?
-                .split_once("\"")
-                .map(|(id, _)| id)
-        })
-        .filter(|id| id.starts_with("android-") || id.starts_with("omarchy-"))
-        .map(str::to_owned)
-        .collect()
-}
+fn qml_router_contract(input: &str) -> (BTreeSet<String>, BTreeSet<String>) {
+    let body = input
+        .split_once("function validSemanticAction(actionId, actionArgument) {")
+        .and_then(|(_, rest)| rest.split_once("\n    }"))
+        .map(|(body, _)| body)
+        .expect("semantic action validator");
+    let mut ids = BTreeSet::new();
+    let mut package_argument_ids = BTreeSet::new();
+    let mut pending_cases = Vec::new();
 
-fn qml_state_ids(input: &str) -> BTreeSet<String> {
-    input
-        .lines()
-        .filter_map(|line| {
-            line.split("actionId === \"")
-                .nth(1)?
-                .split_once('"')
-                .map(|(id, _)| id)
-        })
-        .map(str::to_owned)
-        .collect()
+    for line in body.lines().map(str::trim) {
+        if let Some(id) = line
+            .strip_prefix("case \"")
+            .and_then(|line| line.split_once('"').map(|(id, _)| id))
+        {
+            pending_cases.push(id.to_owned());
+            continue;
+        }
+
+        if !line.starts_with("return ") || pending_cases.is_empty() {
+            continue;
+        }
+        match line {
+            "return actionArgument === \"\"" => {}
+            "return validPackage(actionArgument)" => {
+                package_argument_ids.extend(pending_cases.iter().cloned());
+            }
+            _ => panic!("unsupported semantic action argument grammar: {line}"),
+        }
+        ids.extend(pending_cases.drain(..));
+    }
+
+    assert!(
+        pending_cases.is_empty(),
+        "semantic action case has no return"
+    );
+    (ids, package_argument_ids)
 }
 
 fn shell_action_ids(input: &str) -> BTreeSet<String> {
@@ -104,17 +116,12 @@ fn action_ids_remain_compatible_across_rust_qml_lua_and_shell() {
         .into_iter()
         .map(|action| action.as_str().to_owned())
         .collect::<BTreeSet<_>>();
-    let router = qml_router_ids(&source("qml/state/SemanticActionRouter.qml"));
-    let state = qml_state_ids(&source("qml/state/PairingState.qml"));
+    let (router, _) = qml_router_contract(&source("qml/state/SemanticActionRouter.qml"));
     let shell = shell_action_ids(&source("scripts/omarchy-android-action"));
     let mut lua = lua_target_ids(&source("integrations/action-catalog.lua"));
     lua.insert("android-launch-app".to_owned());
 
     assert_eq!(rust, manifest, "Rust and actions.json vocabularies drifted");
-    assert_eq!(
-        router, state,
-        "QML routing and serialization vocabularies drifted"
-    );
     assert!(
         router.is_subset(&manifest),
         "QML accepts an undeclared action"
@@ -132,6 +139,8 @@ fn action_ids_remain_compatible_across_rust_qml_lua_and_shell() {
 #[test]
 fn protocol_and_argument_contracts_remain_aligned() {
     let state = source("qml/state/PairingState.qml");
+    let (_, package_argument_ids) =
+        qml_router_contract(&source("qml/state/SemanticActionRouter.qml"));
     let shell = source("scripts/omarchy-android-action");
     let lua = source("integrations/hyprland.lua");
 
@@ -141,10 +150,10 @@ fn protocol_and_argument_contracts_remain_aligned() {
         )),
         "QML and Rust protocol versions drifted"
     );
-    assert!(
-        state.contains("var validArgument = actionId === \"android-launch-app\"")
-            && state.contains(": actionArgument === \"\""),
-        "QML must allow an argument only for package launch"
+    assert_eq!(
+        package_argument_ids,
+        BTreeSet::from(["android-launch-app".to_owned()]),
+        "QML must allow a package argument only for package launch"
     );
     assert!(
         shell.contains("android-launch-app)")

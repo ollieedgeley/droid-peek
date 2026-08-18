@@ -32,36 +32,67 @@ TestCase {
     }
     function init() {
         preview.captureRequested = false;
-        preview.deviceDescription = "Omarchy Android";
-        preview.frameCount = 0;
         tapSpy.clear();
         swipeSpy.clear();
         fallbackFocus.forceActiveFocus();
         wait(0);
     }
 
-    function test_target_device_selection_is_exact() {
+    function test_capture_identity_is_exact() {
+        compare(preview.deviceId, "/dev/video42");
+        compare(preview.deviceDescription, "Omarchy Android");
         var inputs = [
             {
+                id: "/dev/video0",
                 description: "USB Camera"
             },
             {
-                description: "Omarchy Android"
+                id: preview.deviceId,
+                description: preview.deviceDescription
             },
             {
+                id: "/dev/video43",
                 description: "Omarchy Android Backup"
             }
         ];
 
-        compare(preview.findDeviceIndex(inputs, "Omarchy Android"), 1);
-        compare(preview.findDeviceIndex(inputs, "Missing device"), -1);
-        compare(preview.findDeviceIndex([], "Omarchy Android"), -1);
+        compare(preview.findDeviceIndex(inputs, preview.deviceId, preview.deviceDescription), 1);
+        compare(preview.findDeviceIndex(inputs, "/dev/video99", preview.deviceDescription), -1);
+        compare(preview.findDeviceIndex([], preview.deviceId, preview.deviceDescription), -1);
+    }
+
+    function test_capture_identity_rejects_wrong_id_or_description() {
+        var inputs = [{
+            id: "/dev/video41",
+            description: preview.deviceDescription
+        }];
+        compare(preview.findDeviceIndex(inputs, preview.deviceId, preview.deviceDescription), -1);
+
+        inputs[0].id = preview.deviceId;
+        inputs[0].description = "Omarchy Android Backup";
+        compare(preview.findDeviceIndex(inputs, preview.deviceId, preview.deviceDescription), -1);
+    }
+
+    function test_capture_identity_rejects_duplicate_device_matches() {
+        var inputs = [
+            {
+                id: preview.deviceId,
+                description: preview.deviceDescription
+            },
+            {
+                id: preview.deviceId,
+                description: preview.deviceDescription
+            }
+        ];
+
+        compare(preview.findDeviceIndex(inputs, preview.deviceId, preview.deviceDescription), -1);
     }
 
     function test_capture_is_off_until_requested() {
         compare(preview.captureRequested, false);
         compare(preview.active, false);
-        compare(preview.frameCount, 0);
+        compare(preview.firstValidFrameReceived, false);
+        compare(preview.interactionReady, false);
     }
     function test_input_activation_claims_keyboard_focus() {
         verify(fallbackFocus.activeFocus);
@@ -71,14 +102,14 @@ TestCase {
         tryCompare(preview, "inputFocused", true);
     }
 
-    function test_stopping_capture_clears_ephemeral_frame_state() {
-        preview.deviceDescription = "Missing test device";
+    function test_stopping_capture_clears_current_capture_readiness() {
         preview.captureRequested = true;
-        preview.frameCount = 7;
+        preview.firstValidFrameReceived = true;
         preview.captureRequested = false;
 
         compare(preview.active, false);
-        compare(preview.frameCount, 0);
+        compare(preview.firstValidFrameReceived, false);
+        compare(preview.interactionReady, false);
     }
 
     function test_pointer_mapping_excludes_letterbox_and_normalizes_content() {
@@ -116,12 +147,6 @@ TestCase {
         compare(bounded.height, 700);
         verify(bounded.width <= 400);
         verify(Math.abs(bounded.width / bounded.height - 1080 / 2392) < 0.000001);
-    }
-
-    function test_preserve_aspect_fit_remains_a_safe_fallback() {
-        var portrait = preview.fittedSize(288, 638, 1080, 2392);
-        compare(portrait.width, 288);
-        compare(portrait.height, 638);
     }
 
     function test_pointer_release_distinguishes_taps_and_swipes() {

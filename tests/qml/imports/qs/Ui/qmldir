@@ -14,3 +14,4 @@ PanelSlider 1.0 PanelSlider.qml
 Toggle 1.0 Toggle.qml
 BorderSurface 1.0 BorderSurface.qml
 Dropdown 1.0 Dropdown.qml
+BarIconButton 1.0 BarIconButton.qml

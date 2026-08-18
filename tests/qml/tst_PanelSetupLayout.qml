@@ -82,6 +82,8 @@ TestCase {
             helperEpoch: panelLoader.item.acceptedHelperEpoch,
             sessionGeneration: "0",
             hasTrustedDevice: false,
+            scrcpyRevision: "cbf29ce484222325",
+            screenOffRequested: false,
             preferences: {
                 keepConnected: false,
                 previewScale: 100,
@@ -172,6 +174,51 @@ TestCase {
                 panel.fittedContentHeight(content.implicitHeight))
         compare(panel.contentBounds.height,
                 panel.contentHeight - panel.verticalContentInset)
+    }
+
+    function test_setup_heading_is_flush_and_retains_all_labels() {
+        var content = objectNamed("panelContent")
+        var heading = objectNamed("setupHero")
+        var title = objectNamed("setupHeadingTitle")
+        var tag = objectNamed("setupHeadingTag")
+        var meta = objectNamed("setupHeadingMeta")
+        var description = objectNamed("setupDescription")
+
+        verify(content !== null)
+        verify(heading !== null)
+        verify(title !== null)
+        verify(tag !== null)
+        verify(meta !== null)
+        verify(description !== null)
+        compare(title.text, "Scan with your phone")
+        compare(tag.text, "unpaired")
+        compare(meta.text, "DROID PEEK")
+
+        var contentOrigin = content.mapToItem(testCase, 0, 0)
+        var titleOrigin = title.mapToItem(testCase, 0, 0)
+        var metaOrigin = meta.mapToItem(testCase, 0, 0)
+        var descriptionOrigin = description.mapToItem(testCase, 0, 0)
+        compare(titleOrigin.x, contentOrigin.x)
+        compare(metaOrigin.x, contentOrigin.x)
+        compare(descriptionOrigin.x, contentOrigin.x)
+    }
+
+    function test_dependency_unavailable_changes_only_the_compact_tag() {
+        var state = objectNamed("pairingState")
+        state.localIntegrationFailure()
+
+        compare(state.sessionState, "dependency-unavailable")
+        compare(state.statusTitle, "Android keyboard controls unavailable")
+        compare(state.statusDescription,
+                "The desktop shortcut mode could not be activated.")
+
+        var title = objectNamed("setupHeadingTitle")
+        var tag = objectNamed("setupHeadingTag")
+        var description = objectNamed("setupDescription")
+        tryCompare(tag, "text", "Unavailable")
+        compare(title.text, state.statusTitle)
+        compare(description.text, state.statusDescription)
+        verify(description.visible)
     }
 
     function test_qr_waiting_is_scannable_bounded_and_keyboard_reachable() {

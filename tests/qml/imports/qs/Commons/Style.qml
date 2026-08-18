@@ -26,6 +26,8 @@ QtObject {
         readonly property int iconSize: 16
         readonly property int horizontalSize: 26
         readonly property int verticalSize: 26
+        readonly property int iconSlot: 27
+        readonly property int sizeHorizontal: 26
     }
 
     function space(value) {

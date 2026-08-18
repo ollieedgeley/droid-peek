@@ -277,3 +277,42 @@ fn scrcpy_failures_are_fixed_categories() {
         Err(SessionFailure::DependencyUnavailable)
     );
 }
+
+#[test]
+fn scrcpy_appends_validated_user_arguments_after_owned_arguments() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
+    let directory = tempdir().expect("temporary directory");
+    let arguments_file = directory.path().join("arguments");
+    let executable = fake_executable(
+        directory.path(),
+        &format!("printf '%s\\n' \"$@\" > '{}'", arguments_file.display()),
+    );
+    let mut runner: Box<dyn SessionRunner> = Box::new(
+        ScrcpySessionRunner::new_with_test_sink(
+            executable,
+            writable_sink(directory.path()),
+            Duration::from_millis(2),
+        )
+        .with_display_probe(NoDisplayProbe),
+    );
+    runner.set_quality(VideoQuality::Low);
+    runner.set_scrcpy_arguments(vec![
+        "--keep-active".to_owned(),
+        "--stay-awake".to_owned(),
+        "--window-title=Téléphone".to_owned(),
+    ]);
+
+    assert_eq!(
+        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {}),
+        Ok(SessionExit::Ended)
+    );
+    let arguments = fs::read_to_string(arguments_file).expect("captured arguments");
+    let lines = arguments.lines().collect::<Vec<_>>();
+    assert_eq!(
+        &lines[lines.len() - 3..],
+        ["--keep-active", "--stay-awake", "--window-title=Téléphone"]
+    );
+    assert!(lines.contains(&"--max-size=720"));
+    assert!(lines.contains(&"--video-bit-rate=4M"));
+    assert!(!lines.contains(&"--no-control"));
+}

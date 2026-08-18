@@ -54,6 +54,7 @@ ignores:
   - helper/src/actions.rs
   - helper/src/persistence.rs
   - helper/src/preferences.rs
+  - helper/src/scrcpy_config.rs
 rule:
   any:
     - pattern: serde_json::from_str($$$ARGS)

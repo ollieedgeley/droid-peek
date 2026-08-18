@@ -26,6 +26,14 @@ QtObject {
     property string videoQuality: "high"
     property var quickActions: ["back", "home", "recent-apps"]
     property bool androidModeShortcuts: true
+    property var desiredScrcpyArguments: []
+    property string desiredScrcpyRevision: ""
+    property string appliedScrcpyRevision: ""
+    property bool desiredScrcpyArgumentsKnown: false
+    property bool desiredScreenOffRequested: false
+    property bool effectiveScreenOff: false
+    property string screenOffTransitionGeneration: ""
+    property string scrcpyRetryRevision: ""
 
     signal commandRequested(string command)
     signal pairingCancellationConfirmed()
@@ -39,6 +47,10 @@ QtObject {
         sessionGeneration = "";
         sessionStarted = false;
         startOverPending = false;
+        appliedScrcpyRevision = "";
+        effectiveScreenOff = false;
+        scrcpyRetryRevision = "";
+        screenOffTransitionGeneration = "";
         startOverGeneration = "";
         localIntegrationAvailable = true;
         sessionState = hasTrustedDevice ? "disconnected" : "unpaired";
@@ -59,6 +71,10 @@ QtObject {
         videoQuality = "high";
         quickActions = ["back", "home", "recent-apps"];
         androidModeShortcuts = true;
+        desiredScrcpyArguments = [];
+        desiredScrcpyRevision = "";
+        desiredScrcpyArgumentsKnown = false;
+        desiredScreenOffRequested = false;
     }
 
     onHelperEpochChanged: resetHelperFacts()
@@ -114,6 +130,79 @@ QtObject {
         if (!sessionStarted || sessionGeneration === "0")
             return false;
         return sendGenerationCommand(command);
+    }
+
+    function validScrcpyConfiguration(revision, scrcpyArguments) {
+        if (typeof revision !== "string" || !/^[0-9a-f]{16}$/.test(revision)
+                || !Array.isArray(scrcpyArguments) || scrcpyArguments.length > 32)
+            return false;
+        var reserved = [
+            "--serial", "--select-usb", "--select-tcpip", "--tcpip",
+            "--video-source", "--new-display", "--display", "--v4l2-sink",
+            "--no-video", "--no-window", "--window", "--control",
+            "--no-control", "--no-cleanup", "--no-power-on", "--max-size",
+            "--video-bit-rate", "--max-fps"
+        ];
+        for (var index = 0; index < scrcpyArguments.length; ++index) {
+            var argument = scrcpyArguments[index];
+            if (typeof argument !== "string"
+                    || unescape(encodeURIComponent(argument)).length > 512
+                    || !/^--[^\r\n\u0000]+$/.test(argument))
+                return false;
+            var separator = argument.indexOf("=");
+            var name = separator < 0 ? argument : argument.slice(0, separator);
+            if (reserved.indexOf(name) >= 0 || /^--audio/.test(name))
+                return false;
+        }
+        return true;
+    }
+
+    function desiredScreenOff() {
+        return desiredScreenOffRequested;
+    }
+
+    function sendScrcpyConfiguration(screenOffEnabled) {
+        var command = {
+            type: "set-scrcpy-args",
+            expectedRevision: appliedScrcpyRevision,
+            newRevision: desiredScrcpyRevision,
+            screenOffEnabled: screenOffEnabled
+        };
+        if (desiredScrcpyArgumentsKnown)
+            command.arguments = desiredScrcpyArguments;
+        return sendGenerationCommand(command);
+    }
+
+    function sendDesiredScrcpyConfiguration() {
+        if (!helperReady || desiredScrcpyRevision === ""
+                || desiredScrcpyRevision === appliedScrcpyRevision)
+            return desiredScrcpyRevision === appliedScrcpyRevision;
+        return sendScrcpyConfiguration(false);
+    }
+
+    function setScrcpyConfiguration(revision, scrcpyArguments) {
+        if (!validScrcpyConfiguration(revision, scrcpyArguments))
+            return false;
+        desiredScrcpyArguments = scrcpyArguments.slice();
+        desiredScrcpyArgumentsKnown = true;
+        desiredScreenOffRequested =
+                desiredScrcpyArguments.indexOf("--turn-screen-off") >= 0;
+        desiredScrcpyRevision = revision;
+        scrcpyRetryRevision = "";
+        return !helperReady || sendDesiredScrcpyConfiguration();
+    }
+
+    function requestScreenOffAfterPreview(epoch, generation) {
+        if (!helperReady || !sessionStarted || !desiredScreenOff()
+                || effectiveScreenOff || appliedScrcpyRevision !== desiredScrcpyRevision
+                || epoch !== helperEpoch || generation !== sessionGeneration
+                || screenOffTransitionGeneration === generation)
+            return false;
+        screenOffTransitionGeneration = generation;
+        if (sendScrcpyConfiguration(true))
+            return true;
+        screenOffTransitionGeneration = "";
+        return false;
     }
 
     function startQrPairing() {
@@ -432,6 +521,9 @@ QtObject {
                     || sessionGeneration !== "")
                 return;
             if (typeof event.hasTrustedDevice !== "boolean"
+                    || typeof event.scrcpyRevision !== "string"
+                    || !/^[0-9a-f]{16}$/.test(event.scrcpyRevision)
+                    || typeof event.screenOffRequested !== "boolean"
                     || !applyPreferences(event.preferences)) {
                 protocolFailure();
                 return;
@@ -439,8 +531,17 @@ QtObject {
             helperReady = true;
             hasTrustedDevice = event.hasTrustedDevice;
             sessionGeneration = "0";
-            sessionStarted = false;
+            appliedScrcpyRevision = event.scrcpyRevision;
+            effectiveScreenOff = false;
             sessionState = hasTrustedDevice ? "disconnected" : "unpaired";
+            if (desiredScrcpyRevision === "") {
+                desiredScrcpyRevision = appliedScrcpyRevision;
+                desiredScreenOffRequested = event.screenOffRequested;
+            } else if (desiredScrcpyRevision === appliedScrcpyRevision) {
+                desiredScreenOffRequested = event.screenOffRequested;
+            } else {
+                sendDesiredScrcpyConfiguration();
+            }
             if (hasTrustedDevice)
                 reconnectTrustedDevice();
             else if (automaticPairingEnabled)
@@ -476,6 +577,48 @@ QtObject {
                 statusTitle = "Updating video quality";
                 statusDescription = "Restarting the private phone stream.";
             }
+            return;
+        case "scrcpy-args-stale":
+            if (!isDecimalIdentity(event.sessionGeneration)
+                    || typeof event.revision !== "string"
+                    || !/^[0-9a-f]{16}$/.test(event.revision))
+                return;
+            if (event.sessionGeneration !== sessionGeneration) {
+                if (!isDecimalIdentity(sessionGeneration)
+                        || event.sessionGeneration !== nextDecimal(sessionGeneration))
+                    return;
+                advanceGeneration(event.sessionGeneration);
+            }
+            appliedScrcpyRevision = event.revision;
+            if (desiredScrcpyRevision === appliedScrcpyRevision
+                    || scrcpyRetryRevision === desiredScrcpyRevision)
+                return;
+            scrcpyRetryRevision = desiredScrcpyRevision;
+            sendDesiredScrcpyConfiguration();
+            return;
+        case "scrcpy-args-updated":
+            if (!isDecimalIdentity(event.sessionGeneration)
+                    || typeof event.sessionRestarted !== "boolean"
+                    || typeof event.revision !== "string"
+                    || event.revision !== desiredScrcpyRevision
+                    || typeof event.screenOffEnabled !== "boolean")
+                return;
+            if (event.sessionRestarted === true) {
+                if (!isDecimalIdentity(sessionGeneration)
+                        || event.sessionGeneration !== nextDecimal(sessionGeneration))
+                    return;
+                advanceGeneration(event.sessionGeneration);
+                sessionState = "connecting";
+                pairingStage = "session-starting";
+                activity = "starting-preview";
+                statusTitle = "Applying phone settings";
+                statusDescription = "Restarting the private phone stream.";
+            } else if (event.sessionGeneration !== sessionGeneration) {
+                return;
+            }
+            scrcpyRetryRevision = "";
+            appliedScrcpyRevision = event.revision;
+            effectiveScreenOff = event.screenOffEnabled;
             return;
         case "qr-waiting":
             if (typeof event.artifact !== "string" || event.artifact.charAt(0) !== "/"
@@ -543,7 +686,12 @@ QtObject {
         case "session-started":
             if (startOverPending || !admitCurrentGeneration(event, false))
                 return;
+            if (typeof event.screenOffEnabled !== "boolean") {
+                protocolFailure();
+                return;
+            }
             hasTrustedDevice = true;
+            effectiveScreenOff = event.screenOffEnabled;
             sessionStarted = true;
             sessionState = "started";
             pairingStage = "session-started";

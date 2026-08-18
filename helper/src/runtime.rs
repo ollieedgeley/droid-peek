@@ -24,6 +24,7 @@ use crate::{
         PairingRequestFailure, PhoneTargetFailure, QrPresentation,
     },
     qr::{QrCeremony, RuntimeQrRenderer, SystemClock, SystemEntropy},
+    scrcpy_config::{FileScrcpyConfigStore, ScrcpyConfiguration},
     session::{ScrcpySessionRunner, SessionExit, SessionFailure, SessionRunner},
     wireless::{AvahiDiscovery, PairingFlow, WirelessDiscovery},
 };
@@ -145,6 +146,7 @@ struct PendingReconnect {
 struct SessionControl {
     runner: Arc<Mutex<Option<Box<dyn SessionRunner + Send>>>>,
     target: Arc<Mutex<Option<String>>>,
+    scrcpy_arguments: Arc<Mutex<Vec<String>>>,
     generation: Arc<AtomicU64>,
     cancellation: CancellationToken,
     helper_epoch: String,
@@ -157,6 +159,7 @@ impl SessionControl {
     {
         let runner = Arc::clone(&self.runner);
         let target = Arc::clone(&self.target);
+        let scrcpy_arguments = Arc::clone(&self.scrcpy_arguments);
         let generation = Arc::clone(&self.generation);
         let cancellation = self.cancellation.clone();
         let helper_epoch = self.helper_epoch.clone();
@@ -174,9 +177,17 @@ impl SessionControl {
                         {
                             return;
                         }
+                        let configured_arguments = match scrcpy_arguments.lock() {
+                            Ok(arguments) => arguments.clone(),
+                            Err(_) => return,
+                        };
+                        let screen_off_enabled = configured_arguments
+                            .iter()
+                            .any(|argument| argument == "--turn-screen-off");
                         match session.as_mut() {
                             Some(session) => {
                                 session.set_quality(quality);
+                                session.set_scrcpy_arguments(configured_arguments);
                                 if cancellation.is_cancelled()
                                     || generation.load(Ordering::Acquire) != expected_generation
                                 {
@@ -207,6 +218,7 @@ impl SessionControl {
                                                     .map(|size| size.width_mm()),
                                                 physical_height_mm: physical_display
                                                     .map(|size| size.height_mm()),
+                                                screen_off_enabled,
                                             });
                                         }
                                     },
@@ -270,6 +282,14 @@ impl SessionControl {
         let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
         self.stop_and_wait();
         generation
+    }
+
+    fn set_scrcpy_arguments(&self, arguments: Vec<String>) -> Result<(), FailureReason> {
+        *self
+            .scrcpy_arguments
+            .lock()
+            .map_err(|_| FailureReason::DependencyUnavailable)? = arguments;
+        Ok(())
     }
 
     fn restart<S>(
@@ -339,6 +359,9 @@ pub struct RuntimePairingBackend<S> {
     store: FileTrustedDeviceStore,
     preference_store: FilePreferenceStore,
     preferences: Preferences,
+    scrcpy_config_store: FileScrcpyConfigStore,
+    effective_screen_off: bool,
+    scrcpy_configuration: ScrcpyConfiguration,
     trusted_device: Arc<Mutex<Option<TrustedDevice>>>,
     pending_reconnect: Option<PendingReconnect>,
 }
@@ -396,6 +419,8 @@ where
         let trusted_device = store.load()?;
         let preference_store = FilePreferenceStore::new(state_directory);
         let preferences = preference_store.load()?;
+        let scrcpy_config_store = FileScrcpyConfigStore::new(state_directory);
+        let scrcpy_configuration = scrcpy_config_store.load()?;
         let helper_epoch = helper_epoch.into();
         Ok(Self {
             ceremony: Arc::new(Mutex::new(ceremony)),
@@ -406,6 +431,9 @@ where
             session: SessionControl {
                 runner: Arc::new(Mutex::new(dependencies.session)),
                 target: Arc::new(Mutex::new(None)),
+                scrcpy_arguments: Arc::new(Mutex::new(
+                    scrcpy_configuration.effective_arguments(false),
+                )),
                 generation: Arc::new(AtomicU64::new(0)),
                 cancellation: CancellationToken::new(),
                 helper_epoch: helper_epoch.clone(),
@@ -419,6 +447,9 @@ where
             store,
             preference_store,
             preferences,
+            scrcpy_config_store,
+            scrcpy_configuration,
+            effective_screen_off: false,
             trusted_device: Arc::new(Mutex::new(trusted_device)),
             pending_reconnect: None,
         })
@@ -470,7 +501,24 @@ where
         })
     }
 
+    fn prepare_session_start(&mut self) -> Result<(), FailureReason> {
+        self.effective_screen_off = false;
+        self.session
+            .set_scrcpy_arguments(self.scrcpy_configuration.effective_arguments(false))
+    }
+
     fn launch_pending(&mut self) {
+        if self.pending.is_none() {
+            return;
+        }
+        if self.prepare_session_start().is_err() {
+            let _ = self.sink.emit_event(&Event::LifecycleFailure {
+                helper_epoch: self.helper_epoch.clone(),
+                session_generation: self.session.generation().to_string(),
+                reason: FailureReason::DependencyUnavailable,
+            });
+            return;
+        }
         let Some(pending) = self.pending.take() else {
             return;
         };
@@ -608,6 +656,17 @@ where
         });
     }
     fn launch_reconnect(&mut self) {
+        if self.pending_reconnect.is_none() {
+            return;
+        }
+        if self.prepare_session_start().is_err() {
+            let _ = self.sink.emit_event(&Event::LifecycleFailure {
+                helper_epoch: self.helper_epoch.clone(),
+                session_generation: self.session.generation().to_string(),
+                reason: FailureReason::DependencyUnavailable,
+            });
+            return;
+        }
         let Some(pending) = self.pending_reconnect.take() else {
             return;
         };
@@ -993,6 +1052,10 @@ where
         self.preferences
     }
 
+    fn scrcpy_configuration(&self) -> ScrcpyConfiguration {
+        self.scrcpy_configuration.clone()
+    }
+
     fn set_preferences(&mut self, preferences: Preferences) -> Result<bool, FailureReason> {
         let quality_changed = preferences.video_quality != self.preferences.video_quality;
         let restart_target = quality_changed
@@ -1005,6 +1068,42 @@ where
             .map_err(|_| FailureReason::DependencyUnavailable)?;
         self.preferences = preferences;
 
+        if let Some(target) = restart_target {
+            self.session
+                .restart(target, self.preferences.video_quality, self.sink.clone())?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn set_scrcpy_configuration(
+        &mut self,
+        configuration: ScrcpyConfiguration,
+        screen_off_enabled: bool,
+    ) -> Result<bool, FailureReason> {
+        if screen_off_enabled && !configuration.screen_off_requested() {
+            return Err(FailureReason::DependencyUnavailable);
+        }
+        let committed = self
+            .scrcpy_config_store
+            .load()
+            .map_err(|_| FailureReason::DependencyUnavailable)?;
+        if committed != configuration {
+            return Err(FailureReason::DependencyUnavailable);
+        }
+        let changed = configuration != self.scrcpy_configuration
+            || screen_off_enabled != self.effective_screen_off;
+        let restart_target = changed
+            .then(|| self.session.target())
+            .transpose()?
+            .flatten();
+        if screen_off_enabled && restart_target.is_none() {
+            return Err(FailureReason::Disconnected);
+        }
+        self.session
+            .set_scrcpy_arguments(configuration.effective_arguments(screen_off_enabled))?;
+        self.scrcpy_configuration = configuration;
+        self.effective_screen_off = screen_off_enabled;
         if let Some(target) = restart_target {
             self.session
                 .restart(target, self.preferences.video_quality, self.sink.clone())?;

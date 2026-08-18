@@ -45,7 +45,7 @@ fn protocol_v11_phone_target_endpoint_is_aligned_across_languages() {
     );
     assert!(
         widget.contains("function phoneTarget("),
-        "ollie.android must expose the phone-target shell endpoint"
+        "ollie.android must expose the phoneTarget shell endpoint"
     );
     assert!(
         !widget.contains("function action("),
@@ -58,8 +58,18 @@ fn protocol_v11_phone_target_endpoint_is_aligned_across_languages() {
         "Rust phone-target must carry the two-part session identity"
     );
     assert!(
-        phone_bindings.contains("omarchy-shell ollie.android phone-target"),
-        "Lua target bindings must dispatch only through phone-target"
+        phone_bindings.contains("omarchy-shell ollie.android phoneTarget"),
+        "Lua target bindings must dispatch only through phoneTarget"
+    );
+    assert!(
+        widget.contains("function configureScrcpy(")
+            && phone_bindings.contains("omarchy-shell ollie.android configureScrcpy"),
+        "Lua and QML must use the exact configureScrcpy shell endpoint"
+    );
+    assert!(
+        !phone_bindings.contains("ollie.android phone-target")
+            && !phone_bindings.contains("ollie.android configure-scrcpy"),
+        "kebab-case shell endpoints are not callable QML IPC methods"
     );
 }
 

@@ -19,6 +19,7 @@ use omarchy_android_helper::{
     process::{CancellationToken, CommandFailure, CommandOutput, CommandRequest, CommandRunner},
     protocol::{Event, PairingBackend, PairingEvent, ProtocolEngine},
     runtime::{ProtocolSink, RuntimeDependencies, RuntimePairingBackend},
+    scrcpy_config::{FileScrcpyConfigStore, ScrcpyConfiguration},
     session::{SessionExit, SessionFailure, SessionRunner},
     wireless::{DiscoveryFailure, PairingEndpoint, PairingFlow, WirelessDiscovery},
 };
@@ -286,6 +287,34 @@ impl SessionRunner for BlockingSession {
     }
 }
 
+struct RecordingConfigSession {
+    current_arguments: Vec<String>,
+    runs: Arc<Mutex<Vec<Vec<String>>>>,
+}
+
+impl SessionRunner for RecordingConfigSession {
+    fn run(
+        &mut self,
+        _target: &str,
+        cancellation: &CancellationToken,
+        on_started: &mut dyn FnMut(Option<omarchy_android_helper::session::PhysicalDisplaySize>),
+    ) -> Result<SessionExit, SessionFailure> {
+        self.runs
+            .lock()
+            .expect("session argument runs lock")
+            .push(self.current_arguments.clone());
+        on_started(None);
+        while !cancellation.is_cancelled() {
+            thread::sleep(Duration::from_millis(2));
+        }
+        Ok(SessionExit::Stopped)
+    }
+
+    fn set_scrcpy_arguments(&mut self, arguments: Vec<String>) {
+        self.current_arguments = arguments;
+    }
+}
+
 struct BlockingQualitySession {
     quality_update_started: Arc<AtomicBool>,
     release_quality_update: Arc<AtomicBool>,
@@ -383,6 +412,80 @@ fn live_runtime(
         sink,
         requests,
     }
+}
+
+#[test]
+fn scrcpy_configuration_restarts_with_only_the_effective_screen_off_state() {
+    let runs = Arc::new(Mutex::new(Vec::new()));
+    let mut live = live_runtime(
+        Box::new(RecordingConfigSession {
+            current_arguments: Vec::new(),
+            runs: Arc::clone(&runs),
+        }),
+        VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+    );
+    let configuration = ScrcpyConfiguration::validated(vec![
+        "--keep-active".to_owned(),
+        "--turn-screen-off".to_owned(),
+    ])
+    .expect("valid scrcpy configuration");
+    FileScrcpyConfigStore::new(&live.state_directory)
+        .store(&configuration)
+        .expect("commit scrcpy configuration");
+
+    assert!(
+        live.backend
+            .set_scrcpy_configuration(configuration.clone(), false)
+            .expect("apply configuration")
+    );
+    let disabled_event = live.sink.wait_for_event("session-started", Some("2"));
+    assert_eq!(
+        runs.lock().expect("session argument runs lock").as_slice(),
+        [Vec::<String>::new(), vec!["--keep-active".to_owned()]]
+    );
+    assert!(disabled_event.contains(r#""screenOffEnabled":false"#));
+    assert!(
+        !live
+            .backend
+            .set_scrcpy_configuration(configuration.clone(), false)
+            .expect("idempotent configuration")
+    );
+
+    assert!(
+        live.backend
+            .set_scrcpy_configuration(configuration.clone(), true)
+            .expect("enable screen off after preview")
+    );
+    let enabled_event = live.sink.wait_for_event("session-started", Some("3"));
+    assert_eq!(
+        runs.lock().expect("session argument runs lock")[2],
+        ["--keep-active".to_owned(), "--turn-screen-off".to_owned()]
+    );
+    assert!(enabled_event.contains(r#""screenOffEnabled":true"#));
+    live.backend.response_emitted();
+    let mut preferences = live.backend.preferences();
+    preferences.video_quality = VideoQuality::Low;
+    assert!(
+        live.backend
+            .set_preferences(preferences)
+            .expect("change quality after screen-off response")
+    );
+    let retained_event = live.sink.wait_for_event("session-started", Some("4"));
+    assert_eq!(
+        runs.lock().expect("session argument runs lock")[3],
+        ["--keep-active".to_owned(), "--turn-screen-off".to_owned()]
+    );
+    assert!(retained_event.contains(r#""screenOffEnabled":true"#));
+
+    let uncommitted =
+        ScrcpyConfiguration::validated(vec!["--stay-awake".to_owned()]).expect("valid candidate");
+    assert!(
+        live.backend
+            .set_scrcpy_configuration(uncommitted, false)
+            .is_err()
+    );
+    assert_eq!(runs.lock().expect("session argument runs lock").len(), 4);
+    live.backend.stop_session();
 }
 
 #[test]

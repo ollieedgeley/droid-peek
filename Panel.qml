@@ -153,6 +153,10 @@ Panel {
         return phoneTargetRouter.acceptPhoneTarget(request);
     }
 
+    function setScrcpyConfiguration(revision, arguments) {
+        return pairingState.setScrcpyConfiguration(revision, arguments);
+    }
+
     function requestClose() {
         submapController.closePanel();
     }
@@ -507,6 +511,18 @@ Panel {
                         target: phonePreviewLoader.item
                         enabled: target !== null
 
+
+                        function onFirstValidFrameReceivedChanged() {
+                            var preview = phonePreviewLoader.item;
+                            if (!preview || !preview.firstValidFrameReceived)
+                                return;
+                            Qt.callLater(function () {
+                                if (root.applicationState === "interactive")
+                                    pairingState.requestScreenOffAfterPreview(
+                                                preview.helperEpoch,
+                                                preview.sessionGeneration);
+                            });
+                        }
                         function onTapRequested(x, y, displayWidth,
                                                 displayHeight, helperEpoch,
                                                 sessionGeneration) {

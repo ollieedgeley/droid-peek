@@ -220,6 +220,34 @@ defines exactly one `omarchy-android` submap. Saving the module follows
 Omarchy's normal watched `require` reload path. The plugin does not scan,
 translate, infer, or rewrite binding declarations.
 
+The same user module owns optional scrcpy arguments. Declare them once before
+the submap and keep the commit as the final statement:
+
+```lua
+android.configure({
+  scrcpyArgs = {
+    "--keep-active",
+    "--turn-screen-off",
+    "--stay-awake",
+  },
+})
+
+android.define_submap("omarchy-android", function()
+  -- bindings
+end)
+
+android.commitConfiguration()
+```
+
+Each entry is one argument, not a shell command. The API rejects malformed,
+transport-, display-, audio-, control-, and cleanup-changing options. A valid
+commit is stored privately and restarts only an active phone session. When
+`--turn-screen-off` is configured, the first session renders with the physical
+display still on; only after the panel renders its first valid frame does the
+plugin restart scrcpy with screen-off enabled. Removing the option causes one
+restart that restores normal scrcpy cleanup behavior. Android lock-screen and
+device-policy behavior remain unchanged.
+
 Phone mode is active only when the panel is open, **Android-mode shortcuts** is
 enabled, and the canonical application state is `interactive`. In that mode,
 configured chords belong only to Android. An unconfigured desktop chord is
@@ -257,7 +285,7 @@ Supported targets are `android.browser.default`, `android.navigate.home`,
 shell commands are not accepted.
 
 Each target dispatch sends one base64url-encoded JSON envelope to
-`omarchy-shell ollie.android phone-target`. The envelope has a unique
+`omarchy-shell ollie.android phoneTarget`. The envelope has a unique
 `requestId`, the direct typed `target`, and a two-second absolute deadline. QML
 accepts it only in the interactive state, adds the current helper epoch and
 session generation, and sends protocol v11 to Rust. Stale, missing, invalid,

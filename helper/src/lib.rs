@@ -17,6 +17,7 @@ pub mod process;
 pub mod protocol;
 pub mod qr;
 pub mod runtime;
+pub mod scrcpy_config;
 pub mod session;
 pub mod wireless;
 

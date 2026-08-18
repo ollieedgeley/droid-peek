@@ -8,6 +8,16 @@ local android = dofile(
     .. "/.config/omarchy/plugins/ollie.android/integrations/phone-bindings.lua"
 )
 
+-- Optional scrcpy arguments are validated here, persisted only after the
+-- complete file succeeds, and applied to the next private phone session.
+android.configure({
+  scrcpyArgs = {
+    "--keep-active",
+    "--turn-screen-off",
+    "--stay-awake",
+  },
+})
+
 android.define_submap("omarchy-android", function()
   -- Mandatory escape from phone mode. It intentionally has no desktop effect
   -- because this submap is inactive after the panel closes.
@@ -33,3 +43,5 @@ android.define_submap("omarchy-android", function()
   --   type = "android.app.launch", package = "com.example.app"
   -- })
 end)
+
+android.commitConfiguration()

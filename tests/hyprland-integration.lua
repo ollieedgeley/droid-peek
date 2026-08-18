@@ -7,6 +7,7 @@ local submaps = {}
 local dispatches = {}
 local execution_events = {}
 local active_submap = nil
+local stored_config_commands = {}
 
 local function record_command(command)
   table.insert(execution_events, { kind = "command", command = command })
@@ -65,15 +66,31 @@ end
 local now_milliseconds = 1700000000125
 local original_popen = io.popen
 io.popen = function(command, mode)
-  assert(command == "/usr/bin/date +%s%3N", "deadline clock command must be fixed")
-  assert(mode == "r", "deadline clock must be read-only")
+  if command == "/usr/bin/date +%s%3N" then
+    assert(mode == "r", "deadline clock must be read-only")
+    return {
+      read = function(_, format)
+        assert(format == "*l")
+        return tostring(now_milliseconds)
+      end,
+      close = function()
+        return true
+      end,
+    }
+  end
+  assert(
+    command:match("^%[omarchy%-android%-helper%] store%-scrcpy%-args %[([A-Za-z0-9_-]+)%]$"),
+    "configure must call the fixed plugin helper store subcommand"
+  )
+  assert(mode == "r", "configuration store command must be read-only")
+  table.insert(stored_config_commands, command)
   return {
     read = function(_, format)
       assert(format == "*l")
-      return tostring(now_milliseconds)
+      return "0123456789abcdef"
     end,
     close = function()
-      return true
+      return nil, "No child processes", 10
     end,
   }
 end
@@ -104,9 +121,9 @@ end
 
 local function command_envelope(command)
   local encoded = command:match(
-    "^omarchy%-shell ollie%.android phone%-target %[([A-Za-z0-9_-]+)%]$"
+    "^omarchy%-shell ollie%.android phoneTarget %[([A-Za-z0-9_-]+)%]$"
   )
-  assert(encoded ~= nil, "target must use the phone-target shell endpoint")
+  assert(encoded ~= nil, "target must use the phoneTarget shell endpoint")
   assert(not encoded:find("=", 1, true), "base64url envelope must omit padding")
   return decode_base64url(encoded)
 end
@@ -130,10 +147,45 @@ assert(type(android) == "table", "integration must return the phone-binding API"
 assert(type(android.define_submap) == "function")
 assert(type(android.bind) == "function")
 assert(type(android.close_panel) == "function")
-assert(android.configure == nil, "retired routes configuration must not remain")
+assert(type(android.configure) == "function")
+assert(type(android.commitConfiguration) == "function")
 assert(android.install_custom_bindings == nil, "retired customBindings API must not remain")
 assert(android.routes == nil, "the API must not expose a routing table")
 assert(o.bind == desktop_bind, "loading phone bindings must not wrap o.bind")
+
+for _, invalid in ipairs({
+  "not-a-table",
+  {},
+  { unknown = {} },
+  { scrcpyArgs = "not-a-list" },
+  { scrcpyArgs = { [1] = "--keep-active", [3] = "--stay-awake" } },
+  { scrcpyArgs = { "" } },
+  { scrcpyArgs = { "-w" } },
+  { scrcpyArgs = { "--serial=device" } },
+  { scrcpyArgs = { "--no-cleanup" } },
+  { scrcpyArgs = { "--audio-codec=opus" } },
+  { scrcpyArgs = { string.rep("x", 513) } },
+  { scrcpyArgs = {
+    "--x01", "--x02", "--x03", "--x04", "--x05", "--x06", "--x07", "--x08",
+    "--x09", "--x10", "--x11", "--x12", "--x13", "--x14", "--x15", "--x16",
+    "--x17", "--x18", "--x19", "--x20", "--x21", "--x22", "--x23", "--x24",
+    "--x25", "--x26", "--x27", "--x28", "--x29", "--x30", "--x31", "--x32",
+    "--x33",
+  } },
+}) do
+  assert(not pcall(android.configure, invalid), "invalid configuration must fail closed")
+end
+assert(#stored_config_commands == 0)
+
+android.configure({
+  scrcpyArgs = {
+    "--keep-active",
+    "--turn-screen-off",
+    "--stay-awake",
+    "--window-title=Téléphone",
+  },
+})
+assert(#stored_config_commands == 0, "configure must only stage")
 
 android.define_submap("omarchy-android", function()
   android.bind("SUPER + ESCAPE", "Close Android panel", android.close_panel)
@@ -206,5 +258,26 @@ assert(
   "an invalid target must be consumed by phone-target without desktop fallback"
 )
 
+local revision = android.commitConfiguration()
+assert(revision == "0123456789abcdef")
+assert(#stored_config_commands == 1)
+local stored_envelope = stored_config_commands[1]:match(
+  " store%-scrcpy%-args %[([A-Za-z0-9_-]+)%]$"
+)
+local stored_json = decode_base64url(assert(stored_envelope))
+assert(stored_json:match('^%["%-%-keep%-active","%-%-turn%-screen%-off",'))
+assert(stored_json:find("Téléphone", 1, true))
+local configure_command = execution_events[7].command
+local configure_revision, configure_envelope = configure_command:match(
+  "^omarchy%-shell ollie%.android configureScrcpy %[([0-9a-f]+)%] %[([A-Za-z0-9_-]+)%]$"
+)
+assert(configure_revision == revision)
+assert(decode_base64url(assert(configure_envelope)) == stored_json)
+assert(not pcall(android.commitConfiguration), "configuration may be committed only once")
+assert(
+  not pcall(android.configure, { scrcpyArgs = { "--stay-awake" } }),
+  "configuration may be declared only once"
+)
+assert(#stored_config_commands == 1, "rejected calls must not reach the helper")
 os.time = original_time
 io.popen = original_popen

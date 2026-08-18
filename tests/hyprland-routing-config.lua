@@ -5,9 +5,19 @@ local template_path = integration_directory .. "/omarchy-android.lua.example"
 local calls = {}
 local submaps = {}
 local api_requests = {}
+local configured_arguments = nil
+local configuration_committed = false
 local close_panel = function() end
 local android = {
   close_panel = close_panel,
+  configure = function(configuration)
+    assert(#submaps == 0, "configuration must precede the submap")
+    configured_arguments = configuration.scrcpyArgs
+  end,
+  commitConfiguration = function()
+    assert(#submaps == 1, "configuration commit must follow the submap")
+    configuration_committed = true
+  end,
   define_submap = function(name, callback)
     table.insert(submaps, name)
     callback()
@@ -53,6 +63,12 @@ assert(#api_requests == 1, "the template must load exactly one plugin API")
 assert(#submaps == 1, "the template must define exactly one named submap")
 assert(submaps[1] == "omarchy-android")
 assert(#calls == 4, "the release template must enable only the four documented bindings")
+assert(configuration_committed, "the template must commit its configuration")
+assert(
+  table.concat(configured_arguments, "\n")
+    == "--keep-active\n--turn-screen-off\n--stay-awake",
+  "the template must install the approved scrcpy defaults"
+)
 
 assert(calls[1].keys == "SUPER + ESCAPE")
 assert(calls[1].description == "Close Android panel")

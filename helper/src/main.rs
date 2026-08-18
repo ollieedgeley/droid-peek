@@ -18,11 +18,15 @@ use omarchy_android_helper::{
         AcceptanceEventWriter, ProtocolSink, RuntimePairingBackend, WriterProtocolSink,
         default_runtime_directory,
     },
+    scrcpy_config::{FileScrcpyConfigStore, ScrcpyConfiguration, decode_arguments_envelope},
     session::run_scrcpy_guardian,
 };
 
 fn main() -> io::Result<()> {
     if run_scrcpy_guardian(env::args_os().skip(1))? {
+        return Ok(());
+    }
+    if run_store_scrcpy_arguments()? {
         return Ok(());
     }
     let arguments = startup_arguments()?;
@@ -54,6 +58,7 @@ fn main() -> io::Result<()> {
     )?;
     let has_trusted_device = backend.has_trusted_device();
     let preferences = backend.preferences();
+    let scrcpy_configuration = backend.scrcpy_configuration();
     let mut engine = ProtocolEngine::new(backend, &arguments.helper_epoch);
 
     sink.emit_event(&Event::Ready {
@@ -61,6 +66,8 @@ fn main() -> io::Result<()> {
         session_generation: "0".to_owned(),
         has_trusted_device,
         preferences,
+        scrcpy_revision: scrcpy_configuration.revision().to_owned(),
+        screen_off_requested: scrcpy_configuration.screen_off_requested(),
     })?;
     let result = (|| {
         for line in stdin.lock().lines() {
@@ -73,6 +80,38 @@ fn main() -> io::Result<()> {
     })();
     engine.into_backend().shutdown();
     result
+}
+
+fn run_store_scrcpy_arguments() -> io::Result<bool> {
+    let mut arguments = env::args_os().skip(1);
+    if arguments.next().as_deref() != Some(std::ffi::OsStr::new("store-scrcpy-args")) {
+        return Ok(false);
+    }
+    let encoded = arguments
+        .next()
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(invalid_store_arguments)?;
+    if arguments.next().is_some() {
+        return Err(invalid_store_arguments());
+    }
+    let state_directory = default_state_directory().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "XDG_STATE_HOME and HOME are unavailable",
+        )
+    })?;
+    let configuration = ScrcpyConfiguration::validated(decode_arguments_envelope(&encoded)?)
+        .map_err(|_| invalid_store_arguments())?;
+    FileScrcpyConfigStore::new(state_directory).store(&configuration)?;
+    println!("{}", configuration.revision());
+    Ok(true)
+}
+
+fn invalid_store_arguments() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "usage: omarchy-android-helper store-scrcpy-args BASE64URL_JSON",
+    )
 }
 
 struct StartupArguments {

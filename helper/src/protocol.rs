@@ -7,6 +7,7 @@ use crate::{
     actions::PhoneTarget,
     input::{AndroidKey, DisplayGeometry, NormalizedPoint},
     preferences::{Preferences, PreviewScale, QuickAction, VideoQuality},
+    scrcpy_config::ScrcpyConfiguration,
 };
 
 pub const PROTOCOL_VERSION: u8 = 11;
@@ -130,6 +131,18 @@ pub trait PairingBackend {
         Err(FailureReason::DependencyUnavailable)
     }
 
+    fn scrcpy_configuration(&self) -> ScrcpyConfiguration {
+        ScrcpyConfiguration::empty()
+    }
+
+    fn set_scrcpy_configuration(
+        &mut self,
+        _configuration: ScrcpyConfiguration,
+        _screen_off_enabled: bool,
+    ) -> Result<bool, FailureReason> {
+        Err(FailureReason::DependencyUnavailable)
+    }
+
     fn response_emitted(&mut self) {}
 }
 
@@ -181,6 +194,13 @@ impl<B: PairingBackend> ProtocolEngine<B> {
         if command.is_session_bound() {
             let generation = self.generation();
             if command.session_generation() != Some(generation.as_str()) {
+                if matches!(command, Command::SetScrcpyArgs { .. }) {
+                    return vec![Event::ScrcpyArgsStale {
+                        helper_epoch: self.helper_epoch.clone(),
+                        session_generation: generation,
+                        revision: self.backend.scrcpy_configuration().revision().to_owned(),
+                    }];
+                }
                 return vec![self.stale_result(command.request_id())];
             }
         }
@@ -372,6 +392,54 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                 },
                 Err(reason) => self.failure(reason),
             }],
+            Command::SetScrcpyArgs {
+                arguments,
+                expected_revision,
+                new_revision,
+                screen_off_enabled,
+                ..
+            } => {
+                let current = self.backend.scrcpy_configuration();
+                if current.revision() != expected_revision {
+                    return vec![self.protocol_error(ProtocolErrorReason::InvalidCommand)];
+                }
+                let configuration = match arguments {
+                    Some(arguments) => match ScrcpyConfiguration::validated(arguments) {
+                        Ok(configuration)
+                            if configuration.revision() == new_revision
+                                && (!screen_off_enabled
+                                    || configuration.screen_off_requested()) =>
+                        {
+                            configuration
+                        }
+                        _ => {
+                            return vec![self.protocol_error(ProtocolErrorReason::InvalidCommand)];
+                        }
+                    },
+                    None if screen_off_enabled
+                        && new_revision == expected_revision
+                        && current.screen_off_requested() =>
+                    {
+                        current
+                    }
+                    None => {
+                        return vec![self.protocol_error(ProtocolErrorReason::InvalidCommand)];
+                    }
+                };
+                vec![match self
+                    .backend
+                    .set_scrcpy_configuration(configuration.clone(), screen_off_enabled)
+                {
+                    Ok(session_restarted) => Event::ScrcpyArgsUpdated {
+                        helper_epoch: self.helper_epoch.clone(),
+                        session_generation: self.generation(),
+                        revision: configuration.revision().to_owned(),
+                        screen_off_enabled,
+                        session_restarted,
+                    },
+                    Err(reason) => self.failure(reason),
+                }]
+            }
         }
     }
 
@@ -593,6 +661,20 @@ enum Command {
         #[serde(rename = "androidModeShortcuts")]
         android_mode_shortcuts: bool,
     },
+    SetScrcpyArgs {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+        #[serde(rename = "sessionGeneration", default)]
+        session_generation: Option<String>,
+        #[serde(default)]
+        arguments: Option<Vec<String>>,
+        #[serde(rename = "expectedRevision")]
+        expected_revision: String,
+        #[serde(rename = "newRevision")]
+        new_revision: String,
+        #[serde(rename = "screenOffEnabled")]
+        screen_off_enabled: bool,
+    },
 }
 
 impl Command {
@@ -610,7 +692,8 @@ impl Command {
             | Self::KeyInput { helper_epoch, .. }
             | Self::TextInput { helper_epoch, .. }
             | Self::PhoneTarget { helper_epoch, .. }
-            | Self::SetPreferences { helper_epoch, .. } => helper_epoch.as_deref(),
+            | Self::SetPreferences { helper_epoch, .. }
+            | Self::SetScrcpyArgs { helper_epoch, .. } => helper_epoch.as_deref(),
         }
     }
 
@@ -636,6 +719,9 @@ impl Command {
             }
             | Self::PhoneTarget {
                 session_generation, ..
+            }
+            | Self::SetScrcpyArgs {
+                session_generation, ..
             } => session_generation.as_deref(),
             _ => None,
         }
@@ -651,6 +737,7 @@ impl Command {
                 | Self::KeyInput { .. }
                 | Self::TextInput { .. }
                 | Self::PhoneTarget { .. }
+                | Self::SetScrcpyArgs { .. }
         )
     }
 
@@ -705,6 +792,10 @@ pub enum Event {
         #[serde(rename = "hasTrustedDevice")]
         has_trusted_device: bool,
         preferences: Preferences,
+        #[serde(rename = "scrcpyRevision")]
+        scrcpy_revision: String,
+        #[serde(rename = "screenOffRequested")]
+        screen_off_requested: bool,
     },
     QrWaiting {
         #[serde(rename = "helperEpoch")]
@@ -763,6 +854,8 @@ pub enum Event {
         physical_width_mm: Option<u16>,
         #[serde(rename = "physicalHeightMm", skip_serializing_if = "Option::is_none")]
         physical_height_mm: Option<u16>,
+        #[serde(rename = "screenOffEnabled")]
+        screen_off_enabled: bool,
     },
     SessionEnded {
         #[serde(rename = "helperEpoch")]
@@ -791,6 +884,24 @@ pub enum Event {
         preferences: Preferences,
         #[serde(rename = "sessionRestarted")]
         session_restarted: bool,
+    },
+    ScrcpyArgsUpdated {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
+        revision: String,
+        #[serde(rename = "screenOffEnabled")]
+        screen_off_enabled: bool,
+        #[serde(rename = "sessionRestarted")]
+        session_restarted: bool,
+    },
+    ScrcpyArgsStale {
+        #[serde(rename = "helperEpoch")]
+        helper_epoch: String,
+        #[serde(rename = "sessionGeneration")]
+        session_generation: String,
+        revision: String,
     },
     Failure {
         #[serde(rename = "helperEpoch")]

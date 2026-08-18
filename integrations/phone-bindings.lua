@@ -6,6 +6,29 @@ local SUBMAP_NAME = "omarchy-android"
 local submap_defined = false
 local defining_submap = false
 local request_sequence = 0
+local staged_scrcpy_arguments = nil
+local configuration_committed = false
+local helper_executable = "omarchy-android-helper"
+local reserved_scrcpy_arguments = {
+  ["--serial"] = true,
+  ["--select-usb"] = true,
+  ["--select-tcpip"] = true,
+  ["--tcpip"] = true,
+  ["--video-source"] = true,
+  ["--new-display"] = true,
+  ["--display"] = true,
+  ["--v4l2-sink"] = true,
+  ["--no-video"] = true,
+  ["--no-window"] = true,
+  ["--window"] = true,
+  ["--control"] = true,
+  ["--no-control"] = true,
+  ["--no-cleanup"] = true,
+  ["--no-power-on"] = true,
+  ["--max-size"] = true,
+  ["--video-bit-rate"] = true,
+  ["--max-fps"] = true,
+}
 
 local function fail(message)
   error("omarchy-android: " .. message, 3)
@@ -116,7 +139,7 @@ local function dispatch_target(target)
     tostring(unix_time_ms() + 2000),
     "}",
   })
-  local command = "omarchy-shell ollie.android phone-target "
+  local command = "omarchy-shell ollie.android phoneTarget "
     .. o.shell_quote(base64url(envelope))
   hl.exec_cmd(command)
 end
@@ -126,8 +149,106 @@ local function close_panel()
   hl.exec_cmd("omarchy-shell ollie.android close")
 end
 
+local function validated_scrcpy_arguments(arguments)
+  if type(arguments) ~= "table" then
+    fail("scrcpyArgs must be a list")
+  end
+  local validated = {}
+  local count = 0
+  for key, argument in pairs(arguments) do
+    if type(key) ~= "number" or key < 1 or key ~= math.floor(key)
+        or type(argument) ~= "string" then
+      fail("scrcpyArgs must be a dense string list")
+    end
+    count = count + 1
+    local name = argument:match("^(%-%-[^=]+)")
+    if name == nil or #argument > 512
+        or argument:find("[%z\r\n]")
+        or reserved_scrcpy_arguments[name]
+        or name:match("^%-%-audio") then
+      fail("scrcpy argument is invalid or reserved")
+    end
+    validated[key] = argument
+  end
+  if count ~= #arguments then
+    fail("scrcpyArgs must be a dense string list")
+  end
+  if count > 32 then
+    fail("scrcpyArgs exceeds its limit")
+  end
+  return validated
+end
+
+local function scrcpy_arguments_json(arguments)
+  local encoded = {}
+  for index, argument in ipairs(arguments) do
+    encoded[index] = json_string(argument)
+  end
+  return "[" .. table.concat(encoded, ",") .. "]"
+end
+
+local function configure(configuration)
+  if defining_submap or submap_defined then
+    fail("configure must be called once before define_submap")
+  end
+  if staged_scrcpy_arguments ~= nil then
+    fail("configuration is already staged")
+  end
+  if type(configuration) ~= "table" then
+    fail("configuration must be a table")
+  end
+  local key_count = 0
+  for key in pairs(configuration) do
+    if key ~= "scrcpyArgs" then
+      fail("unknown configuration key")
+    end
+    key_count = key_count + 1
+  end
+  if key_count ~= 1 then
+    fail("scrcpyArgs is required")
+  end
+  staged_scrcpy_arguments = validated_scrcpy_arguments(configuration.scrcpyArgs)
+end
+
+local function commit_configuration()
+  if defining_submap or not submap_defined or staged_scrcpy_arguments == nil
+      or configuration_committed then
+    fail("commitConfiguration must be called once after define_submap")
+  end
+  local arguments_json = scrcpy_arguments_json(staged_scrcpy_arguments)
+  local process = io.popen(
+    o.shell_quote(helper_executable)
+      .. " store-scrcpy-args "
+      .. o.shell_quote(base64url(arguments_json)),
+    "r"
+  )
+  if process == nil then
+    fail("unable to start configuration helper")
+  end
+  local revision = process:read("*l")
+  local closed, _, exit_code = process:close()
+  -- Hyprland owns SIGCHLD and may reap the helper before Lua closes the pipe.
+  if not closed and exit_code ~= 10 then
+    fail("configuration helper failed")
+  end
+  if type(revision) ~= "string"
+      or not revision:match("^[0-9a-f]+$") or #revision ~= 16 then
+    fail("configuration helper returned an invalid revision")
+  end
+  configuration_committed = true
+  hl.exec_cmd(
+    "omarchy-shell ollie.android configureScrcpy "
+      .. o.shell_quote(revision)
+      .. " "
+      .. o.shell_quote(base64url(arguments_json))
+  )
+  return revision
+end
+
 local api = {
   close_panel = close_panel,
+  configure = configure,
+  commitConfiguration = commit_configuration,
 }
 
 function api.bind(keys, description, target)

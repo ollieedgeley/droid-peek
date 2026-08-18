@@ -4,7 +4,7 @@ use nix::{
     unistd,
 };
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs::{self, File, Metadata, OpenOptions},
     io::{self, Read},
     os::unix::{
@@ -178,6 +178,8 @@ pub trait SessionRunner {
     ) -> Result<SessionExit, SessionFailure>;
 
     fn set_quality(&mut self, _quality: VideoQuality) {}
+
+    fn set_scrcpy_arguments(&mut self, _arguments: Vec<String>) {}
 }
 
 impl<T> SessionRunner for Box<T>
@@ -195,6 +197,10 @@ where
 
     fn set_quality(&mut self, quality: VideoQuality) {
         (**self).set_quality(quality);
+    }
+
+    fn set_scrcpy_arguments(&mut self, arguments: Vec<String>) {
+        (**self).set_scrcpy_arguments(arguments);
     }
 }
 
@@ -285,6 +291,7 @@ pub struct ScrcpySessionRunner {
     v4l2_sink: PathBuf,
     poll_interval: Duration,
     quality: VideoQuality,
+    scrcpy_arguments: Vec<OsString>,
     display_probe: Box<dyn PhysicalDisplayProbe + Send>,
     readiness_path: Option<PathBuf>,
     validate_production_identity: bool,
@@ -337,6 +344,7 @@ impl ScrcpySessionRunner {
             v4l2_sink: v4l2_sink.as_ref().to_owned(),
             poll_interval,
             quality: VideoQuality::default(),
+            scrcpy_arguments: Vec::new(),
             readiness_path: validate_production_identity
                 .then(|| Path::new(PRODUCTION_V4L2_SYSFS).join("state")),
             display_probe: Box::new(AdbPhysicalDisplayProbe::new("adb", poll_interval)),
@@ -358,6 +366,10 @@ impl ScrcpySessionRunner {
 
     pub fn set_quality(&mut self, quality: VideoQuality) {
         self.quality = quality;
+    }
+
+    pub fn set_scrcpy_arguments(&mut self, arguments: Vec<String>) {
+        self.scrcpy_arguments = arguments.into_iter().map(OsString::from).collect();
     }
 
     fn open_capture_sink(&self) -> io::Result<File> {
@@ -405,6 +417,14 @@ impl ScrcpySessionRunner {
 }
 
 impl SessionRunner for ScrcpySessionRunner {
+    fn set_quality(&mut self, quality: VideoQuality) {
+        ScrcpySessionRunner::set_quality(self, quality);
+    }
+
+    fn set_scrcpy_arguments(&mut self, arguments: Vec<String>) {
+        ScrcpySessionRunner::set_scrcpy_arguments(self, arguments);
+    }
+
     fn run(
         &mut self,
         target: &str,
@@ -423,17 +443,26 @@ impl SessionRunner for ScrcpySessionRunner {
             VideoQuality::Medium => ["1080", "8M", "60"],
             VideoQuality::High => ["0", "16M", "60"],
         };
+        let requires_control = self.scrcpy_arguments.iter().any(|argument| {
+            argument == OsStr::new("--keep-active")
+                || argument == OsStr::new("--stay-awake")
+                || argument == OsStr::new("--turn-screen-off")
+        });
         let mut command = Command::new(&self.executable);
-        let mut child = command
+        command
             .args(&self.argument_prefix)
             .arg(format!("--serial={target}"))
             .arg("--no-window")
-            .arg("--no-audio")
-            .arg("--no-control")
+            .arg("--no-audio");
+        if !requires_control {
+            command.arg("--no-control");
+        }
+        let mut child = command
             .arg(format!("--v4l2-sink={}", self.v4l2_sink.display()))
             .arg(format!("--max-size={max_size}"))
             .arg(format!("--video-bit-rate={bit_rate}"))
             .arg(format!("--max-fps={max_fps}"))
+            .args(&self.scrcpy_arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

@@ -61,7 +61,13 @@ TestCase {
                 value.sessionGeneration = "0"
             if (value.preferences === undefined)
                 value.preferences = defaultPreferences()
+            if (value.scrcpyRevision === undefined)
+                value.scrcpyRevision = "cbf29ce484222325"
+            if (value.screenOffRequested === undefined)
+                value.screenOffRequested = false
         }
+        if (type === "session-started" && value.screenOffEnabled === undefined)
+            value.screenOffEnabled = false
         return JSON.stringify(value)
     }
 
@@ -516,5 +522,151 @@ TestCase {
         compare(state.sendSemanticAction, undefined)
         compare(state.semanticActionCompleted, undefined)
         compare(state.commandPassthrough, undefined)
+    }
+    function test_scrcpy_configuration_is_reconciled_and_restart_is_admitted() {
+        verify(state.setScrcpyConfiguration(
+                   "0123456789abcdef",
+                   ["--keep-active", "--stay-awake"]))
+        compare(commandSpy.count, 0)
+
+        state.receiveLine(event("ready", {
+            hasTrustedDevice: true,
+            scrcpyRevision: "cbf29ce484222325",
+            screenOffRequested: false
+        }))
+        compare(commandSpy.count, 2)
+        compare(commandAt(0), {
+            version: 11,
+            type: "set-scrcpy-args",
+            helperEpoch: "17",
+            sessionGeneration: "0",
+            arguments: ["--keep-active", "--stay-awake"],
+            expectedRevision: "cbf29ce484222325",
+            newRevision: "0123456789abcdef",
+            screenOffEnabled: false
+        })
+        compare(commandAt(1).type, "reconnect-trusted-device")
+
+        state.receiveLine(event("scrcpy-args-updated", {
+            sessionGeneration: "0",
+            revision: "0123456789abcdef",
+            screenOffEnabled: false,
+            sessionRestarted: false
+        }))
+        compare(state.appliedScrcpyRevision, "0123456789abcdef")
+        compare(state.effectiveScreenOff, false)
+        compare(state.sessionGeneration, "0")
+        compare(state.sessionStarted, false)
+    }
+
+    function test_first_valid_frame_enables_screen_off_at_most_once_per_generation() {
+        verify(state.setScrcpyConfiguration(
+                   "0123456789abcdef",
+                   ["--turn-screen-off"]))
+        state.receiveLine(event("ready", {
+            hasTrustedDevice: true,
+            scrcpyRevision: "0123456789abcdef",
+            screenOffRequested: true
+        }))
+        state.receiveLine(event("connecting", { sessionGeneration: "1" }))
+        state.receiveLine(event("connected", { sessionGeneration: "1" }))
+        state.receiveLine(event("session-starting", { sessionGeneration: "1" }))
+        state.receiveLine(event("session-started", {
+            sessionGeneration: "1",
+            screenOffEnabled: false
+        }))
+        commandSpy.clear()
+
+        verify(state.requestScreenOffAfterPreview("17", "1"))
+        compare(commandSpy.count, 1)
+        compare(commandAt(0), {
+            version: 11,
+            type: "set-scrcpy-args",
+            helperEpoch: "17",
+            sessionGeneration: "1",
+            arguments: ["--turn-screen-off"],
+            expectedRevision: "0123456789abcdef",
+            newRevision: "0123456789abcdef",
+            screenOffEnabled: true
+        })
+        verify(!state.requestScreenOffAfterPreview("17", "1"))
+        compare(commandSpy.count, 1)
+
+        state.receiveLine(event("scrcpy-args-updated", {
+            sessionGeneration: "2",
+            revision: "0123456789abcdef",
+            screenOffEnabled: true,
+            sessionRestarted: true
+        }))
+        state.receiveLine(event("session-started", {
+            sessionGeneration: "2",
+            screenOffEnabled: true
+        }))
+        compare(state.effectiveScreenOff, true)
+        verify(!state.requestScreenOffAfterPreview("17", "2"))
+        compare(commandSpy.count, 1)
+    }
+
+
+    function test_stale_scrcpy_update_retries_current_desired_revision_once() {
+        state.receiveLine(event("ready", {
+            hasTrustedDevice: true,
+            scrcpyRevision: "cbf29ce484222325",
+            screenOffRequested: false
+        }))
+        commandSpy.clear()
+        verify(state.setScrcpyConfiguration(
+                   "0123456789abcdef",
+                   ["--keep-active"]))
+        compare(commandSpy.count, 1)
+
+        state.receiveLine(event("scrcpy-args-stale", {
+            sessionGeneration: "1",
+            revision: "cbf29ce484222325"
+        }))
+        compare(state.sessionGeneration, "1")
+        compare(commandSpy.count, 2)
+        compare(commandAt(1), {
+            version: 11,
+            type: "set-scrcpy-args",
+            helperEpoch: "17",
+            sessionGeneration: "1",
+            arguments: ["--keep-active"],
+            expectedRevision: "cbf29ce484222325",
+            newRevision: "0123456789abcdef",
+            screenOffEnabled: false
+        })
+
+        state.receiveLine(event("scrcpy-args-stale", {
+            sessionGeneration: "1",
+            revision: "cbf29ce484222325"
+        }))
+        compare(commandSpy.count, 2)
+    }
+    function test_replayed_snapshot_can_enable_screen_off_without_raw_arguments() {
+        state.receiveLine(event("ready", {
+            hasTrustedDevice: true,
+            scrcpyRevision: "0123456789abcdef",
+            screenOffRequested: true
+        }))
+        state.receiveLine(event("connecting", { sessionGeneration: "1" }))
+        state.receiveLine(event("connected", { sessionGeneration: "1" }))
+        state.receiveLine(event("session-starting", { sessionGeneration: "1" }))
+        state.receiveLine(event("session-started", {
+            sessionGeneration: "1",
+            screenOffEnabled: false
+        }))
+        commandSpy.clear()
+
+        verify(state.requestScreenOffAfterPreview("17", "1"))
+        compare(commandAt(0), {
+            version: 11,
+            type: "set-scrcpy-args",
+            helperEpoch: "17",
+            sessionGeneration: "1",
+            expectedRevision: "0123456789abcdef",
+            newRevision: "0123456789abcdef",
+            screenOffEnabled: true
+        })
     }
 }

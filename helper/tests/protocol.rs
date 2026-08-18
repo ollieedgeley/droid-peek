@@ -5,6 +5,7 @@ use omarchy_android_helper::protocol::{
     ActionFailureCode, Event, FailureReason, PROTOCOL_VERSION, PairingBackend,
     PairingRequestFailure, PhoneTargetFailure, ProtocolEngine, QrPresentation,
 };
+use omarchy_android_helper::scrcpy_config::ScrcpyConfiguration;
 
 const HELPER_EPOCH: &str = "73001";
 
@@ -31,6 +32,8 @@ struct FakePairingBackend {
     phone_targets: Vec<(PhoneTarget, String, u64)>,
     phone_target_failure: Option<PhoneTargetFailure>,
     preference_updates: Vec<Preferences>,
+    scrcpy_updates: Vec<(ScrcpyConfiguration, bool)>,
+    scrcpy_configuration: ScrcpyConfiguration,
 }
 
 impl PairingBackend for FakePairingBackend {
@@ -132,6 +135,22 @@ impl PairingBackend for FakePairingBackend {
         }
         Ok(restarted)
     }
+
+    fn scrcpy_configuration(&self) -> ScrcpyConfiguration {
+        self.scrcpy_configuration.clone()
+    }
+
+    fn set_scrcpy_configuration(
+        &mut self,
+        configuration: ScrcpyConfiguration,
+        screen_off_enabled: bool,
+    ) -> Result<bool, FailureReason> {
+        self.scrcpy_updates
+            .push((configuration.clone(), screen_off_enabled));
+        self.scrcpy_configuration = configuration;
+        self.session_generation += 1;
+        Ok(true)
+    }
 }
 
 #[test]
@@ -165,9 +184,11 @@ fn protocol_version_eleven_ready_establishes_epoch_and_generation_zero() {
                     QuickAction::Back,
                 ],
             },
+            scrcpy_revision: "cbf29ce484222325".to_owned(),
+            screen_off_requested: false,
         }
         .to_line(),
-        r#"{"version":11,"type":"ready","helperEpoch":"73001","sessionGeneration":"0","hasTrustedDevice":true,"preferences":{"keepConnected":true,"androidModeShortcuts":true,"previewScale":125,"videoQuality":"low","quickActions":["home","recent-apps","back"]}}"#
+        r#"{"version":11,"type":"ready","helperEpoch":"73001","sessionGeneration":"0","hasTrustedDevice":true,"preferences":{"keepConnected":true,"androidModeShortcuts":true,"previewScale":125,"videoQuality":"low","quickActions":["home","recent-apps","back"]},"scrcpyRevision":"cbf29ce484222325","screenOffRequested":false}"#
     );
 }
 
@@ -178,6 +199,8 @@ fn replacement_helper_uses_a_new_epoch_and_resets_its_generation_baseline() {
         session_generation: "0".to_owned(),
         has_trusted_device: true,
         preferences: Preferences::default(),
+        scrcpy_revision: "cbf29ce484222325".to_owned(),
+        screen_off_requested: false,
     };
 
     let first: serde_json::Value =
@@ -509,8 +532,103 @@ fn session_started_reports_two_part_identity_and_bounded_dimensions() {
             session_generation: "9".to_owned(),
             physical_width_mm: Some(70),
             physical_height_mm: Some(157),
+            screen_off_enabled: false,
         }
         .to_line(),
-        r#"{"version":11,"type":"session-started","helperEpoch":"73001","sessionGeneration":"9","physicalWidthMm":70,"physicalHeightMm":157}"#
+        r#"{"version":11,"type":"session-started","helperEpoch":"73001","sessionGeneration":"9","physicalWidthMm":70,"physicalHeightMm":157,"screenOffEnabled":false}"#
     );
+}
+
+#[test]
+fn applies_validated_scrcpy_arguments_and_rejects_revision_mismatch() {
+    let configuration = ScrcpyConfiguration::validated(vec![
+        "--keep-active".to_owned(),
+        "--turn-screen-off".to_owned(),
+    ])
+    .expect("valid configuration");
+    let command = format!(
+        r#"{{"version":11,"type":"set-scrcpy-args","helperEpoch":"{HELPER_EPOCH}","sessionGeneration":"0","arguments":["--keep-active","--turn-screen-off"],"expectedRevision":"cbf29ce484222325","newRevision":"{}","screenOffEnabled":false}}"#,
+        configuration.revision()
+    );
+    let mut valid_engine = engine(FakePairingBackend::default());
+
+    assert_eq!(
+        wire_lines(valid_engine.handle_line(&command)),
+        vec![format!(
+            r#"{{"version":11,"type":"scrcpy-args-updated","helperEpoch":"{HELPER_EPOCH}","sessionGeneration":"1","revision":"{}","screenOffEnabled":false,"sessionRestarted":true}}"#,
+            configuration.revision()
+        )]
+    );
+    assert_eq!(
+        valid_engine.into_backend().scrcpy_updates,
+        vec![(configuration, false)]
+    );
+
+    let mut invalid_engine = engine(FakePairingBackend::default());
+    assert_eq!(
+        wire_lines(invalid_engine.handle_line(
+            r#"{"version":11,"type":"set-scrcpy-args","helperEpoch":"73001","sessionGeneration":"0","arguments":["--keep-active"],"expectedRevision":"cbf29ce484222325","newRevision":"forged","screenOffEnabled":false}"#
+        )),
+        vec![format!(
+            r#"{{"version":11,"type":"protocol-error","helperEpoch":"{HELPER_EPOCH}","reason":"invalid-command"}}"#
+        )]
+    );
+    assert!(invalid_engine.into_backend().scrcpy_updates.is_empty());
+}
+
+#[test]
+fn replayed_configuration_enables_screen_off_without_exposing_raw_arguments() {
+    let configuration = ScrcpyConfiguration::validated(vec![
+        "--keep-active".to_owned(),
+        "--turn-screen-off".to_owned(),
+    ])
+    .expect("valid configuration");
+    let mut protocol = engine(FakePairingBackend {
+        session_generation: 1,
+        scrcpy_configuration: configuration.clone(),
+        ..FakePairingBackend::default()
+    });
+    let command = format!(
+        r#"{{"version":11,"type":"set-scrcpy-args","helperEpoch":"{HELPER_EPOCH}","sessionGeneration":"1","expectedRevision":"{0}","newRevision":"{0}","screenOffEnabled":true}}"#,
+        configuration.revision()
+    );
+
+    assert_eq!(
+        wire_lines(protocol.handle_line(&command)),
+        vec![format!(
+            r#"{{"version":11,"type":"scrcpy-args-updated","helperEpoch":"{HELPER_EPOCH}","sessionGeneration":"2","revision":"{}","screenOffEnabled":true,"sessionRestarted":true}}"#,
+            configuration.revision()
+        )]
+    );
+    assert_eq!(
+        protocol.into_backend().scrcpy_updates,
+        vec![(configuration, true)]
+    );
+}
+
+#[test]
+fn stale_scrcpy_update_returns_current_revision_and_generation_without_backend_work() {
+    let current =
+        ScrcpyConfiguration::validated(vec!["--keep-active".to_owned()]).expect("current config");
+    let desired =
+        ScrcpyConfiguration::validated(vec!["--stay-awake".to_owned()]).expect("desired config");
+    let mut protocol = engine(FakePairingBackend {
+        session_generation: 3,
+        scrcpy_configuration: current.clone(),
+        ..FakePairingBackend::default()
+    });
+    let command = format!(
+        r#"{{"version":11,"type":"set-scrcpy-args","helperEpoch":"{HELPER_EPOCH}","sessionGeneration":"2","arguments":["--stay-awake"],"expectedRevision":"{}","newRevision":"{}","screenOffEnabled":false}}"#,
+        current.revision(),
+        desired.revision()
+    );
+
+    assert_eq!(
+        wire_lines(protocol.handle_line(&command)),
+        vec![format!(
+            r#"{{"version":11,"type":"scrcpy-args-stale","helperEpoch":"{HELPER_EPOCH}","sessionGeneration":"3","revision":"{}"}}"#,
+            current.revision()
+        )]
+    );
+    assert!(protocol.into_backend().scrcpy_updates.is_empty());
 }

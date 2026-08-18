@@ -414,8 +414,7 @@ impl SessionRunner for ScrcpySessionRunner {
         if cancellation.is_cancelled() {
             return Ok(SessionExit::Stopped);
         }
-        let _validated_sink = self
-            .open_capture_sink()
+        self.open_capture_sink()
             .map_err(|_| SessionFailure::DependencyUnavailable)?;
         let physical_display = self.display_probe.probe(target, cancellation);
 

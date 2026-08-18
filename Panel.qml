@@ -287,17 +287,10 @@ Panel {
         id: submapController
         applicationState: root.applicationState
         androidModeShortcuts: pairingState.androidModeShortcuts
-        onSubmapCommandRequested: function (submap) {
-            if (submap !== "omarchy-android" && submap !== "reset") {
-                submapController.dispatchFailed();
-                pairingState.localIntegrationFailure();
-                return;
-            }
+        onSubmapCommandRequested: function (command, submap) {
             submapProcess.running = false;
             submapProcess.dispatchedSubmap = submap;
-            submapProcess.command = [
-                "hyprctl", "dispatch", "submap", submap
-            ];
+            submapProcess.command = command;
             submapProcess.running = true;
         }
         onPanelCloseRequested: root.close()
@@ -350,8 +343,8 @@ Panel {
         stdinEnabled: true
         running: false
         stdout: SplitParser {
-            onRead: function (line) {
-                pairingState.receiveLine(line);
+            onRead: function (data) {
+                pairingState.receiveLine(data);
             }
         }
         onRunningChanged: {
@@ -439,8 +432,7 @@ Panel {
                 }
 
                 Rectangle {
-                    visible: root.applicationState === "interactive"
-                             && !root.managementOpen
+                    visible: applicationStateModel.captureSurfaceRequired
                     width: parent.width
                     height: root.desiredPreviewHeight(
                                 panel.availableCardHeight)
@@ -455,7 +447,8 @@ Panel {
                                    panel.availableCardHeight).width
                         height: root.desiredViewportSize(
                                     panel.availableCardHeight).height
-                        active: root.opened && pairingState.sessionStarted
+                        active: root.opened
+                                && pairingState.sessionStarted
                         source: Qt.resolvedUrl(
                                     "qml/components/PhonePreview.qml")
                         onLoaded: {

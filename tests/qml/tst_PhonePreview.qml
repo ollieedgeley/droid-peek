@@ -21,6 +21,7 @@ TestCase {
         helperEpoch: "17"
         sessionGeneration: "1"
         applicationState: "closed"
+        videoInputs: []
     }
 
     SignalSpy {
@@ -93,6 +94,24 @@ TestCase {
                                         preview.deviceDescription), -1)
     }
 
+    function test_capture_identity_normalizes_qml_camera_ids() {
+        var cameraId = {
+            toString: function () {
+                return preview.deviceId
+            }
+        }
+        var inputs = [
+            { id: cameraId, description: preview.deviceDescription }
+        ]
+
+        compare(preview.findDeviceIndex(inputs, preview.deviceId,
+                                        preview.deviceDescription), 0)
+        inputs.push({ id: preview.deviceId,
+                      description: preview.deviceDescription })
+        compare(preview.findDeviceIndex(inputs, preview.deviceId,
+                                        preview.deviceDescription), -1)
+    }
+
     function test_capture_is_off_until_requested() {
         compare(preview.active, false)
         compare(preview.firstValidFrameReceived, false)
@@ -106,7 +125,8 @@ TestCase {
         verify(preview.acceptCaptureSource(
                    oldCaptureEpoch, "17", "1",
                    preview.deviceId, preview.deviceDescription))
-        verify(preview.acceptRenderedFrame(oldCaptureEpoch, "17", "1"))
+        verify(preview.acceptRenderedFrame(
+                   oldCaptureEpoch, "17", "1", 1080, 2392))
         compare(preview.firstValidFrameReceived, true)
 
         preview.sessionGeneration = "2"
@@ -134,13 +154,13 @@ TestCase {
                    currentCaptureEpoch, "17", "1",
                    preview.deviceId, preview.deviceDescription))
         verify(!preview.acceptRenderedFrame(
-                   currentCaptureEpoch, "17", "1"))
+                   currentCaptureEpoch, "17", "1", 1080, 2392))
         compare(preview.firstValidFrameReceived, false)
         verify(preview.acceptCaptureSource(
                    currentCaptureEpoch, "17", "2",
                    preview.deviceId, preview.deviceDescription))
         verify(preview.acceptRenderedFrame(
-                   currentCaptureEpoch, "17", "2"))
+                   currentCaptureEpoch, "17", "2", 1080, 2392))
         compare(preview.firstValidFrameReceived, true)
     }
 
@@ -155,7 +175,21 @@ TestCase {
                    currentCaptureEpoch, "17", "1",
                    "/dev/video41", preview.deviceDescription))
         verify(!preview.acceptRenderedFrame(
-                   currentCaptureEpoch, "17", "1"))
+                   currentCaptureEpoch, "17", "1", 1080, 2392))
+        compare(preview.firstValidFrameReceived, false)
+    }
+
+    function test_zero_sized_frame_is_not_capture_ready() {
+        preview.captureRequested = true
+        var currentCaptureEpoch = preview.captureEpoch
+        verify(preview.acceptCaptureSource(
+                   currentCaptureEpoch, "17", "1",
+                   preview.deviceId, preview.deviceDescription))
+
+        verify(!preview.acceptRenderedFrame(
+                   currentCaptureEpoch, "17", "1", 0, 2392))
+        verify(!preview.acceptRenderedFrame(
+                   currentCaptureEpoch, "17", "1", 1080, 0))
         compare(preview.firstValidFrameReceived, false)
     }
 
@@ -166,7 +200,7 @@ TestCase {
                    currentCaptureEpoch, "17", "1",
                    preview.deviceId, preview.deviceDescription))
         verify(preview.acceptRenderedFrame(
-                   currentCaptureEpoch, "17", "1"))
+                   currentCaptureEpoch, "17", "1", 1080, 2392))
 
         preview.captureRequested = false
 

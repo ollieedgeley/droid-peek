@@ -56,3 +56,14 @@ for file in scripts/*; do
     exit 1
   fi
 done
+
+old_submap_dispatch='hyprctl([^[:alnum:]_-]+)dispatch([^[:alnum:]_-]+)'
+old_submap_dispatch+='submap([^[:alnum:]_-]+)'
+for file in ./*.qml qml/**/*.qml integrations/*.lua scripts/*; do
+  [[ -f "$file" ]] || continue
+  content="$(<"$file")"
+  if [[ "$content" =~ $old_submap_dispatch ]]; then
+    printf 'obsolete executable Hyprland submap dispatch: %s\n' "$file" >&2
+    exit 1
+  fi
+done

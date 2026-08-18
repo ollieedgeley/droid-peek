@@ -14,6 +14,7 @@ Item {
     property string applicationState: "closed"
     readonly property string deviceId: "/dev/video42"
     readonly property string deviceDescription: "Omarchy Android"
+    property var videoInputs: mediaDevices.videoInputs
     readonly property var popupPalette: Color.popups
     property color foreground: popupPalette.text
     property color background: popupPalette.background
@@ -22,9 +23,8 @@ Item {
     property int captureEpoch: 0
     readonly property var capturePipeline: captureLoader.item
     readonly property int deviceIndex: findDeviceIndex(
-                                                   mediaDevices.videoInputs,
-                                                   deviceId,
-                                                   deviceDescription)
+                                           videoInputs, deviceId,
+                                           deviceDescription)
     readonly property bool deviceAvailable: deviceIndex >= 0
     readonly property bool captureAvailable: deviceAvailable
                                                 && captureSourceAcknowledged
@@ -64,11 +64,16 @@ Item {
     clip: true
     activeFocusOnTab: inputActive
 
+    function cameraIdString(value) {
+        return String(value);
+    }
+
+
     function findDeviceIndex(inputs, id, description) {
         var matchIndex = -1;
         var idMatches = 0;
         for (var index = 0; index < inputs.length; ++index) {
-            if (inputs[index].id !== id)
+            if (cameraIdString(inputs[index].id) !== id)
                 continue;
             ++idMatches;
             if (inputs[index].description === description)
@@ -210,11 +215,12 @@ Item {
     }
 
     function acceptRenderedFrame(epoch, eventHelperEpoch,
-                                 eventSessionGeneration) {
+                                 eventSessionGeneration, width, height) {
         if (epoch !== captureEpoch
                 || eventHelperEpoch !== helperEpoch
                 || eventSessionGeneration !== sessionGeneration
-                || !captureRequested || !captureSourceAcknowledged)
+                || !captureRequested || !captureSourceAcknowledged
+                || width <= 0 || height <= 0)
             return false;
         firstValidFrameReceived = true;
         return true;
@@ -254,6 +260,19 @@ Item {
         id: mediaDevices
     }
 
+    // The shell may cache the loopback's pre-producer format. Reopen the
+    // camera once after scrcpy has negotiated the live sink format.
+    Timer {
+        interval: 750
+        repeat: false
+        running: root.captureRequested && root.deviceAvailable
+                 && !root.firstValidFrameReceived
+        onTriggered: root.recreateCapturePipeline()
+    }
+
+
+
+
     Component {
         id: capturePipelineComponent
 
@@ -265,7 +284,8 @@ Item {
             property bool initialized: false
             readonly property bool cameraActive: camera.active
             readonly property rect contentRect: videoOutput.contentRect
-            readonly property string sourceDeviceId: String(camera.cameraDevice.id)
+            readonly property string sourceDeviceId:
+                root.cameraIdString(camera.cameraDevice.id)
             readonly property string sourceDeviceDescription:
                 camera.cameraDevice.description
             readonly property rect sourceRect: videoOutput.sourceRect
@@ -273,7 +293,7 @@ Item {
             Camera {
                 id: camera
                 cameraDevice: root.deviceAvailable
-                              ? mediaDevices.videoInputs[root.deviceIndex]
+                              ? root.videoInputs[root.deviceIndex]
                               : mediaDevices.defaultVideoInput
                 active: pipeline.initialized && root.captureRequested
                         && root.deviceAvailable
@@ -308,17 +328,12 @@ Item {
                 id: videoOutput
                 anchors.fill: parent
                 fillMode: VideoOutput.PreserveAspectFit
-            }
-
-            Connections {
-                target: videoOutput.videoSink
-                function onVideoFrameChanged(frame) {
-                    if (frame.isValid())
-                        root.acceptRenderedFrame(
-                                    pipeline.epoch,
-                                    pipeline.helperEpochSnapshot,
-                                    pipeline.sessionGenerationSnapshot);
-                }
+                onSourceRectChanged: root.acceptRenderedFrame(
+                                         pipeline.epoch,
+                                         pipeline.helperEpochSnapshot,
+                                         pipeline.sessionGenerationSnapshot,
+                                         sourceRect.width,
+                                         sourceRect.height)
             }
         }
     }

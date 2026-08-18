@@ -84,6 +84,28 @@ fn scrcpy_uses_a_private_headless_v4l2_command() {
 }
 
 #[test]
+fn scrcpy_starts_after_the_validation_handle_is_closed() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
+    let directory = tempdir().expect("temporary directory");
+    let sink = writable_sink(directory.path());
+    let executable = fake_executable(
+        directory.path(),
+        &format!(
+            "for fd in /proc/$PPID/fd/*; do\n    if [ \"$fd\" -ef '{}' ]; then\n        exit 42\n    fi\ndone\nexit 0",
+            sink.display()
+        ),
+    );
+    let mut runner =
+        ScrcpySessionRunner::new_with_test_sink(executable, &sink, Duration::from_millis(2))
+            .with_display_probe(NoDisplayProbe);
+
+    assert_eq!(
+        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {}),
+        Ok(SessionExit::Ended)
+    );
+}
+
+#[test]
 fn scrcpy_applies_the_selected_video_quality_profile() {
     let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
     let expected = [

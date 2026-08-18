@@ -71,6 +71,12 @@ TestCase {
 
         compare(state.applicationState, "recovering")
         compare(state.activity, "starting-preview")
+        compare(state.captureSurfaceRequired, true)
+        state.managementOpen = true
+        compare(state.captureSurfaceRequired, false)
+        state.managementOpen = false
+        state.panelOpen = false
+        compare(state.captureSurfaceRequired, false)
     }
 
     function test_every_preview_fact_is_required_for_interactive_data() {

@@ -19,6 +19,9 @@ QtObject {
     property bool factsExternallyManaged: false
     property string helperActivity: ""
     property string helperReason: ""
+    readonly property bool captureSurfaceRequired: panelOpen
+                                                    && !managementOpen
+                                                    && sessionStarted
 
     readonly property bool previewUsable: helperReady
                                                   && sessionStarted

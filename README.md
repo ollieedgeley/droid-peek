@@ -59,8 +59,13 @@ required for the complete developer check.
 ```bash
 omarchy pkg add android-tools avahi scrcpy qt6-multimedia v4l2loopback-dkms
 sudo systemctl enable --now avahi-daemon.service
-sudo modprobe v4l2loopback devices=1 video_nr=42 card_label="Omarchy Android" exclusive_caps=1
+sudo modprobe v4l2loopback devices=1 video_nr=42 card_label="Omarchy Android" exclusive_caps=0
 ```
+
+`exclusive_caps=0` is required for the long-running Quickshell process. The
+shell can initialize Qt Multimedia before scrcpy starts; output-only
+advertisement hides the loopback from that process for the rest of its
+lifetime.
 
 The module load lasts until reboot. The plugin does not write `modules-load.d`
 or `modprobe.d` configuration. If `v4l2-ctl` is already available, inspect the

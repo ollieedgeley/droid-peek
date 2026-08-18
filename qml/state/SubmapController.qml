@@ -12,18 +12,35 @@ QtObject {
                                                 ? "omarchy-android"
                                                 : "reset"
 
-    signal submapCommandRequested(string submap)
+    signal submapCommandRequested(var command, string submap)
     signal panelCloseRequested()
+
+    function commandForSubmap(submap) {
+        if (submap === "reset")
+            return ["hyprctl", "dispatch", 'hl.dsp.submap("reset")'];
+        if (submap === "omarchy-android")
+            return ["hyprctl", "dispatch",
+                    'hl.dsp.submap("omarchy-android")'];
+        return null;
+    }
+
+    function requestSubmap(submap) {
+        var command = commandForSubmap(submap);
+        if (command === null)
+            return false;
+        submapCommandRequested(command, submap);
+        return true;
+    }
 
     function dispatchDesiredState() {
         if (desiredSubmap === lastDispatchedSubmap)
             return;
-        lastDispatchedSubmap = desiredSubmap;
-        submapCommandRequested(desiredSubmap);
+        if (requestSubmap(desiredSubmap))
+            lastDispatchedSubmap = desiredSubmap;
     }
 
     function forceReset() {
-        submapCommandRequested("reset");
+        requestSubmap("reset");
         lastDispatchedSubmap = "";
     }
 
@@ -31,7 +48,7 @@ QtObject {
         lastDispatchedSubmap = "reset";
         applicationState = "closed";
         androidModeShortcuts = true;
-        submapCommandRequested("reset");
+        requestSubmap("reset");
     }
 
     function closePanel() {

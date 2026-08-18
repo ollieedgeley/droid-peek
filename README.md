@@ -354,10 +354,27 @@ From the repository root, run:
 ```
 
 The script validates the manifest, exercises the shell dispatcher and Lua
-integration, lints QML through a temporary Omarchy import map, runs Qt Quick
-Tests, and runs Rust format, Clippy-with-warnings-denied, and test checks. Its
-automated tests use fake ADB, scrcpy, and mDNS boundaries; they do not pair,
-connect to, or alter a real phone.
+integration, checks the cross-language action and protocol contracts, runs the
+tested ast-grep ownership rules, lints QML through a temporary Omarchy import
+map, runs Qt Quick Tests, and runs Rust format, Clippy-with-warnings-denied, and
+nextest checks. It requires the Omarchy Qt 6 environment, Lua, `ast-grep`, and
+`cargo-nextest`. Its automated tests use fake ADB, scrcpy, and mDNS boundaries;
+they do not pair, connect to, or alter a real phone.
+
+Run the slower focused coverage and online dependency gates separately:
+
+```bash
+./scripts/check-coverage.sh
+./scripts/check-supply-chain.sh
+```
+
+Coverage requires `cargo-llvm-cov`, `llvm-cov`, `llvm-profdata`, and `jq`. It
+enforces measured line-coverage floors only for action results and resolution,
+input validation, pairing, protocol, persistence, preferences, and runtime
+deadline contracts. The supply-chain gate requires `cargo-deny` and
+`cargo-audit`; it denies known advisories, yanked crates, wildcard dependencies,
+unapproved licenses, and unknown registries or Git sources. These network-backed
+checks are intentionally separate from the deterministic local gate.
 
 ### Real-phone acceptance
 

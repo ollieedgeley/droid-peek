@@ -360,6 +360,7 @@ mod tests {
         let directory = tempdir().expect("temporary directory");
         let arguments_path = directory.path().join("arguments");
         let executable = directory.path().join("fake-adb");
+        // ast-grep-ignore: rust-private-write-owner -- test fixture, not durable state
         fs::write(
             &executable,
             format!(

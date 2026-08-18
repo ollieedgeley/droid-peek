@@ -511,6 +511,10 @@ pub enum Event {
 
 impl Event {
     #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "the closed Event enum contains no fallible custom serializers"
+    )]
     pub fn to_line(&self) -> String {
         serde_json::to_string(&EventEnvelope {
             version: PROTOCOL_VERSION,

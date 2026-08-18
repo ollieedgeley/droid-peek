@@ -1,3 +1,7 @@
+#![forbid(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::expect_used, clippy::unwrap_used))]
+#![deny(clippy::todo, clippy::unimplemented)]
+
 //! Pure, testable contracts for the Omarchy Android local helper.
 //!
 //! Process execution, mDNS discovery, persistence, and device input are added

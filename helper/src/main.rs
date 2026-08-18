@@ -1,3 +1,7 @@
+#![forbid(unsafe_code)]
+#![deny(clippy::expect_used, clippy::unwrap_used)]
+#![deny(clippy::todo, clippy::unimplemented)]
+
 use std::{
     env,
     fs::File,

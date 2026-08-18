@@ -578,7 +578,7 @@ where
                 if let Some(event) = terminal_event {
                     let _ = sink.emit_event(&event);
                 }
-                if starts_session {
+                if starts_session && let Some(connected_target) = connected_target {
                     Self::spawn_session(
                         session,
                         session_generation,
@@ -586,7 +586,7 @@ where
                         session_cancellation,
                         sink,
                         active_target,
-                        connected_target.expect("paired flow has a connection target"),
+                        connected_target,
                     );
                 }
             }
@@ -669,7 +669,7 @@ where
                 if let Some(event) = terminal_event {
                     let _ = sink.emit_event(&event);
                 }
-                if starts_session {
+                if starts_session && let Some(connected_target) = connected_target {
                     Self::spawn_session(
                         session,
                         session_generation,
@@ -677,7 +677,7 @@ where
                         session_cancellation,
                         sink,
                         active_target,
-                        connected_target.expect("reconnect has a connection target"),
+                        connected_target,
                     );
                 }
             }

@@ -1,0 +1,4 @@
+ruleDirs:
+  - rules/architecture
+testConfigs:
+  - testDir: rule-tests

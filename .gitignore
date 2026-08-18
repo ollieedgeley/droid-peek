@@ -15,8 +15,7 @@
 /.qmlls.ini
 
 # Local planning documents
-/PLAN.md
-/SPEC.md
+/docs/local/*
 
 # Editor, OS, and local runtime artifacts
 /.idea/

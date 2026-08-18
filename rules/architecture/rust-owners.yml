@@ -1,0 +1,80 @@
+id: rust-child-process-owner
+language: Rust
+severity: error
+message: Child processes belong in the process, wireless, or session adapters
+note: Route subprocess execution through the existing fakeable adapter boundary.
+files:
+  - helper/src/**/*.rs
+ignores:
+  - helper/src/process.rs
+  - helper/src/wireless.rs
+  - helper/src/session.rs
+rule:
+  any:
+    - pattern: Command::new($PROGRAM)
+    - pattern: std::process::Command::new($PROGRAM)
+---
+id: rust-private-write-owner
+language: Rust
+severity: error
+message: Private file creation belongs in private_fs or the correlated result store
+note: Durable state must use the symlink-safe, permission-controlled atomic write boundary.
+files:
+  - helper/src/**/*.rs
+ignores:
+  - helper/src/private_fs.rs
+  - helper/src/action_results.rs
+  - helper/src/persistence.rs
+  - helper/src/preferences.rs
+rule:
+  any:
+    - pattern: fs::write($$$ARGS)
+    - pattern: std::fs::write($$$ARGS)
+    - pattern: File::create($$$ARGS)
+    - pattern: OpenOptions::new()
+---
+id: rust-json-boundary-owner
+language: Rust
+severity: error
+message: JSON parsing and serialization belong at declared protocol or persistence boundaries
+note: Do not introduce a second wire or durable-state parser in orchestration code.
+files:
+  - helper/src/**/*.rs
+ignores:
+  - helper/src/protocol.rs
+  - helper/src/actions.rs
+  - helper/src/persistence.rs
+  - helper/src/preferences.rs
+rule:
+  any:
+    - pattern: serde_json::from_str($$$ARGS)
+    - pattern: serde_json::from_slice($$$ARGS)
+    - pattern: serde_json::from_reader($$$ARGS)
+    - pattern: serde_json::to_string($$$ARGS)
+    - pattern: serde_json::to_writer($$$ARGS)
+---
+id: rust-semantic-result-owner
+language: Rust
+severity: error
+message: Semantic action result publication belongs in Runtime
+note: Preserve the single correlated result publication path.
+files:
+  - helper/src/**/*.rs
+ignores:
+  - helper/src/runtime.rs
+rule:
+  pattern: $STORE.publish($$$ARGS)
+---
+id: rust-android-action-owner
+language: Rust
+severity: error
+message: Android semantic action commands belong in actions.rs
+note: Keep package launch and standard-intent execution behind AdbActionAdapter.
+files:
+  - helper/src/**/*.rs
+ignores:
+  - helper/src/actions.rs
+rule:
+  any:
+    - pattern: '"android.intent.action.VIEW"'
+    - pattern: '"monkey"'

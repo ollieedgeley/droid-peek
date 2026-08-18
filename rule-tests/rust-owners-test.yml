@@ -1,0 +1,32 @@
+id: rust-child-process-owner
+valid:
+  - let request = CommandRequest::new("adb", arguments);
+invalid:
+  - let child = Command::new("adb");
+---
+id: rust-private-write-owner
+valid:
+  - atomic_replace(&path, |file| file.write_all(data));
+invalid:
+  - let file = OpenOptions::new();
+  - fs::write(path, data);
+---
+id: rust-json-boundary-owner
+valid:
+  - let command = decode_command(line)?;
+invalid:
+  - let command = serde_json::from_str(line)?;
+  - serde_json::to_writer(file, &value)?;
+---
+id: rust-semantic-result-owner
+valid:
+  - sink.emit_event(event)?;
+invalid:
+  - store.publish(request_id, handled)?;
+---
+id: rust-android-action-owner
+valid:
+  - let program = "adb";
+invalid:
+  - let action = "android.intent.action.VIEW";
+  - let launcher = "monkey";

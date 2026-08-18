@@ -13,6 +13,7 @@ Item {
     property bool interactive: true
     property bool pressable: true
     property bool useActiveColor: true
+    property bool tooltipHovered: false
     readonly property bool vertical: bar ? bar.vertical : false
     readonly property color foreground: bar ? bar.barForeground : "white"
 

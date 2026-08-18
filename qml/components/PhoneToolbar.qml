@@ -40,7 +40,7 @@ NestedEscapeScope {
     function actionIcon(action) {
         switch (action) {
         case "back":
-            return "󰁍";
+            return "\uf053";
         case "home":
             return "󰋜";
         case "recent-apps":
@@ -55,6 +55,7 @@ NestedEscapeScope {
     }
 
     component ToolbarIconButton: BarIconButton {
+        id: toolbarButton
         property double lastPointerActivationAt: 0
         property bool keyboardActivationInProgress: false
 
@@ -64,6 +65,12 @@ NestedEscapeScope {
         fixedWidth: Style.bar.iconSlot
         fixedHeight: Style.bar.sizeHorizontal
         activeFocusOnTab: true
+        PanelToolTip {
+            objectName: toolbarButton.objectName + "-tooltip"
+            visible: toolbarButton.tooltipHovered
+                     && toolbarButton.tooltipText !== ""
+            text: toolbarButton.tooltipText
+        }
 
         function activateFromKeyboard(event) {
             if (!enabled || !interactive)

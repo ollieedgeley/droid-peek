@@ -155,8 +155,26 @@ TestCase {
         compare(actionSpy.count, 0)
     }
 
+    function test_hover_shows_panel_tooltips_for_every_toolbar_button() {
+        var names = ["quickActionButton-back", "quickActionButton-home",
+                     "quickActionButton-recent-apps", "keepConnectedButton",
+                     "settingsButton"]
+        for (var index = 0; index < names.length; ++index) {
+            var control = button(names[index])
+            verify(control.tooltipText.length > 0)
+            control.tooltipHovered = true
+            var tooltip = objectNamed(names[index] + "-tooltip")
+            verify(tooltip !== null, "Missing panel tooltip for " + names[index])
+            compare(tooltip.text, control.tooltipText)
+            compare(tooltip.visible, true)
+            control.tooltipHovered = false
+            compare(tooltip.visible, false)
+        }
+    }
+
     function test_actions_keep_pointer_and_keyboard_signal_contracts() {
         var backAction = button("quickActionButton-back")
+        compare(backAction.text, "\uf053")
         mouseClick(backAction, backAction.width / 2, backAction.height / 2,
                    Qt.LeftButton)
         compare(actionSpy.count, 1)

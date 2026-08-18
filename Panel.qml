@@ -32,6 +32,25 @@ Panel {
     readonly property color contentForeground: popupPalette.text
     readonly property color contentBackground: popupPalette.background
     readonly property var phonePreview: phonePreviewLoader.item
+    readonly property int setupSpacing: Style.space(12)
+    readonly property int minimumQrSize: Style.space(180)
+    readonly property int maximumQrSize: Style.space(240)
+    readonly property real maximumContentHeight: Math.max(
+                                                     1,
+                                                     panel.availableCardHeight
+                                                     - panel.verticalContentInset)
+    readonly property real setupReservedHeight: setupHero.implicitHeight
+                                                + setupDescription.implicitHeight
+                                                + qrExpiry.implicitHeight
+                                                + pairingActions.implicitHeight
+                                                + setupSpacing * 4
+    readonly property real setupQrSize: Math.min(
+                                            content.width,
+                                            maximumQrSize,
+                                            Math.max(
+                                                minimumQrSize,
+                                                maximumContentHeight
+                                                - setupReservedHeight))
 
     implicitWidth: 320
     implicitHeight: 480
@@ -222,6 +241,7 @@ Panel {
 
     PairingState {
         id: pairingState
+        objectName: "pairingState"
         helperEpoch: root.acceptedHelperEpoch
         onCommandRequested: function (command) {
             if (!helperProcess.running) {
@@ -383,10 +403,14 @@ Panel {
 
             Column {
                 id: content
+                objectName: "panelContent"
                 width: parent.width
-                spacing: Style.space(12)
+                height: Math.min(implicitHeight, root.maximumContentHeight)
+                spacing: root.setupSpacing
 
                 PanelHero {
+                    id: setupHero
+                    objectName: "setupHero"
                     width: parent.width
                     visible: root.applicationState === "setup"
                              || root.applicationState === "recovering"
@@ -397,6 +421,8 @@ Panel {
                 }
 
                 Text {
+                    id: setupDescription
+                    objectName: "setupDescription"
                     visible: (root.applicationState === "setup"
                               || root.applicationState === "recovering")
                              && !root.settingsOpen
@@ -547,9 +573,11 @@ Panel {
                 }
 
                 Rectangle {
+                    id: pairingQr
+                    objectName: "pairingQr"
                     visible: pairingState.pairingStage === "qr-waiting" && pairingState.qrArtifact !== ""
-                    width: Math.min(parent.width, Style.space(240))
-                    height: width
+                    width: root.setupQrSize
+                    height: root.setupQrSize
                     anchors.horizontalCenter: parent.horizontalCenter
                     color: "white"
                     radius: Style.cornerRadius
@@ -565,6 +593,8 @@ Panel {
                 }
 
                 Text {
+                    id: qrExpiry
+                    objectName: "qrExpiry"
                     visible: pairingState.pairingStage === "qr-waiting" && pairingState.qrArtifact !== ""
                     width: parent.width
                     text: pairingState.qrExpiresInSeconds === 1 ? "Expires in 1 second" : "Expires in " + pairingState.qrExpiresInSeconds + " seconds"
@@ -576,6 +606,7 @@ Panel {
 
                 TextField {
                     id: manualCode
+                    objectName: "manualCodeField"
                     width: parent.width
                     visible: pairingState.pairingStage === "manual-code"
                     placeholderText: "Pairing code"
@@ -586,19 +617,25 @@ Panel {
                 }
 
                 Row {
+                    id: pairingActions
+                    objectName: "pairingActions"
                     anchors.horizontalCenter: parent.horizontalCenter
                     spacing: Style.space(8)
                     Button {
-                        visible: pairingState.sessionState === "qr-waiting" && pairingState.pairingStage !== "manual-code"
+                        objectName: "pairByCodeButton"
+                        visible: pairingState.pairingStage === "qr-waiting"
                         text: "Pair by code"
                         foreground: root.contentForeground
+                        focusable: true
                         onClicked: pairingState.useManualCode()
                     }
 
                     Button {
+                        objectName: "pairButton"
                         visible: pairingState.pairingStage === "manual-code"
                         text: "Pair"
                         foreground: root.contentForeground
+                        focusable: true
                         onClicked: root.activatePrimary()
                     }
 

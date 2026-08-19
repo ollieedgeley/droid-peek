@@ -71,6 +71,11 @@ fn protocol_v11_phone_target_endpoint_is_aligned_across_languages() {
             && !phone_bindings.contains("ollie.android configure-scrcpy"),
         "kebab-case shell endpoints are not callable QML IPC methods"
     );
+    assert!(
+        phone_bindings.contains("omarchy-shell shell hide ollie.android")
+            && !phone_bindings.contains("omarchy-shell ollie.android close"),
+        "panel close must use the shell hide router, not the raw plugin target"
+    );
 }
 
 #[test]

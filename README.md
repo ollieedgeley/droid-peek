@@ -163,19 +163,27 @@ phone separately if that is required.
 
 ## Operate the panel
 
-The bar icon opens or closes the anchored panel. A ready panel focuses the phone
-preview automatically, including after reconnection. The preview supports taps,
-swipes, named Android keys, and ordinary text; Ctrl, Alt, Meta/Super combinations,
-key release ordering, and clipboard transport are not supported V1 controls.
+The bar icon opens or closes the panel on that icon's monitor. The desktop
+hotkey is `SUPER + ALT + A`, which must run
+`omarchy-shell shell toggle ollie.android` so Omarchy picks the focused
+monitor's copy. Do not use `omarchy-shell ollie.android toggle`; that reaches
+whichever bar instance registered the raw IPC target first.
+
+A ready panel focuses the phone preview automatically, including after
+reconnection. The preview supports taps, swipes, named Android keys, and
+ordinary text; Ctrl, Alt, Meta/Super combinations, key release ordering, and
+clipboard transport are not supported V1 controls.
 
 The toolbar has three configurable quick-action slots, a chain-link
-**Keep connected** control, and Settings. Closing always releases QML capture,
-focus, and input:
+**Keep connected** control, and Settings. Closing always releases focus and
+input. After a first frame has arrived, **Keep phone connected** also keeps
+the hidden QML capture graph so reopen can show the phone immediately:
 
 - With **Keep phone connected** off, close also stops the active helper/scrcpy
   session. Reopening resolves the phone and starts a new session.
-- With it on, close may retain only an already trusted ready or session-starting
+- With it on, close may retain an already trusted ready or session-starting
   connection. Pairing, disconnected, and failure states are never retained.
+  A connecting session still releases QML capture until a frame exists.
 
 ### Settings
 

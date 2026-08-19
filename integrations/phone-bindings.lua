@@ -146,7 +146,7 @@ end
 
 local function close_panel()
   hl.dispatch(hl.dsp.submap("reset"))
-  hl.exec_cmd("omarchy-shell ollie.android close")
+  hl.exec_cmd("omarchy-shell shell hide ollie.android")
 end
 
 local function validated_scrcpy_arguments(arguments)

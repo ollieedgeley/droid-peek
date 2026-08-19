@@ -10,7 +10,8 @@ BarWidget {
     readonly property bool opened: panel ? panel.opened === true : false
 
     function open() {
-        if (panel) panel.open()
+        if (panel)
+            panel.open()
     }
 
     function close() {
@@ -30,6 +31,16 @@ BarWidget {
         else
             panel.open();
     }
+
+    function routedWidget() {
+        if (root.bar && typeof root.bar.findPanelWidget === "function") {
+            var chosen = root.bar.findPanelWidget(root.moduleName);
+            if (chosen)
+                return chosen;
+        }
+        return root;
+    }
+
 
     function decodeEnvelope(encodedEnvelope, maximumLength) {
         if (typeof encodedEnvelope !== "string" || encodedEnvelope.length === 0
@@ -122,15 +133,17 @@ BarWidget {
     IpcHandler {
         target: "ollie.android"
 
-        function open() { root.open() }
-        function close() { root.close() }
-        function show() { root.open() }
-        function hide() { root.close() }
-        function toggle() { root.togglePanel() }
-        function phoneTarget(encodedEnvelope: string): bool { return root.phoneTarget(encodedEnvelope) }
+        function phoneTarget(encodedEnvelope: string): bool {
+            var item = root.routedWidget()
+            return item && typeof item.phoneTarget === "function"
+                    ? item.phoneTarget(encodedEnvelope) : false
+        }
         function configureScrcpy(revision: string,
                                  encodedConfiguration: string): bool {
-            return root.configureScrcpy(revision, encodedConfiguration)
+            var item = root.routedWidget()
+            return item && typeof item.configureScrcpy === "function"
+                    ? item.configureScrcpy(revision, encodedConfiguration)
+                    : false
         }
     }
 

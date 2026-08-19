@@ -224,7 +224,7 @@ assert(#execution_events == 2, "close must request panel close and reset synchro
 assert(execution_events[1].kind == "submap")
 assert(execution_events[1].name == "reset")
 assert(execution_events[2].kind == "command")
-assert(execution_events[2].command == "omarchy-shell ollie.android close")
+assert(execution_events[2].command == "omarchy-shell shell hide ollie.android")
 
 now_seconds = 1700000030
 now_milliseconds = 1700000030125

@@ -299,10 +299,10 @@ Panel {
         onPreferenceUpdateFailed: function (reason) {
             Quickshell.execDetached([
                 "omarchy-notification-send",
-                "Android settings could not be saved.",
-                "--app-name", "omarchy-android",
-                "-u", "normal",
-                "--hint=boolean:transient:true"
+                "-g", "󰄜",
+                "-u", "low",
+                "Omarchy DroidPeek",
+                "Android settings could not be saved."
             ]);
         }
         onLifecycleFailure: function (reason) {
@@ -330,10 +330,11 @@ Panel {
         onPhoneTargetFailureNotificationRequested: function (message,
                                                                coalesceKey) {
             Quickshell.execDetached([
-                "omarchy-notification-send", message,
-                "--app-name", "omarchy-android",
-                "-u", "normal",
-                "--hint=boolean:transient:true"
+                "omarchy-notification-send",
+                "-g", "󰄜",
+                "-u", "low",
+                "Omarchy DroidPeek",
+                message
             ]);
         }
     }

@@ -76,6 +76,12 @@ pub trait PairingBackend {
         0
     }
 
+    fn acknowledge_preview_ready(
+        &mut self,
+        helper_epoch: &str,
+        session_generation: u64,
+    ) -> Result<(), FailureReason>;
+
     fn reconnect_trusted_device(&mut self) -> Result<(), FailureReason> {
         Err(FailureReason::Disconnected)
     }
@@ -265,6 +271,19 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                     ],
                 }
             }
+            Command::PreviewReady {
+                helper_epoch: Some(helper_epoch),
+                session_generation: Some(session_generation),
+            } => {
+                let Ok(session_generation) = session_generation.parse::<u64>() else {
+                    return vec![self.protocol_error(ProtocolErrorReason::InvalidCommand)];
+                };
+                let _ = self
+                    .backend
+                    .acknowledge_preview_ready(&helper_epoch, session_generation);
+                Vec::new()
+            }
+            Command::PreviewReady { .. } => Vec::new(),
             Command::PointerTap {
                 x,
                 y,
@@ -589,6 +608,12 @@ enum Command {
         #[serde(rename = "sessionGeneration", default)]
         session_generation: Option<String>,
     },
+    PreviewReady {
+        #[serde(rename = "helperEpoch", default)]
+        helper_epoch: Option<String>,
+        #[serde(rename = "sessionGeneration", default)]
+        session_generation: Option<String>,
+    },
     PointerTap {
         #[serde(rename = "helperEpoch", default)]
         helper_epoch: Option<String>,
@@ -687,6 +712,7 @@ impl Command {
             | Self::ReconnectTrustedDevice { helper_epoch }
             | Self::StopSession { helper_epoch, .. }
             | Self::StartOver { helper_epoch, .. }
+            | Self::PreviewReady { helper_epoch, .. }
             | Self::PointerTap { helper_epoch, .. }
             | Self::PointerSwipe { helper_epoch, .. }
             | Self::KeyInput { helper_epoch, .. }
@@ -703,6 +729,9 @@ impl Command {
                 session_generation, ..
             }
             | Self::StartOver {
+                session_generation, ..
+            }
+            | Self::PreviewReady {
                 session_generation, ..
             }
             | Self::PointerTap {
@@ -733,6 +762,7 @@ impl Command {
             Self::StopSession { .. }
                 | Self::StartOver { .. }
                 | Self::PointerTap { .. }
+                | Self::PreviewReady { .. }
                 | Self::PointerSwipe { .. }
                 | Self::KeyInput { .. }
                 | Self::TextInput { .. }

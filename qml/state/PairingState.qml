@@ -10,6 +10,8 @@ QtObject {
     property bool automaticPairingEnabled: true
     property bool hasTrustedDevice: false
     property bool sessionStarted: false
+    property bool connectionPresentationActive: false
+    property string previewReadyGeneration: ""
     property bool startOverPending: false
     property string startOverGeneration: ""
     property bool localIntegrationAvailable: true
@@ -34,6 +36,14 @@ QtObject {
     property bool effectiveScreenOff: false
     property string screenOffTransitionGeneration: ""
     property string scrcpyRetryRevision: ""
+    property int firstFrameTimeoutMs: 5000
+    property bool previewFailed: false
+
+    readonly property Timer firstFrameTimer: Timer {
+        interval: root.firstFrameTimeoutMs
+        repeat: false
+        onTriggered: root.handleFirstFrameTimeout()
+    }
 
     signal commandRequested(string command)
     signal pairingCancellationConfirmed()
@@ -46,6 +56,8 @@ QtObject {
         helperReady = false;
         sessionGeneration = "";
         sessionStarted = false;
+        connectionPresentationActive = hasTrustedDevice && helperEpoch !== "";
+        previewReadyGeneration = "";
         startOverPending = false;
         appliedScrcpyRevision = "";
         effectiveScreenOff = false;
@@ -62,6 +74,8 @@ QtObject {
                 ? "Restarting the local helper for the trusted phone."
                 : "Open Wireless debugging on your phone.";
         clearQrPresentation();
+        cancelFirstFrameWatch();
+        previewFailed = false;
     }
 
     function reset() {
@@ -75,6 +89,7 @@ QtObject {
         desiredScrcpyRevision = "";
         desiredScrcpyArgumentsKnown = false;
         desiredScreenOffRequested = false;
+        firstFrameTimeoutMs = 5000;
     }
 
     onHelperEpochChanged: resetHelperFacts()
@@ -85,6 +100,37 @@ QtObject {
     }
 
     function clearSessionFacts() {
+        cancelFirstFrameWatch();
+        sessionStarted = false;
+    }
+
+    function cancelFirstFrameWatch() {
+        firstFrameTimer.stop();
+    }
+
+    function startFirstFrameWatch() {
+        firstFrameTimer.stop();
+        if (previewReadyGeneration === sessionGeneration)
+            return;
+        firstFrameTimer.start();
+    }
+
+    function presentPreviewFailed() {
+        previewFailed = true;
+        connectionPresentationActive = false;
+        sessionState = "disconnected";
+        pairingStage = "failed";
+        activity = "";
+        reason = "";
+        statusTitle = "Preview failed";
+        statusDescription = "The phone connected but the panel never received a picture.";
+    }
+
+    function handleFirstFrameTimeout() {
+        if (!sessionStarted || previewReadyGeneration === sessionGeneration)
+            return;
+        presentPreviewFailed();
+        stopSession();
         sessionStarted = false;
     }
 
@@ -205,12 +251,32 @@ QtObject {
         return false;
     }
 
+    function acknowledgePreviewReady(epoch, generation) {
+        if (!helperReady || !sessionStarted
+                || epoch !== helperEpoch || generation !== sessionGeneration
+                || generation === "0" || !isDecimalIdentity(generation)
+                || previewReadyGeneration === generation)
+            return false;
+        previewReadyGeneration = generation;
+        if (!sendGenerationCommand({ type: "preview-ready" })) {
+            previewReadyGeneration = "";
+            return false;
+        }
+        cancelFirstFrameWatch();
+        previewFailed = false;
+        connectionPresentationActive = false;
+        return true;
+    }
+
     function startQrPairing() {
         clearQrPresentation();
         return sendCommand({ type: "start-qr-pairing" });
     }
     function reconnectTrustedDevice() {
         clearQrPresentation();
+        if (!helperReady || !hasTrustedDevice)
+            return false;
+        connectionPresentationActive = true;
         return sendCommand({ type: "reconnect-trusted-device" });
     }
 
@@ -245,6 +311,7 @@ QtObject {
         startOverGeneration = sessionGeneration;
         hasTrustedDevice = false;
         clearQrPresentation();
+        connectionPresentationActive = false;
         clearSessionFacts();
         sessionState = "stopping";
         pairingStage = "starting-over";
@@ -378,6 +445,8 @@ QtObject {
 
     function protocolFailure() {
         helperReady = false;
+        connectionPresentationActive = false;
+        previewReadyGeneration = "";
         sessionGeneration = "";
         startOverPending = false;
         startOverGeneration = "";
@@ -394,6 +463,8 @@ QtObject {
 
     function localIntegrationFailure() {
         helperReady = false;
+        connectionPresentationActive = false;
+        previewReadyGeneration = "";
         sessionGeneration = "";
         startOverPending = false;
         startOverGeneration = "";
@@ -414,6 +485,7 @@ QtObject {
                 || generation !== nextDecimal(sessionGeneration))
             return false;
         sessionGeneration = generation;
+        previewReadyGeneration = "";
         clearSessionFacts();
         activity = "";
         reason = "";
@@ -458,6 +530,8 @@ QtObject {
     }
 
     function setConnectionPresentation(stage, nextActivity, title, description) {
+        connectionPresentationActive =
+                previewReadyGeneration !== sessionGeneration;
         clearQrPresentation();
         sessionState = "connecting";
         pairingStage = stage;
@@ -468,6 +542,7 @@ QtObject {
     }
 
     function applyLifecycleFailure(failureReason) {
+        connectionPresentationActive = false;
         startOverPending = false;
         startOverGeneration = "";
         clearQrPresentation();
@@ -482,8 +557,10 @@ QtObject {
         } else if (failureReason === "disconnected"
                    || failureReason === "network-unavailable") {
             sessionState = "disconnected";
-            statusTitle = "Phone unavailable";
-            statusDescription = "Check that the phone is on the same trusted Wi-Fi network, then reconnect.";
+            if (!previewFailed) {
+                statusTitle = "Phone unavailable";
+                statusDescription = "Check that the phone is on the same trusted Wi-Fi network, then reconnect.";
+            }
         } else {
             sessionState = "dependency-unavailable";
             statusTitle = "Local dependency unavailable";
@@ -530,6 +607,7 @@ QtObject {
             }
             helperReady = true;
             hasTrustedDevice = event.hasTrustedDevice;
+            connectionPresentationActive = hasTrustedDevice;
             sessionGeneration = "0";
             appliedScrcpyRevision = event.scrcpyRevision;
             effectiveScreenOff = false;
@@ -571,6 +649,7 @@ QtObject {
                 advanceGeneration(event.sessionGeneration);
             applyPreferences(event, true);
             if (event.sessionRestarted) {
+                connectionPresentationActive = true;
                 sessionState = "connecting";
                 pairingStage = "session-starting";
                 activity = "starting-preview";
@@ -607,6 +686,7 @@ QtObject {
                 if (!isDecimalIdentity(sessionGeneration)
                         || event.sessionGeneration !== nextDecimal(sessionGeneration))
                     return;
+                connectionPresentationActive = true;
                 advanceGeneration(event.sessionGeneration);
                 sessionState = "connecting";
                 pairingStage = "session-starting";
@@ -691,36 +771,48 @@ QtObject {
                 return;
             }
             hasTrustedDevice = true;
+            connectionPresentationActive =
+                    previewReadyGeneration !== sessionGeneration;
             effectiveScreenOff = event.screenOffEnabled;
             sessionStarted = true;
+            previewFailed = false;
             sessionState = "started";
             pairingStage = "session-started";
             activity = "";
             reason = "";
             statusTitle = "Phone connected";
             statusDescription = "The trusted phone session is active.";
+            startFirstFrameWatch();
             return;
         case "session-ended":
             if (!admitInvalidatingGeneration(event))
                 return;
-            sessionState = startOverPending ? "stopping" : "disconnected";
-            pairingStage = startOverPending ? "starting-over" : event.type;
-            activity = startOverPending ? "stopping" : "";
-            reason = startOverPending ? "" : "disconnected";
+            if (!startOverPending) {
+                applyLifecycleFailure("disconnected");
+                return;
+            }
+            connectionPresentationActive = false;
+            sessionState = "stopping";
+            pairingStage = "starting-over";
+            activity = "stopping";
+            reason = "";
             return;
         case "session-stopped":
             if (!admitSessionStopped(event))
                 return;
+            connectionPresentationActive = false;
             sessionState = startOverPending ? "stopping" : "disconnected";
             pairingStage = startOverPending ? "starting-over" : event.type;
             activity = startOverPending ? "stopping" : "";
-            reason = "";
+            if (!previewFailed)
+                reason = "";
             sessionStopConfirmed();
             return;
         case "start-over-complete":
             if (!admitStartOverComplete(event))
                 return;
             clearQrPresentation();
+            connectionPresentationActive = false;
             startOverPending = false;
             hasTrustedDevice = false;
             startOverGeneration = "";
@@ -752,6 +844,7 @@ QtObject {
                     || !validFailureReason(event.reason))
                 return;
             if (startOverPending) {
+                connectionPresentationActive = false;
                 startOverPending = false;
                 startOverGeneration = "";
                 hasTrustedDevice = true;
@@ -769,6 +862,7 @@ QtObject {
             }
             if (event.reason === "pairing-rejected") {
                 hasTrustedDevice = false;
+                connectionPresentationActive = false;
                 sessionState = "unpaired";
                 pairingStage = "failed";
                 activity = "";

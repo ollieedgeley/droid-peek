@@ -560,6 +560,7 @@ TestCase {
     }
 
     function test_first_valid_frame_enables_screen_off_at_most_once_per_generation() {
+        state.firstFrameTimeoutMs = 20
         verify(state.setScrcpyConfiguration(
                    "0123456789abcdef",
                    ["--turn-screen-off"]))
@@ -573,38 +574,52 @@ TestCase {
         state.receiveLine(event("session-starting", { sessionGeneration: "1" }))
         state.receiveLine(event("session-started", {
             sessionGeneration: "1",
-            screenOffEnabled: false
+            screenOffEnabled: true
         }))
         commandSpy.clear()
 
-        verify(state.requestScreenOffAfterPreview("17", "1"))
+        verify(state.acknowledgePreviewReady("17", "1"))
         compare(commandSpy.count, 1)
         compare(commandAt(0), {
             version: 11,
-            type: "set-scrcpy-args",
+            type: "preview-ready",
             helperEpoch: "17",
-            sessionGeneration: "1",
-            arguments: ["--turn-screen-off"],
-            expectedRevision: "0123456789abcdef",
-            newRevision: "0123456789abcdef",
-            screenOffEnabled: true
+            sessionGeneration: "1"
         })
-        verify(!state.requestScreenOffAfterPreview("17", "1"))
+        wait(50)
         compare(commandSpy.count, 1)
-
-        state.receiveLine(event("scrcpy-args-updated", {
-            sessionGeneration: "2",
-            revision: "0123456789abcdef",
-            screenOffEnabled: true,
-            sessionRestarted: true
-        }))
-        state.receiveLine(event("session-started", {
-            sessionGeneration: "2",
-            screenOffEnabled: true
-        }))
         compare(state.effectiveScreenOff, true)
-        verify(!state.requestScreenOffAfterPreview("17", "2"))
-        compare(commandSpy.count, 1)
+        compare(state.sessionStarted, true)
+        compare(commandAt(0).type, "preview-ready")
+    }
+
+    function test_missing_first_frame_stops_session_with_preview_failed() {
+        state.firstFrameTimeoutMs = 20
+        establishLiveSession()
+        commandSpy.clear()
+
+        tryCompare(commandSpy, "count", 1)
+        compare(commandAt(0), {
+            version: 11,
+            type: "stop-session",
+            helperEpoch: "17",
+            sessionGeneration: "1"
+        })
+        compare(state.statusTitle, "Preview failed")
+        compare(state.statusDescription,
+                "The phone connected but the panel never received a picture.")
+        compare(state.connectionPresentationActive, false)
+        compare(state.sessionState, "disconnected")
+        compare(state.sessionStarted, false)
+        verify(state.statusTitle !== "Phone unavailable")
+        verify(state.statusDescription.indexOf("trusted Wi-Fi") < 0)
+
+        state.receiveLine(event("session-stopped", { sessionGeneration: "2" }))
+        compare(state.sessionState, "disconnected")
+        compare(state.statusTitle, "Preview failed")
+        compare(state.statusDescription,
+                "The phone connected but the panel never received a picture.")
+        compare(state.connectionPresentationActive, false)
     }
 
 
@@ -669,4 +684,41 @@ TestCase {
             screenOffEnabled: true
         })
     }
+    function test_preview_ready_is_generation_bound_and_sent_once_per_generation() {
+        establishLiveSession()
+        commandSpy.clear()
+
+        verify(!state.acknowledgePreviewReady("16", "1"))
+        verify(!state.acknowledgePreviewReady("17", "0"))
+        compare(commandSpy.count, 0)
+
+        verify(state.acknowledgePreviewReady("17", "1"))
+        verify(!state.acknowledgePreviewReady("17", "1"))
+        compare(commandSpy.count, 1)
+        compare(commandAt(0), {
+            version: 11,
+            type: "preview-ready",
+            helperEpoch: "17",
+            sessionGeneration: "1"
+        })
+
+        state.receiveLine(event("session-starting", {
+            sessionGeneration: "2"
+        }))
+        state.receiveLine(event("session-started", {
+            sessionGeneration: "2"
+        }))
+        commandSpy.clear()
+
+        verify(state.acknowledgePreviewReady("17", "2"))
+        verify(!state.acknowledgePreviewReady("17", "2"))
+        compare(commandSpy.count, 1)
+        compare(commandAt(0), {
+            version: 11,
+            type: "preview-ready",
+            helperEpoch: "17",
+            sessionGeneration: "2"
+        })
+    }
+
 }

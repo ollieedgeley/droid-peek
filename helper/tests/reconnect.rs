@@ -5,8 +5,9 @@ use std::{
     os::unix::fs::symlink,
     path::PathBuf,
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -230,6 +231,7 @@ fn stale_remembered_service_reports_a_fixed_disconnected_failure() {
 #[derive(Clone, Default)]
 struct MemorySink {
     lines: Arc<Mutex<Vec<String>>>,
+    changed: Arc<Condvar>,
 }
 
 impl ProtocolSink for MemorySink {
@@ -240,6 +242,7 @@ impl ProtocolSink for MemorySink {
             .lock()
             .expect("memory sink lock")
             .push(event.to_line());
+        self.changed.notify_all();
         Ok(())
     }
 }
@@ -247,11 +250,9 @@ impl ProtocolSink for MemorySink {
 impl MemorySink {
     fn wait_for_event(&self, event_type: &str, generation: Option<&str>) -> String {
         let deadline = Instant::now() + Duration::from_secs(1);
-        while Instant::now() < deadline {
-            if let Some(line) = self
-                .lines
-                .lock()
-                .expect("memory sink lock")
+        let mut lines = self.lines.lock().expect("memory sink lock");
+        loop {
+            if let Some(line) = lines
                 .iter()
                 .find(|line| {
                     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -267,9 +268,17 @@ impl MemorySink {
             {
                 return line;
             }
-            thread::sleep(Duration::from_millis(2));
+            let now = Instant::now();
+            assert!(
+                now < deadline,
+                "event {event_type} at generation {generation:?} was not emitted"
+            );
+            let (next_lines, _) = self
+                .changed
+                .wait_timeout(lines, deadline.saturating_duration_since(now))
+                .expect("memory sink condition");
+            lines = next_lines;
         }
-        panic!("event {event_type} at generation {generation:?} was not emitted");
     }
 
     fn event_count(&self, event_type: &str, generation: &str) -> usize {
@@ -285,6 +294,29 @@ impl MemorySink {
                 })
             })
             .count()
+    }
+
+    fn session_event_identities(&self) -> Vec<(String, String)> {
+        self.lines
+            .lock()
+            .expect("memory sink lock")
+            .iter()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter_map(|value| {
+                let event_type = value["type"].as_str()?;
+                (event_type.starts_with("session-") || event_type == "lifecycle-failure").then(
+                    || {
+                        (
+                            event_type.to_owned(),
+                            value["sessionGeneration"]
+                                .as_str()
+                                .expect("session event generation")
+                                .to_owned(),
+                        )
+                    },
+                )
+            })
+            .collect()
     }
 }
 
@@ -376,6 +408,7 @@ impl SessionRunner for BlockingQualitySession {
 
 struct EndingSession {
     cancellation: Arc<Mutex<Option<CancellationToken>>>,
+    release: Receiver<()>,
 }
 
 impl SessionRunner for EndingSession {
@@ -387,16 +420,133 @@ impl SessionRunner for EndingSession {
     ) -> Result<SessionExit, SessionFailure> {
         *self.cancellation.lock().expect("session cancellation lock") = Some(cancellation.clone());
         on_started(None);
+        self.release
+            .recv_timeout(Duration::from_secs(1))
+            .expect("release ending session");
         Ok(SessionExit::Ended)
     }
 }
 
-struct LiveRuntime {
+struct ControlledSession {
+    outcomes: VecDeque<Result<SessionExit, SessionFailure>>,
+    releases: Receiver<()>,
+    runs: Arc<AtomicUsize>,
+}
+
+impl SessionRunner for ControlledSession {
+    fn run(
+        &mut self,
+        _target: &str,
+        cancellation: &CancellationToken,
+        on_started: &mut dyn FnMut(Option<omarchy_android_helper::session::PhysicalDisplaySize>),
+    ) -> Result<SessionExit, SessionFailure> {
+        self.runs.fetch_add(1, Ordering::AcqRel);
+        on_started(None);
+        loop {
+            match self.releases.recv_timeout(Duration::from_millis(10)) {
+                Ok(()) => {
+                    return self
+                        .outcomes
+                        .pop_front()
+                        .expect("controlled session outcome");
+                }
+                Err(RecvTimeoutError::Timeout) if cancellation.is_cancelled() => {
+                    return Ok(SessionExit::Stopped);
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return Ok(SessionExit::Stopped),
+            }
+        }
+    }
+}
+
+fn controlled_session(
+    outcomes: impl IntoIterator<Item = Result<SessionExit, SessionFailure>>,
+) -> (Box<dyn SessionRunner + Send>, Sender<()>, Arc<AtomicUsize>) {
+    let (release, releases) = mpsc::channel();
+    let runs = Arc::new(AtomicUsize::new(0));
+    (
+        Box::new(ControlledSession {
+            outcomes: outcomes.into_iter().collect(),
+            releases,
+            runs: Arc::clone(&runs),
+        }),
+        release,
+        runs,
+    )
+}
+
+#[derive(Clone)]
+struct BlockingRetrySink {
+    events: MemorySink,
+    blocked: Arc<AtomicBool>,
+    entered: Sender<()>,
+    release: Arc<Mutex<Receiver<()>>>,
+}
+
+impl ProtocolSink for BlockingRetrySink {
+    type Error = Infallible;
+
+    fn emit_event(&self, event: &Event) -> Result<(), Self::Error> {
+        let blocks_retry = matches!(
+            event,
+            Event::SessionStarting {
+                session_generation,
+                ..
+            } if session_generation == "2"
+        ) && !self.blocked.swap(true, Ordering::AcqRel);
+        if blocks_retry {
+            self.entered.send(()).expect("announce blocked retry");
+            self.release
+                .lock()
+                .expect("retry release lock")
+                .recv_timeout(Duration::from_secs(1))
+                .expect("release blocked retry");
+        }
+        self.events.emit_event(event)
+    }
+}
+
+struct RetrySinkGate {
+    entered: Receiver<()>,
+    release: Sender<()>,
+}
+
+impl RetrySinkGate {
+    fn wait_until_blocked(&self) {
+        self.entered
+            .recv_timeout(Duration::from_secs(1))
+            .expect("retry announcement entered sink");
+    }
+
+    fn release(&self) {
+        self.release.send(()).expect("release retry announcement");
+    }
+}
+
+fn blocking_retry_sink() -> (BlockingRetrySink, RetrySinkGate) {
+    let (entered, wait_for_entry) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    (
+        BlockingRetrySink {
+            events: MemorySink::default(),
+            blocked: Arc::new(AtomicBool::new(false)),
+            entered,
+            release: Arc::new(Mutex::new(wait_for_release)),
+        },
+        RetrySinkGate {
+            entered: wait_for_entry,
+            release,
+        },
+    )
+}
+
+struct LiveRuntime<S: ProtocolSink = MemorySink> {
     _directory: tempfile::TempDir,
     state_directory: PathBuf,
     runtime_directory: PathBuf,
-    backend: RuntimePairingBackend<MemorySink>,
-    sink: MemorySink,
+    backend: RuntimePairingBackend<S>,
+    sink: S,
     requests: Arc<Mutex<Vec<CommandRequest>>>,
 }
 
@@ -417,13 +567,66 @@ fn live_runtime_with_runner(
     runner: impl CommandRunner + Send + 'static,
     requests: Arc<Mutex<Vec<CommandRequest>>>,
 ) -> LiveRuntime {
+    let sink = MemorySink::default();
+    let live = live_runtime_with_sink_and_runner(session, runner, requests, sink, None);
+    live.sink.wait_for_event("session-started", Some("1"));
+    live
+}
+
+fn live_runtime_with_retry_sink(
+    session: Box<dyn SessionRunner + Send>,
+    sink: BlockingRetrySink,
+) -> LiveRuntime<BlockingRetrySink> {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let runner = SharedRunner {
+        outputs: Arc::new(Mutex::new(VecDeque::from([Ok(CommandOutput {
+            succeeded: true,
+        })]))),
+        requests: Arc::clone(&requests),
+    };
+    let live = live_runtime_with_sink_and_runner(session, runner, requests, sink, None);
+    live.sink
+        .events
+        .wait_for_event("session-started", Some("1"));
+    live
+}
+
+fn live_runtime_with_scrcpy_configuration(
+    session: Box<dyn SessionRunner + Send>,
+    configuration: &ScrcpyConfiguration,
+) -> LiveRuntime {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let runner = SharedRunner {
+        outputs: Arc::new(Mutex::new(VecDeque::from([Ok(CommandOutput {
+            succeeded: true,
+        })]))),
+        requests: Arc::clone(&requests),
+    };
+    let sink = MemorySink::default();
+    let live =
+        live_runtime_with_sink_and_runner(session, runner, requests, sink, Some(configuration));
+    live.sink.wait_for_event("session-started", Some("1"));
+    live
+}
+
+fn live_runtime_with_sink_and_runner<S: ProtocolSink>(
+    session: Box<dyn SessionRunner + Send>,
+    runner: impl CommandRunner + Send + 'static,
+    requests: Arc<Mutex<Vec<CommandRequest>>>,
+    sink: S,
+    scrcpy_configuration: Option<&ScrcpyConfiguration>,
+) -> LiveRuntime<S> {
     let directory = tempfile::tempdir().expect("temporary runtime");
     let state_directory = directory.path().join("state");
     FileTrustedDeviceStore::new(&state_directory)
         .save(&TrustedDevice::new("adb-14141FD6F00081-TnSdi9").expect("trusted device"))
         .expect("seed trusted-device state");
+    if let Some(configuration) = scrcpy_configuration {
+        FileScrcpyConfigStore::new(&state_directory)
+            .store(configuration)
+            .expect("seed scrcpy configuration");
+    }
     let runtime_directory = directory.path().join("runtime");
-    let sink = MemorySink::default();
     let mut backend = RuntimePairingBackend::with_dependencies(
         &runtime_directory,
         &state_directory,
@@ -445,7 +648,6 @@ fn live_runtime_with_runner(
         .reconnect_trusted_device()
         .expect("queue trusted reconnect");
     backend.response_emitted();
-    sink.wait_for_event("session-started", Some("1"));
     LiveRuntime {
         _directory: directory,
         state_directory,
@@ -459,65 +661,48 @@ fn live_runtime_with_runner(
 #[test]
 fn scrcpy_configuration_restarts_with_only_the_effective_screen_off_state() {
     let runs = Arc::new(Mutex::new(Vec::new()));
-    let mut live = live_runtime(
-        Box::new(RecordingConfigSession {
-            current_arguments: Vec::new(),
-            runs: Arc::clone(&runs),
-        }),
-        VecDeque::from([Ok(CommandOutput { succeeded: true })]),
-    );
     let configuration = ScrcpyConfiguration::validated(vec![
         "--keep-active".to_owned(),
         "--turn-screen-off".to_owned(),
     ])
     .expect("valid scrcpy configuration");
-    FileScrcpyConfigStore::new(&live.state_directory)
-        .store(&configuration)
-        .expect("commit scrcpy configuration");
-
-    assert!(
-        live.backend
-            .set_scrcpy_configuration(configuration.clone(), false)
-            .expect("apply configuration")
+    let mut live = live_runtime_with_scrcpy_configuration(
+        Box::new(RecordingConfigSession {
+            current_arguments: Vec::new(),
+            runs: Arc::clone(&runs),
+        }),
+        &configuration,
     );
-    let disabled_event = live.sink.wait_for_event("session-started", Some("2"));
+    let started = live.sink.wait_for_event("session-started", Some("1"));
     assert_eq!(
         runs.lock().expect("session argument runs lock").as_slice(),
-        [Vec::<String>::new(), vec!["--keep-active".to_owned()]]
+        [vec![
+            "--keep-active".to_owned(),
+            "--turn-screen-off".to_owned()
+        ]]
     );
-    assert!(disabled_event.contains(r#""screenOffEnabled":false"#));
     assert!(
-        !live
-            .backend
-            .set_scrcpy_configuration(configuration.clone(), false)
-            .expect("idempotent configuration")
+        started.contains(r#""screenOffEnabled":true"#),
+        "first session should apply stored screen-off: {started}"
     );
 
-    assert!(
-        live.backend
-            .set_scrcpy_configuration(configuration.clone(), true)
-            .expect("enable screen off after preview")
-    );
-    let enabled_event = live.sink.wait_for_event("session-started", Some("3"));
-    assert_eq!(
-        runs.lock().expect("session argument runs lock")[2],
-        ["--keep-active".to_owned(), "--turn-screen-off".to_owned()]
-    );
-    assert!(enabled_event.contains(r#""screenOffEnabled":true"#));
     live.backend.response_emitted();
     let mut preferences = live.backend.preferences();
     preferences.video_quality = VideoQuality::Low;
     assert!(
         live.backend
             .set_preferences(preferences)
-            .expect("change quality after screen-off response")
+            .expect("change quality after first screen-off session")
     );
-    let retained_event = live.sink.wait_for_event("session-started", Some("4"));
+    let retained_event = live.sink.wait_for_event("session-started", Some("2"));
     assert_eq!(
-        runs.lock().expect("session argument runs lock")[3],
+        runs.lock().expect("session argument runs lock")[1],
         ["--keep-active".to_owned(), "--turn-screen-off".to_owned()]
     );
-    assert!(retained_event.contains(r#""screenOffEnabled":true"#));
+    assert!(
+        retained_event.contains(r#""screenOffEnabled":true"#),
+        "quality restart should retain screen-off: {retained_event}"
+    );
 
     let uncommitted =
         ScrcpyConfiguration::validated(vec!["--stay-awake".to_owned()]).expect("valid candidate");
@@ -526,7 +711,39 @@ fn scrcpy_configuration_restarts_with_only_the_effective_screen_off_state() {
             .set_scrcpy_configuration(uncommitted, false)
             .is_err()
     );
-    assert_eq!(runs.lock().expect("session argument runs lock").len(), 4);
+    assert_eq!(runs.lock().expect("session argument runs lock").len(), 2);
+    live.backend.stop_session();
+}
+
+#[test]
+fn first_reconnect_with_stored_screen_off_does_not_restart_only_to_enable_the_flag() {
+    let runs = Arc::new(Mutex::new(Vec::new()));
+    let configuration = ScrcpyConfiguration::validated(vec![
+        "--keep-active".to_owned(),
+        "--turn-screen-off".to_owned(),
+    ])
+    .expect("valid scrcpy configuration");
+    let mut live = live_runtime_with_scrcpy_configuration(
+        Box::new(RecordingConfigSession {
+            current_arguments: Vec::new(),
+            runs: Arc::clone(&runs),
+        }),
+        &configuration,
+    );
+    let started = live.sink.wait_for_event("session-started", Some("1"));
+
+    assert!(
+        started.contains(r#""screenOffEnabled":true"#),
+        "first session should apply stored screen-off: {started}"
+    );
+    assert_eq!(
+        runs.lock().expect("session argument runs lock").as_slice(),
+        [vec![
+            "--keep-active".to_owned(),
+            "--turn-screen-off".to_owned()
+        ]]
+    );
+    assert_eq!(live.sink.event_count("session-started", "2"), 0);
     live.backend.stop_session();
 }
 
@@ -746,12 +963,18 @@ fn start_over_persistence_failure_preserves_the_live_session_and_trusted_state()
 #[test]
 fn spontaneous_session_end_cancels_the_session_token_before_terminal_event() {
     let captured_cancellation = Arc::new(Mutex::new(None));
-    let live = live_runtime(
+    let (release, ending_release) = mpsc::channel();
+    let mut live = live_runtime(
         Box::new(EndingSession {
             cancellation: Arc::clone(&captured_cancellation),
+            release: ending_release,
         }),
         VecDeque::from([Ok(CommandOutput { succeeded: true })]),
     );
+    live.backend
+        .acknowledge_preview_ready(HELPER_EPOCH, 1)
+        .expect("acknowledge current preview");
+    release.send(()).expect("release ending session");
 
     live.sink.wait_for_event("session-ended", Some("2"));
 
@@ -762,6 +985,197 @@ fn spontaneous_session_end_cancels_the_session_token_before_terminal_event() {
             .expect("session cancellation lock")
             .as_ref()
             .is_some_and(CancellationToken::is_cancelled)
+    );
+}
+
+#[test]
+fn pre_ready_session_end_retries_once_on_the_next_generation_in_event_order() {
+    let (session, release, runs) =
+        controlled_session([Ok(SessionExit::Ended), Ok(SessionExit::Stopped)]);
+    let live = live_runtime(
+        session,
+        VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+    );
+
+    release.send(()).expect("release first session");
+    live.sink.wait_for_event("session-started", Some("2"));
+
+    assert_eq!(runs.load(Ordering::Acquire), 2);
+    assert_eq!(
+        live.sink.session_event_identities(),
+        [
+            ("session-starting".to_owned(), "1".to_owned()),
+            ("session-started".to_owned(), "1".to_owned()),
+            ("session-starting".to_owned(), "2".to_owned()),
+            ("session-started".to_owned(), "2".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn pre_ready_disconnection_retries_once_without_emitting_the_first_failure() {
+    let (session, release, runs) =
+        controlled_session([Err(SessionFailure::Disconnected), Ok(SessionExit::Stopped)]);
+    let live = live_runtime(
+        session,
+        VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+    );
+
+    release.send(()).expect("release first session");
+    live.sink.wait_for_event("session-started", Some("2"));
+
+    assert_eq!(runs.load(Ordering::Acquire), 2);
+    assert_eq!(
+        live.sink.session_event_identities(),
+        [
+            ("session-starting".to_owned(), "1".to_owned()),
+            ("session-started".to_owned(), "1".to_owned()),
+            ("session-starting".to_owned(), "2".to_owned()),
+            ("session-started".to_owned(), "2".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn claimed_retry_is_announced_before_stop_emits_the_next_terminal_generation() {
+    let (session, release, _) =
+        controlled_session([Ok(SessionExit::Ended), Ok(SessionExit::Stopped)]);
+    let (sink, gate) = blocking_retry_sink();
+    let mut live = live_runtime_with_retry_sink(session, sink);
+
+    release.send(()).expect("release first session");
+    gate.wait_until_blocked();
+    thread::scope(|scope| {
+        let backend = &mut live.backend;
+        let stop = scope.spawn(move || backend.stop_session());
+        gate.release();
+        stop.join().expect("stop thread");
+    });
+
+    live.sink.events.wait_for_event("session-ended", Some("3"));
+    let generation_transitions = live
+        .sink
+        .events
+        .session_event_identities()
+        .into_iter()
+        .filter(|(event_type, _)| event_type == "session-starting" || event_type == "session-ended")
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        generation_transitions,
+        [
+            ("session-starting".to_owned(), "1".to_owned()),
+            ("session-starting".to_owned(), "2".to_owned()),
+            ("session-ended".to_owned(), "3".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn second_pre_ready_failure_is_terminal_without_a_second_retry() {
+    let (session, release, runs) =
+        controlled_session([Ok(SessionExit::Ended), Err(SessionFailure::Disconnected)]);
+    let live = live_runtime(
+        session,
+        VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+    );
+
+    release.send(()).expect("release first session");
+    live.sink.wait_for_event("session-started", Some("2"));
+    release.send(()).expect("release retry session");
+    let failure = live.sink.wait_for_event("lifecycle-failure", Some("3"));
+    let failure: serde_json::Value =
+        serde_json::from_str(&failure).expect("terminal lifecycle failure");
+
+    assert_eq!(runs.load(Ordering::Acquire), 2);
+    assert_eq!(failure["reason"], "disconnected");
+    assert_eq!(
+        live.sink.session_event_identities(),
+        [
+            ("session-starting".to_owned(), "1".to_owned()),
+            ("session-started".to_owned(), "1".to_owned()),
+            ("session-starting".to_owned(), "2".to_owned()),
+            ("session-started".to_owned(), "2".to_owned()),
+            ("lifecycle-failure".to_owned(), "3".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn dependency_unavailable_before_preview_ready_is_terminal_without_retry() {
+    let (session, release, runs) = controlled_session([Err(SessionFailure::DependencyUnavailable)]);
+    let live = live_runtime(
+        session,
+        VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+    );
+
+    release.send(()).expect("release first session");
+    let failure = live.sink.wait_for_event("lifecycle-failure", Some("2"));
+    let failure: serde_json::Value =
+        serde_json::from_str(&failure).expect("dependency lifecycle failure");
+
+    assert_eq!(runs.load(Ordering::Acquire), 1);
+    assert_eq!(failure["reason"], "dependency-unavailable");
+    assert_eq!(
+        live.sink.session_event_identities(),
+        [
+            ("session-starting".to_owned(), "1".to_owned()),
+            ("session-started".to_owned(), "1".to_owned()),
+            ("lifecycle-failure".to_owned(), "2".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn session_end_after_preview_ready_is_terminal_without_retry() {
+    let (session, release, runs) = controlled_session([Ok(SessionExit::Ended)]);
+    let mut live = live_runtime(
+        session,
+        VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+    );
+    live.backend
+        .acknowledge_preview_ready(HELPER_EPOCH, 1)
+        .expect("acknowledge current preview");
+
+    release.send(()).expect("release ready session");
+    live.sink.wait_for_event("session-ended", Some("2"));
+
+    assert_eq!(runs.load(Ordering::Acquire), 1);
+    assert_eq!(
+        live.sink.session_event_identities(),
+        [
+            ("session-starting".to_owned(), "1".to_owned()),
+            ("session-started".to_owned(), "1".to_owned()),
+            ("session-ended".to_owned(), "2".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn disconnection_after_preview_ready_is_terminal_without_retry() {
+    let (session, release, runs) = controlled_session([Err(SessionFailure::Disconnected)]);
+    let mut live = live_runtime(
+        session,
+        VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+    );
+    live.backend
+        .acknowledge_preview_ready(HELPER_EPOCH, 1)
+        .expect("acknowledge current preview");
+
+    release.send(()).expect("release ready session");
+    let failure = live.sink.wait_for_event("lifecycle-failure", Some("2"));
+    let failure: serde_json::Value =
+        serde_json::from_str(&failure).expect("ready lifecycle failure");
+
+    assert_eq!(runs.load(Ordering::Acquire), 1);
+    assert_eq!(failure["reason"], "disconnected");
+    assert_eq!(
+        live.sink.session_event_identities(),
+        [
+            ("session-starting".to_owned(), "1".to_owned()),
+            ("session-started".to_owned(), "1".to_owned()),
+            ("lifecycle-failure".to_owned(), "2".to_owned()),
+        ]
     );
 }
 

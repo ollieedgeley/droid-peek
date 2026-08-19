@@ -242,11 +242,12 @@ android.commitConfiguration()
 Each entry is one argument, not a shell command. The API rejects malformed,
 transport-, display-, audio-, control-, and cleanup-changing options. A valid
 commit is stored privately and restarts only an active phone session. When
-`--turn-screen-off` is configured, the first session renders with the physical
-display still on; only after the panel renders its first valid frame does the
-plugin restart scrcpy with screen-off enabled. Removing the option causes one
-restart that restores normal scrcpy cleanup behavior. Android lock-screen and
-device-policy behavior remain unchanged.
+`--turn-screen-off` is configured, it is applied on the first scrcpy session.
+Omarchy proves the session with `session-started` plus a valid preview frame.
+If no frame arrives within five seconds, the session is stopped and Preview
+failed is shown. Removing the option causes one restart that restores normal
+scrcpy cleanup behavior. Android lock-screen and device-policy behavior remain
+unchanged.
 
 Phone mode is active only when the panel is open, **Android-mode shortcuts** is
 enabled, and the canonical application state is `interactive`. In that mode,

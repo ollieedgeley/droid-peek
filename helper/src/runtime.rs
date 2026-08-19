@@ -145,11 +145,43 @@ struct PendingReconnect {
     device: TrustedDevice,
 }
 
+#[derive(Default)]
+struct SessionTransition {
+    preview_ready_generation: Option<u64>,
+}
+
+impl SessionTransition {
+    fn acknowledge_preview_ready(
+        &mut self,
+        acknowledged_generation: u64,
+        current_generation: u64,
+    ) -> Result<(), FailureReason> {
+        if acknowledged_generation != current_generation {
+            return Err(FailureReason::Disconnected);
+        }
+        self.preview_ready_generation = Some(acknowledged_generation);
+        Ok(())
+    }
+
+    fn claim_retry(
+        &self,
+        attempt_generation: u64,
+        current_generation: u64,
+        cancelled: bool,
+    ) -> Option<u64> {
+        (!cancelled
+            && attempt_generation == current_generation
+            && self.preview_ready_generation != Some(attempt_generation))
+        .then(|| attempt_generation + 1)
+    }
+}
+
 struct SessionControl {
     runner: Arc<Mutex<Option<Box<dyn SessionRunner + Send>>>>,
     target: Arc<Mutex<Option<String>>>,
     scrcpy_arguments: Arc<Mutex<Vec<String>>>,
     generation: Arc<AtomicU64>,
+    transition: Arc<Mutex<SessionTransition>>,
     cancellation: CancellationToken,
     helper_epoch: String,
 }
@@ -163,6 +195,7 @@ impl SessionControl {
         let target = Arc::clone(&self.target);
         let scrcpy_arguments = Arc::clone(&self.scrcpy_arguments);
         let generation = Arc::clone(&self.generation);
+        let transition = Arc::clone(&self.transition);
         let cancellation = self.cancellation.clone();
         let helper_epoch = self.helper_epoch.clone();
         move |connected_target, expected_generation| {
@@ -172,78 +205,126 @@ impl SessionControl {
                 {
                     return;
                 }
+                let configured_arguments = match scrcpy_arguments.lock() {
+                    Ok(arguments) => arguments.clone(),
+                    Err(_) => return,
+                };
+                let screen_off_enabled = configured_arguments
+                    .iter()
+                    .any(|argument| argument == "--turn-screen-off");
+                let mut current_generation = expected_generation;
+                let mut retried = false;
                 let result = match runner.lock() {
-                    Ok(mut session) => {
-                        if cancellation.is_cancelled()
-                            || generation.load(Ordering::Acquire) != expected_generation
-                        {
+                    Ok(mut runner) => {
+                        let Some(session) = runner.as_mut() else {
+                            return;
+                        };
+                        session.set_quality(quality);
+                        session.set_scrcpy_arguments(configured_arguments);
+                        if let Ok(mut active) = target.lock() {
+                            *active = Some(connected_target.clone());
+                        } else {
                             return;
                         }
-                        let configured_arguments = match scrcpy_arguments.lock() {
-                            Ok(arguments) => arguments.clone(),
-                            Err(_) => return,
-                        };
-                        let screen_off_enabled = configured_arguments
-                            .iter()
-                            .any(|argument| argument == "--turn-screen-off");
-                        match session.as_mut() {
-                            Some(session) => {
-                                session.set_quality(quality);
-                                session.set_scrcpy_arguments(configured_arguments);
-                                if cancellation.is_cancelled()
-                                    || generation.load(Ordering::Acquire) != expected_generation
-                                {
-                                    return;
-                                }
-                                if let Ok(mut active) = target.lock() {
-                                    *active = Some(connected_target.clone());
-                                } else {
-                                    return;
-                                }
-                                let session_generation = expected_generation.to_string();
-                                let _ = sink.emit_event(&Event::SessionStarting {
-                                    helper_epoch: helper_epoch.clone(),
-                                    session_generation: session_generation.clone(),
-                                });
-                                session.run(
-                                    &connected_target,
-                                    &cancellation,
-                                    &mut |physical_display| {
-                                        if !cancellation.is_cancelled()
-                                            && generation.load(Ordering::Acquire)
-                                                == expected_generation
-                                        {
-                                            let _ = sink.emit_event(&Event::SessionStarted {
-                                                helper_epoch: helper_epoch.clone(),
-                                                session_generation: session_generation.clone(),
-                                                physical_width_mm: physical_display
-                                                    .map(|size| size.width_mm()),
-                                                physical_height_mm: physical_display
-                                                    .map(|size| size.height_mm()),
-                                                screen_off_enabled,
-                                            });
-                                        }
-                                    },
-                                )
+                        let mut session_generation = current_generation.to_string();
+                        {
+                            let Ok(_transition) = transition.lock() else {
+                                return;
+                            };
+                            if cancellation.is_cancelled()
+                                || generation.load(Ordering::Acquire) != current_generation
+                            {
+                                return;
                             }
-                            None => return,
+                            let _ = sink.emit_event(&Event::SessionStarting {
+                                helper_epoch: helper_epoch.clone(),
+                                session_generation: session_generation.clone(),
+                            });
+                        }
+                        loop {
+                            let result = session.run(
+                                &connected_target,
+                                &cancellation,
+                                &mut |physical_display| {
+                                    if !cancellation.is_cancelled()
+                                        && generation.load(Ordering::Acquire) == current_generation
+                                    {
+                                        let _ = sink.emit_event(&Event::SessionStarted {
+                                            helper_epoch: helper_epoch.clone(),
+                                            session_generation: session_generation.clone(),
+                                            physical_width_mm: physical_display
+                                                .map(|size| size.width_mm()),
+                                            physical_height_mm: physical_display
+                                                .map(|size| size.height_mm()),
+                                            screen_off_enabled,
+                                        });
+                                    }
+                                },
+                            );
+                            if !retried
+                                && matches!(
+                                    &result,
+                                    Ok(SessionExit::Ended) | Err(SessionFailure::Disconnected)
+                                )
+                            {
+                                let Ok(transition) = transition.lock() else {
+                                    return;
+                                };
+                                let observed_generation = generation.load(Ordering::Acquire);
+                                if observed_generation != current_generation {
+                                    return;
+                                }
+                                if let Some(retry_generation) = transition.claim_retry(
+                                    current_generation,
+                                    observed_generation,
+                                    cancellation.is_cancelled(),
+                                ) {
+                                    if generation
+                                        .compare_exchange(
+                                            current_generation,
+                                            retry_generation,
+                                            Ordering::AcqRel,
+                                            Ordering::Acquire,
+                                        )
+                                        .is_err()
+                                    {
+                                        return;
+                                    }
+                                    current_generation = retry_generation;
+                                    session_generation = current_generation.to_string();
+                                    let _ = sink.emit_event(&Event::SessionStarting {
+                                        helper_epoch: helper_epoch.clone(),
+                                        session_generation: session_generation.clone(),
+                                    });
+                                    retried = true;
+                                    drop(transition);
+                                    continue;
+                                }
+                            }
+                            break result;
                         }
                     }
                     Err(_) => Err(SessionFailure::DependencyUnavailable),
                 };
-                let ended_generation = expected_generation + 1;
-                if generation
-                    .compare_exchange(
-                        expected_generation,
-                        ended_generation,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
-                    .is_err()
+                let ended_generation = current_generation + 1;
                 {
-                    return;
+                    let Ok(_transition) = transition.lock() else {
+                        return;
+                    };
+                    if cancellation.is_cancelled()
+                        || generation
+                            .compare_exchange(
+                                current_generation,
+                                ended_generation,
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                            )
+                            .is_err()
+                    {
+                        return;
+                    }
+                    cancellation.cancel();
                 }
-                cancellation.cancel();
                 if let Ok(mut active) = target.lock() {
                     *active = None;
                 }
@@ -270,7 +351,22 @@ impl SessionControl {
     }
 
     fn stop_and_wait(&mut self) {
+        let transition = self.transition.lock();
         self.cancellation.cancel();
+        drop(transition);
+        self.wait_and_reset();
+    }
+
+    fn invalidate_and_wait(&mut self) -> u64 {
+        let transition = self.transition.lock();
+        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        self.cancellation.cancel();
+        drop(transition);
+        self.wait_and_reset();
+        generation
+    }
+
+    fn wait_and_reset(&mut self) {
         if let Ok(session) = self.runner.lock() {
             drop(session);
         }
@@ -278,12 +374,6 @@ impl SessionControl {
             *target = None;
         }
         self.cancellation = CancellationToken::new();
-    }
-
-    fn invalidate_and_wait(&mut self) -> u64 {
-        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
-        self.stop_and_wait();
-        generation
     }
 
     fn set_scrcpy_arguments(&self, arguments: Vec<String>) -> Result<(), FailureReason> {
@@ -329,6 +419,15 @@ impl SessionControl {
 
     fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
+    }
+
+    fn acknowledge_preview_ready(&self, session_generation: u64) -> Result<(), FailureReason> {
+        let mut transition = self
+            .transition
+            .lock()
+            .map_err(|_| FailureReason::DependencyUnavailable)?;
+        let current_generation = self.generation.load(Ordering::Acquire);
+        transition.acknowledge_preview_ready(session_generation, current_generation)
     }
 }
 
@@ -437,6 +536,7 @@ where
                     scrcpy_configuration.effective_arguments(false),
                 )),
                 generation: Arc::new(AtomicU64::new(0)),
+                transition: Arc::new(Mutex::new(SessionTransition::default())),
                 cancellation: CancellationToken::new(),
                 helper_epoch: helper_epoch.clone(),
             },
@@ -504,9 +604,12 @@ where
     }
 
     fn prepare_session_start(&mut self) -> Result<(), FailureReason> {
-        self.effective_screen_off = false;
-        self.session
-            .set_scrcpy_arguments(self.scrcpy_configuration.effective_arguments(false))
+        let effective_screen_off = self.scrcpy_configuration.screen_off_requested();
+        self.effective_screen_off = effective_screen_off;
+        self.session.set_scrcpy_arguments(
+            self.scrcpy_configuration
+                .effective_arguments(effective_screen_off),
+        )
     }
 
     fn launch_pending(&mut self) {
@@ -882,6 +985,17 @@ where
         self.session.generation()
     }
 
+    fn acknowledge_preview_ready(
+        &mut self,
+        helper_epoch: &str,
+        session_generation: u64,
+    ) -> Result<(), FailureReason> {
+        if helper_epoch != self.helper_epoch {
+            return Err(FailureReason::Disconnected);
+        }
+        self.session.acknowledge_preview_ready(session_generation)
+    }
+
     fn reconnect_trusted_device(&mut self) -> Result<(), FailureReason> {
         let device = self
             .trusted_device
@@ -1130,4 +1244,56 @@ pub fn default_runtime_directory() -> Option<PathBuf> {
         .filter(|directory| !directory.is_empty())
         .map(PathBuf::from)
         .map(|root| root.join("omarchy-android"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::{FailureReason, SessionTransition};
+
+    #[test]
+    fn preview_acknowledgement_prevents_retry_claim_for_the_same_generation() {
+        let transition = Mutex::new(SessionTransition::default());
+        let mut transition = transition.lock().expect("session transition lock");
+
+        let acknowledgement = transition.acknowledge_preview_ready(1, 1);
+        let retry_generation = transition.claim_retry(1, 1, false);
+
+        assert_eq!((acknowledgement, retry_generation), (Ok(()), None));
+    }
+
+    #[test]
+    fn retry_claim_advances_generation_and_invalidates_late_acknowledgement() {
+        let transition = Mutex::new(SessionTransition::default());
+        let mut current_generation = 1;
+        let retry_generation = transition
+            .lock()
+            .expect("session transition lock")
+            .claim_retry(1, current_generation, false);
+        current_generation = retry_generation.expect("retry generation");
+
+        let acknowledgement = transition
+            .lock()
+            .expect("session transition lock")
+            .acknowledge_preview_ready(1, current_generation);
+
+        assert_eq!(
+            (retry_generation, current_generation, acknowledgement),
+            (Some(2), 2, Err(FailureReason::Disconnected))
+        );
+    }
+
+    #[test]
+    fn cancellation_prevents_retry_claim_for_the_current_generation() {
+        let transition = Mutex::new(SessionTransition::default());
+        let current_generation = 1;
+
+        let retry_generation = transition
+            .lock()
+            .expect("session transition lock")
+            .claim_retry(1, current_generation, true);
+
+        assert_eq!((retry_generation, current_generation), (None, 1));
+    }
 }

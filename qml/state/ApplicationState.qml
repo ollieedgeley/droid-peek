@@ -10,6 +10,7 @@ QtObject {
     property string helperEpoch: ""
     property string sessionGeneration: ""
     property bool sessionStarted: false
+    property bool connectionPresentationActive: false
     property bool captureAvailable: false
     property bool captureActive: false
     property bool firstValidFrameReceived: false
@@ -21,7 +22,8 @@ QtObject {
     property string helperReason: ""
     readonly property bool captureSurfaceRequired: panelOpen
                                                     && !managementOpen
-                                                    && sessionStarted
+                                                    && (sessionStarted
+                                                        || connectionPresentationActive)
 
     readonly property bool previewUsable: helperReady
                                                   && sessionStarted
@@ -66,6 +68,7 @@ QtObject {
         if (!factsExternallyManaged) {
             helperReady = false;
             hasTrustedDevice = false;
+            connectionPresentationActive = false;
             helperEpoch = "";
             sessionGeneration = "";
             helperActivity = "";
@@ -78,6 +81,7 @@ QtObject {
         if (!factsExternallyManaged) {
             helperReady = false;
             sessionGeneration = helperEpoch === "" ? "" : "0";
+            connectionPresentationActive = false;
             helperActivity = "";
             helperReason = "";
             clearSessionFacts();

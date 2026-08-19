@@ -135,6 +135,30 @@ TestCase {
         compare(state.firstValidFrameReceived, false)
     }
 
+    function test_connection_presentation_requires_capture_without_enabling_preview() {
+        state.panelOpen = true
+        state.helperReady = true
+        state.hasTrustedDevice = true
+        state.sessionGeneration = "4"
+        state.connectionPresentationActive = true
+
+        compare(state.captureSurfaceRequired, true)
+        compare(state.previewUsable, false)
+        compare(state.applicationState, "recovering")
+
+        state.captureAvailable = true
+        state.captureActive = true
+        state.firstValidFrameReceived = true
+        state.displayWidth = 1080
+        state.displayHeight = 2400
+        state.previewInputEnabled = true
+
+        compare(state.previewUsable, false)
+        compare(state.applicationState, "recovering")
+        state.managementOpen = true
+        compare(state.captureSurfaceRequired, false)
+    }
+
     function test_closed_state_wins_over_retained_session_facts() {
         makeInteractive()
         state.panelOpen = false

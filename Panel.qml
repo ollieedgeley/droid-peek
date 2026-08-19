@@ -58,28 +58,39 @@ Panel {
     function horizontalPanelInset() {
         return panel.padding * 2 + Border.left(panel.borderSpec) + Border.right(panel.borderSpec);
     }
+    readonly property int previewSourceWidth: phonePreview !== null
+                                              && phonePreview.framedWidth > 0
+                                              ? phonePreview.framedWidth
+                                              : (phonePreview !== null
+                                                 && phonePreview.displayWidth > 0
+                                                 ? phonePreview.displayWidth : 9)
+    readonly property int previewSourceHeight: phonePreview !== null
+                                               && phonePreview.framedHeight > 0
+                                               ? phonePreview.framedHeight
+                                               : (phonePreview !== null
+                                                  && phonePreview.displayHeight > 0
+                                                  ? phonePreview.displayHeight : 16)
+
 
     function desiredViewportSize(availableHeight) {
         var horizontalInset = horizontalPanelInset();
-        var reservedSpacing = phoneToolbar.visible ? 0 : content.spacing;
         var maxWidth = panel.availableCardWidth > 0 ? Math.max(1, panel.availableCardWidth - horizontalInset) : Style.space(288);
-        var maxHeight = availableHeight > 0 ? Math.max(1, availableHeight - panel.verticalContentInset - phoneToolbar.implicitHeight - reservedSpacing) : Style.space(640);
-        var sourceWidth = phonePreview && phonePreview.displayWidth > 0 ? phonePreview.displayWidth : 9;
-        var sourceHeight = phonePreview && phonePreview.displayHeight > 0 ? phonePreview.displayHeight : 16;
+        var maxHeight = availableHeight > 0 ? Math.max(1, availableHeight - panel.verticalContentInset - phoneToolbar.implicitHeight) : Style.space(640);
         var baseWidth = Math.max(1, Style.space(320) - horizontalInset);
-        return PreviewGeometry.scaledAspectSize(sourceWidth, sourceHeight, baseWidth, maxWidth, maxHeight, pairingState.previewScale);
+        return PreviewGeometry.scaledAspectSize(root.previewSourceWidth,
+                                               root.previewSourceHeight,
+                                               baseWidth, maxWidth, maxHeight,
+                                               pairingState.previewScale);
     }
 
     function desiredPanelWidth() {
         if (root.applicationState === "interactive"
                 || root.applicationState === "management"
-                || pairingState.sessionStarted) {
+                || applicationStateModel.captureSurfaceRequired) {
             if (root.managementOpen)
                 return Style.space(400);
             return horizontalPanelInset()
-                    + Math.max(phoneToolbar.implicitWidth,
-                               desiredViewportSize(
-                                   panel.availableCardHeight).width);
+                    + desiredViewportSize(panel.availableCardHeight).width;
         }
         return Style.space(320);
     }
@@ -230,6 +241,8 @@ Panel {
         helperEpoch: root.acceptedHelperEpoch
         sessionGeneration: pairingState.sessionGeneration
         sessionStarted: pairingState.sessionStarted
+        connectionPresentationActive:
+            pairingState.connectionPresentationActive
         captureAvailable: root.phonePreview !== null
                               && root.phonePreview.captureAvailable
         captureActive: root.phonePreview !== null && root.phonePreview.active
@@ -244,6 +257,8 @@ Panel {
         helperActivity: pairingState.activity
         helperReason: pairingState.reason
     }
+
+
 
     PairingState {
         id: pairingState
@@ -514,11 +529,24 @@ Panel {
                 Column {
                     id: interactivePhoneUnit
                     objectName: "interactivePhoneUnit"
-                    width: parent.width
+                    width: root.settingsOpen
+                           ? parent.width
+                           : root.desiredViewportSize(
+                                 panel.availableCardHeight).width
+                    x: root.settingsOpen || parent === null
+                       ? 0
+                       : Math.round((parent.width - width) / 2)
                     spacing: 0
                     visible: root.applicationState === "interactive"
                              || root.settingsOpen
                              || applicationStateModel.captureSurfaceRequired
+
+                    Item {
+                        objectName: "loadingToolbarSpacer"
+                        width: parent.width
+                        height: visible ? phoneToolbar.implicitHeight : 0
+                        visible: !phoneToolbar.visible
+                    }
 
                     PhoneToolbar {
                         id: phoneToolbar
@@ -570,11 +598,7 @@ Panel {
 
                         Loader {
                             id: phonePreviewLoader
-                            anchors.centerIn: parent
-                            width: root.desiredViewportSize(
-                                       panel.availableCardHeight).width
-                            height: root.desiredViewportSize(
-                                        panel.availableCardHeight).height
+                            anchors.fill: parent
                             active: root.opened
                                     && pairingState.sessionStarted
                             source: Qt.resolvedUrl(
@@ -643,14 +667,9 @@ Panel {
                                 if (!preview
                                         || !preview.firstValidFrameReceived)
                                     return;
-                                Qt.callLater(function () {
-                                    if (root.applicationState
-                                            === "interactive")
-                                        pairingState
-                                        .requestScreenOffAfterPreview(
+                                pairingState.acknowledgePreviewReady(
                                             preview.helperEpoch,
                                             preview.sessionGeneration);
-                                });
                             }
                             function onTapRequested(x, y, displayWidth,
                                                     displayHeight, helperEpoch,
@@ -789,6 +808,7 @@ Panel {
 
                     Button {
                         visible: pairingState.sessionState === "disconnected"
+                                 && !applicationStateModel.captureSurfaceRequired
                         text: "Reconnect"
                         foreground: root.contentForeground
                         onClicked: pairingState.reconnectTrustedDevice()

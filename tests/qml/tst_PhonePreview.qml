@@ -179,6 +179,20 @@ TestCase {
         compare(preview.firstValidFrameReceived, false)
     }
 
+    function test_source_acknowledgement_is_not_a_valid_frame() {
+        preview.captureRequested = true
+        var currentCaptureEpoch = preview.captureEpoch
+        verify(preview.acceptCaptureSource(
+                   currentCaptureEpoch, "17", "1",
+                   preview.deviceId, preview.deviceDescription))
+
+        compare(preview.firstValidFrameReceived, false)
+        compare(preview.interactionReady, false)
+        verify(preview.acceptRenderedFrame(
+                   currentCaptureEpoch, "17", "1", 1080, 2392))
+        compare(preview.firstValidFrameReceived, true)
+    }
+
     function test_zero_sized_frame_is_not_capture_ready() {
         preview.captureRequested = true
         var currentCaptureEpoch = preview.captureEpoch

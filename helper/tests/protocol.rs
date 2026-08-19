@@ -25,6 +25,7 @@ struct FakePairingBackend {
     session_stops: usize,
     start_overs: usize,
     session_generation: u64,
+    preview_ready_acknowledgements: Vec<(String, u64)>,
     pointer_taps: Vec<(DisplayGeometry, NormalizedPoint)>,
     pointer_swipes: Vec<(DisplayGeometry, NormalizedPoint, NormalizedPoint, u32)>,
     keys: Vec<AndroidKey>,
@@ -55,6 +56,16 @@ impl PairingBackend for FakePairingBackend {
 
     fn session_generation(&self) -> u64 {
         self.session_generation
+    }
+
+    fn acknowledge_preview_ready(
+        &mut self,
+        helper_epoch: &str,
+        session_generation: u64,
+    ) -> Result<(), FailureReason> {
+        self.preview_ready_acknowledgements
+            .push((helper_epoch.to_owned(), session_generation));
+        Ok(())
     }
 
     fn reconnect_trusted_device(&mut self) -> Result<(), FailureReason> {
@@ -384,6 +395,89 @@ fn stale_or_missing_identity_rejects_every_session_bound_command_before_backend_
     assert!(backend.keys.is_empty());
     assert!(backend.texts.is_empty());
     assert!(backend.phone_targets.is_empty());
+}
+
+#[test]
+fn preview_ready_accepts_only_the_current_two_part_identity_and_has_no_response() {
+    let backend = FakePairingBackend {
+        session_generation: 7,
+        ..FakePairingBackend::default()
+    };
+    let mut engine = engine(backend);
+
+    let events = engine.handle_line(
+        r#"{"version":11,"type":"preview-ready","helperEpoch":"73001","sessionGeneration":"7"}"#,
+    );
+
+    assert!(events.is_empty());
+    assert_eq!(
+        engine.into_backend().preview_ready_acknowledgements,
+        [(HELPER_EPOCH.to_owned(), 7)]
+    );
+}
+
+#[test]
+fn stale_preview_ready_identity_is_rejected_without_backend_acknowledgement() {
+    let backend = FakePairingBackend {
+        session_generation: 7,
+        ..FakePairingBackend::default()
+    };
+    let mut engine = engine(backend);
+
+    for command in [
+        r#"{"version":11,"type":"preview-ready","helperEpoch":"73000","sessionGeneration":"7"}"#,
+        r#"{"version":11,"type":"preview-ready","helperEpoch":"73001","sessionGeneration":"6"}"#,
+        r#"{"version":11,"type":"preview-ready","helperEpoch":"73001"}"#,
+        r#"{"version":11,"type":"preview-ready","sessionGeneration":"7"}"#,
+    ] {
+        assert_eq!(
+            wire_lines(engine.handle_line(command)),
+            [
+                r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"7","outcome":"stale-session"}"#
+            ]
+        );
+    }
+    assert!(
+        engine
+            .into_backend()
+            .preview_ready_acknowledgements
+            .is_empty()
+    );
+}
+
+#[test]
+fn preview_ready_rejects_payload_or_non_string_generation_without_backend_acknowledgement() {
+    let backend = FakePairingBackend {
+        session_generation: 7,
+        ..FakePairingBackend::default()
+    };
+    let mut engine = engine(backend);
+
+    let rejected_events = [
+        r#"{"version":11,"type":"preview-ready","helperEpoch":"73001","sessionGeneration":"7","payload":{}}"#,
+        r#"{"version":11,"type":"preview-ready","helperEpoch":"73001","sessionGeneration":7}"#,
+    ]
+    .map(|command| wire_lines(engine.handle_line(command)));
+
+    assert_eq!(
+        rejected_events,
+        [
+            vec![
+                r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"invalid-command"}"#
+                    .to_owned()
+            ],
+            vec![
+                r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"invalid-command"}"#
+                    .to_owned()
+            ],
+        ]
+    );
+    assert!(
+        engine
+            .into_backend()
+            .preview_ready_acknowledgements
+            .is_empty()
+    );
 }
 
 #[test]

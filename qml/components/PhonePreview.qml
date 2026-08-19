@@ -21,6 +21,8 @@ Item {
     property bool firstValidFrameReceived: false
     property bool captureSourceAcknowledged: false
     property int captureEpoch: 0
+    property int framedWidth: 0
+    property int framedHeight: 0
     readonly property var capturePipeline: captureLoader.item
     readonly property int deviceIndex: findDeviceIndex(
                                            videoInputs, deviceId,
@@ -37,12 +39,16 @@ Item {
     readonly property rect displayedContent: capturePipeline !== null
                                                 ? capturePipeline.contentRect
                                                 : Qt.rect(0, 0, 0, 0)
-    readonly property int displayWidth: capturePipeline !== null
-                                            ? Math.round(capturePipeline.sourceRect.width)
-                                            : 0
-    readonly property int displayHeight: capturePipeline !== null
-                                             ? Math.round(capturePipeline.sourceRect.height)
-                                             : 0
+    readonly property int displayWidth: framedWidth > 0
+                                            ? framedWidth
+                                            : (capturePipeline !== null
+                                               ? Math.round(capturePipeline.sourceRect.width)
+                                               : 0)
+    readonly property int displayHeight: framedHeight > 0
+                                             ? framedHeight
+                                             : (capturePipeline !== null
+                                                ? Math.round(capturePipeline.sourceRect.height)
+                                                : 0)
     readonly property bool interactionReady: captureAvailable && active
                                                 && firstValidFrameReceived
                                                 && displayWidth > 0
@@ -187,6 +193,8 @@ Item {
     function resetCurrentCaptureReadiness() {
         captureSourceAcknowledged = false;
         firstValidFrameReceived = false;
+        framedWidth = 0;
+        framedHeight = 0;
     }
 
     function recreateCapturePipeline() {
@@ -222,6 +230,8 @@ Item {
                 || !captureRequested || !captureSourceAcknowledged
                 || width <= 0 || height <= 0)
             return false;
+        framedWidth = width;
+        framedHeight = height;
         firstValidFrameReceived = true;
         return true;
     }
@@ -334,6 +344,19 @@ Item {
                                          pipeline.sessionGenerationSnapshot,
                                          sourceRect.width,
                                          sourceRect.height)
+            }
+
+            Connections {
+                target: videoOutput.videoSink
+
+                function onVideoFrameChanged() {
+                    var size = videoOutput.videoSink.videoSize;
+                    root.acceptRenderedFrame(
+                                pipeline.epoch,
+                                pipeline.helperEpochSnapshot,
+                                pipeline.sessionGenerationSnapshot,
+                                size.width, size.height);
+                }
             }
         }
     }

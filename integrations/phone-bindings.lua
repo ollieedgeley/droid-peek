@@ -117,19 +117,19 @@ end
 local function unix_time_ms()
   local process = io.popen("/usr/bin/date +%s%3N", "r")
   if process == nil then
-    fail("unable to read the wall clock")
+    return os.time() * 1000
   end
   local value = process:read("*l")
   local closed = process:close()
   local milliseconds = tonumber(value)
   if not closed or milliseconds == nil or milliseconds < 0
       or milliseconds ~= math.floor(milliseconds) then
-    fail("unable to read the wall clock")
+    return os.time() * 1000
   end
   return milliseconds
 end
 
-local function dispatch_target(target)
+local function dispatch_target(target, description)
   local envelope = table.concat({
     '{"requestId":',
     json_string(next_request_id()),
@@ -137,6 +137,8 @@ local function dispatch_target(target)
     json_value(target, {}),
     ',"expiresAtUnixMs":',
     tostring(unix_time_ms() + 2000),
+    ',"description":',
+    json_string(description),
     "}",
   })
   local command = "omarchy-shell ollie.android phoneTarget "
@@ -267,7 +269,7 @@ function api.bind(keys, description, target)
     dispatcher = close_panel
   else
     dispatcher = function()
-      dispatch_target(target)
+      dispatch_target(target, description)
     end
   end
   hl.bind(keys, dispatcher, { description = description })

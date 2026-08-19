@@ -1,46 +1,115 @@
 -- ~/.config/hypr/omarchy-android.lua
 --
--- This file owns the keyboard only while the Android panel is open and the
--- phone is interactive. Outside that state, normal Omarchy bindings apply.
+-- Droid Peek phone-mode bindings. Edit for your own phone.
 
 local android = dofile(
   os.getenv("HOME")
     .. "/.config/omarchy/plugins/ollie.android/integrations/phone-bindings.lua"
 )
 
--- Optional scrcpy arguments are validated here, persisted only after the
--- complete file succeeds, and applied to the next private phone session.
+-- Session. Android still controls locking.
 android.configure({
-  scrcpyArgs = {
-    "--keep-active",
-    "--turn-screen-off",
-    "--stay-awake",
-  },
+  scrcpyArgs = { "--keep-active", "--turn-screen-off", "--stay-awake" },
 })
 
 android.define_submap("omarchy-android", function()
-  -- Same chord as the desktop toggle. It has no desktop effect here because
-  -- this submap is inactive after the panel closes.
+  -- Panel
   android.bind("SUPER + ALT + A", "Close Android panel", android.close_panel)
 
-  -- Generic defaults preserve familiar Omarchy chords and descriptions.
-  android.bind("SUPER + SHIFT + RETURN", "Browser", "android.browser.default")
-  android.bind("SUPER + SHIFT + B", "Browser", "android.browser.default")
-  android.bind("SUPER + W", "Close current window", "android.navigate.home")
+  -- Navigation
+  android.bind("ALT + TAB", "Recent apps", "android.recent-apps")
+  android.bind("SUPER + W", "Home", "android.navigate.home")
 
-  -- Device- and package-dependent examples stay disabled until the user picks
-  -- a target that works on their phone.
-  -- android.bind("SUPER + SPACE", "Omarchy menu", "android.launcher.search")
-  -- android.bind("SUPER + SHIFT + F", "File manager", {
-  --   type = "android.app.launch", package = "com.example.files"
+  -- Clipboard (Android only; no desktop sync)
+  android.bind("SUPER + C", "Copy", { type = "android.keyevent", key = "copy" })
+  android.bind("SUPER + V", "Paste", { type = "android.keyevent", key = "paste" })
+  android.bind("SUPER + X", "Cut", { type = "android.keyevent", key = "cut" })
+
+  -- Volume
+  android.bind("XF86AudioRaiseVolume", "Volume up", { type = "android.keyevent", key = "volume-up" })
+  android.bind("XF86AudioLowerVolume", "Volume down", { type = "android.keyevent", key = "volume-down" })
+  android.bind("XF86AudioMute", "Mute", { type = "android.keyevent", key = "volume-mute" })
+
+  -- Media
+  android.bind("XF86AudioNext", "Next track", { type = "android.keyevent", key = "media-next" })
+  android.bind("ALT + XF86AudioPlay", "Next track", { type = "android.keyevent", key = "media-next" })
+  android.bind("XF86AudioPause", "Play/pause", { type = "android.keyevent", key = "media-play-pause" })
+  android.bind("XF86AudioPlay", "Play/pause", { type = "android.keyevent", key = "media-play-pause" })
+  android.bind("XF86AudioPrev", "Previous track", { type = "android.keyevent", key = "media-previous" })
+  android.bind("ALT + SHIFT + XF86AudioPlay", "Previous track", { type = "android.keyevent", key = "media-previous" })
+
+  -- Browsers
+  -- Uncomment the one installed on your phone.
+
+  -- Chrome
+  -- android.bind("SUPER + SHIFT + RETURN", "Chrome", {
+  --   type = "android.app.launch", package = "com.android.chrome"
   -- })
-  -- android.bind("SUPER + SHIFT + M", "Music", {
-  --   type = "android.app.launch", package = "com.example.music"
+  -- android.bind("SUPER + SHIFT + B", "Chrome", {
+  --   type = "android.app.launch", package = "com.android.chrome"
   -- })
 
-  -- User additions use the same form with any non-conflicting chord.
-  -- android.bind("CTRL + ALT + SHIFT + P", "My Android app", {
-  --   type = "android.app.launch", package = "com.example.app"
+  -- Firefox
+  -- android.bind("SUPER + SHIFT + RETURN", "Firefox", {
+  --   type = "android.app.launch", package = "org.mozilla.firefox"
+  -- })
+  -- android.bind("SUPER + SHIFT + B", "Firefox", {
+  --   type = "android.app.launch", package = "org.mozilla.firefox"
+  -- })
+
+  -- Brave
+  -- android.bind("SUPER + SHIFT + RETURN", "Brave", {
+  --   type = "android.app.launch", package = "com.brave.browser"
+  -- })
+  -- android.bind("SUPER + SHIFT + B", "Brave", {
+  --   type = "android.app.launch", package = "com.brave.browser"
+  -- })
+
+  -- Apps
+  -- Uncomment installed apps, or add a package name.
+
+  -- android.bind("SUPER + RETURN", "Termux", {
+  --   type = "android.app.launch", package = "com.termux"
+  -- })
+  -- android.bind("SUPER + SHIFT + C", "HEY Calendar", {
+  --   type = "android.app.launch", package = "com.basecamp.heycalendar"
+  -- })
+  -- android.bind("SUPER + SHIFT + E", "HEY Email", {
+  --   type = "android.app.launch", package = "com.basecamp.hey"
+  -- })
+  -- android.bind("SUPER + SHIFT + M", "Spotify", {
+  --   type = "android.app.launch", package = "com.spotify.music"
+  -- })
+  -- android.bind("SUPER + SHIFT + G", "Signal", {
+  --   type = "android.app.launch", package = "org.thoughtcrime.securesms"
+  -- })
+  -- android.bind("SUPER + SHIFT + O", "Obsidian", {
+  --   type = "android.app.launch", package = "md.obsidian"
+  -- })
+  -- android.bind("SUPER + SHIFT + A", "ChatGPT", {
+  --   type = "android.app.launch", package = "com.openai.chatgpt"
+  -- })
+  -- android.bind("SUPER + SHIFT + ALT + A", "Grok", {
+  --   type = "android.app.launch", package = "ai.x.grok"
+  -- })
+  -- android.bind("SUPER + SHIFT + X", "X", {
+  --   type = "android.app.launch", package = "com.twitter.android"
+  -- })
+  -- android.bind("SUPER + SHIFT + Y", "YouTube", {
+  --   type = "android.app.launch", package = "com.google.android.youtube"
+  -- })
+  -- android.bind("SUPER + SHIFT + ALT + G", "WhatsApp", {
+  --   type = "android.app.launch", package = "com.whatsapp"
+  -- })
+  -- android.bind("SUPER + SHIFT + CTRL + G", "Google Messages", {
+  --   type = "android.app.launch",
+  --   package = "com.google.android.apps.messaging"
+  -- })
+  -- android.bind("SUPER + SHIFT + P", "Google Photos", {
+  --   type = "android.app.launch", package = "com.google.android.apps.photos"
+  -- })
+  -- android.bind("SUPER + SHIFT + S", "Google Maps", {
+  --   type = "android.app.launch", package = "com.google.android.apps.maps"
   -- })
 end)
 

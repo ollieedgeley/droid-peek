@@ -9,7 +9,6 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PhoneTarget {
-    BrowserDefault,
     NavigateHome,
     NavigateBack,
     RecentApps,
@@ -27,8 +26,6 @@ enum PhoneTargetWire {
 
 #[derive(Deserialize)]
 enum NamedPhoneTarget {
-    #[serde(rename = "android.browser.default")]
-    BrowserDefault,
     #[serde(rename = "android.navigate.home")]
     NavigateHome,
     #[serde(rename = "android.navigate.back")]
@@ -71,7 +68,6 @@ impl<'de> Deserialize<'de> for PhoneTarget {
         D: Deserializer<'de>,
     {
         match PhoneTargetWire::deserialize(deserializer)? {
-            PhoneTargetWire::Named(NamedPhoneTarget::BrowserDefault) => Ok(Self::BrowserDefault),
             PhoneTargetWire::Named(NamedPhoneTarget::NavigateHome) => Ok(Self::NavigateHome),
             PhoneTargetWire::Named(NamedPhoneTarget::NavigateBack) => Ok(Self::NavigateBack),
             PhoneTargetWire::Named(NamedPhoneTarget::RecentApps) => Ok(Self::RecentApps),
@@ -122,9 +118,6 @@ impl<'a> AdbActionAdapter<'a> {
         target: &PhoneTarget,
     ) -> Result<bool, ActionExecutionFailure> {
         let arguments = match target {
-            PhoneTarget::BrowserDefault => {
-                return self.launch_default_browser(selected_device);
-            }
             PhoneTarget::NavigateHome => key_arguments(selected_device, AndroidKey::Home),
             PhoneTarget::NavigateBack => key_arguments(selected_device, AndroidKey::Back),
             PhoneTarget::RecentApps => key_arguments(selected_device, AndroidKey::AppSwitch),
@@ -138,42 +131,6 @@ impl<'a> AdbActionAdapter<'a> {
         };
         self.runner
             .run_phone_target(CommandRequest::new("adb", arguments), self.cancellation)
-            .map(|output| output.succeeded)
-    }
-
-    fn launch_default_browser(
-        &mut self,
-        selected_device: &str,
-    ) -> Result<bool, ActionExecutionFailure> {
-        let captured = self.runner.run_captured_phone_target(
-            CommandRequest::new(
-                "adb",
-                [
-                    "-s",
-                    selected_device,
-                    "shell",
-                    "cmd",
-                    "role",
-                    "get-role-holders",
-                    "android.app.role.BROWSER",
-                ]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-            ),
-            self.cancellation,
-        )?;
-        if !captured.succeeded {
-            return Ok(false);
-        }
-        let Some(package) = first_valid_role_holder(&captured.stdout) else {
-            return Ok(false);
-        };
-        self.runner
-            .run_phone_target(
-                CommandRequest::new("adb", app_launch_arguments(selected_device, package)),
-                self.cancellation,
-            )
             .map(|output| output.succeeded)
     }
 }
@@ -207,20 +164,4 @@ fn app_launch_arguments(selected_device: &str, package: &str) -> Vec<String> {
     .into_iter()
     .map(str::to_owned)
     .collect()
-}
-
-fn first_valid_role_holder(stdout: &str) -> Option<&str> {
-    stdout.lines().find_map(|line| {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-        if valid_android_package(trimmed) {
-            return Some(trimmed);
-        }
-        trimmed
-            .split_whitespace()
-            .next()
-            .filter(|token| valid_android_package(token))
-    })
 }

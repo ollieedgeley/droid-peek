@@ -29,21 +29,25 @@ TestCase {
         router.helperEpoch = "17"
         router.sessionGeneration = "3"
         router.failureNotificationTimes = ({})
+        router.pendingLabels = ({})
         targetSpy.clear()
         failureNotificationSpy.clear()
     }
 
-    function envelope(requestId, target, deadline) {
-        return {
+    function envelope(requestId, target, deadline, description) {
+        var request = {
             requestId: requestId,
             target: target,
             expiresAtUnixMs: deadline === undefined
                                ? Date.now() + 2000 : deadline
         }
+        if (description !== undefined)
+            request.description = description
+        return request
     }
 
     function test_interactive_phone_target_is_admitted_with_current_identity() {
-        var request = envelope("request-1", "android.browser.default")
+        var request = envelope("request-1", "android.navigate.home")
 
         verify(router.acceptPhoneTarget(request))
         compare(targetSpy.count, 1)
@@ -199,7 +203,9 @@ TestCase {
             { tag: "deadline too far", request: envelope("request-late", "android.navigate.home", Date.now() + 3000) },
             { tag: "fractional deadline", request: envelope("request-fraction", "android.navigate.home", Date.now() + 1000.5) },
             { tag: "request array", request: ["request-array"] },
-            { tag: "missing target", request: { requestId: "request-missing-target", expiresAtUnixMs: Date.now() + 1000 } }
+            { tag: "missing target", request: { requestId: "request-missing-target", expiresAtUnixMs: Date.now() + 1000 } },
+            { tag: "empty description", request: envelope("request-empty-desc", "android.navigate.home", undefined, "") },
+            { tag: "nonstring description", request: envelope("request-num-desc", "android.navigate.home", undefined, 1) }
         ]
     }
 
@@ -242,7 +248,8 @@ TestCase {
     }
 
     function test_failed_results_map_to_redacted_notifications(data) {
-        verify(router.consumePhoneTargetResult("failed", data.code))
+        verify(router.consumePhoneTargetResult("request-unlabeled",
+                                               "failed", data.code))
 
         compare(failureNotificationSpy.count, 1)
         compare(failureNotificationSpy.signalArguments[0][0], data.message)
@@ -255,8 +262,10 @@ TestCase {
     }
 
     function test_identical_failure_burst_is_coalesced() {
-        verify(router.consumePhoneTargetResult("failed", "target-failed"))
-        verify(router.consumePhoneTargetResult("failed", "target-failed"))
+        verify(router.consumePhoneTargetResult("request-a", "failed",
+                                               "target-failed"))
+        verify(router.consumePhoneTargetResult("request-b", "failed",
+                                               "target-failed"))
 
         compare(failureNotificationSpy.count, 1)
         compare(failureNotificationSpy.signalArguments[0][1],
@@ -264,8 +273,10 @@ TestCase {
     }
 
     function test_distinct_failures_are_not_coalesced() {
-        verify(router.consumePhoneTargetResult("failed", "target-failed"))
-        verify(router.consumePhoneTargetResult("failed", "invalid-target"))
+        verify(router.consumePhoneTargetResult("request-a", "failed",
+                                               "target-failed"))
+        verify(router.consumePhoneTargetResult("request-b", "failed",
+                                               "invalid-target"))
 
         compare(failureNotificationSpy.count, 2)
     }
@@ -279,13 +290,13 @@ TestCase {
     }
 
     function test_nonfailed_and_unknown_results_do_not_notify(data) {
-        verify(!router.consumePhoneTargetResult(data.outcome, data.code))
+        verify(!router.consumePhoneTargetResult("request-other", data.outcome,
+                                                data.code))
         compare(failureNotificationSpy.count, 0)
     }
 
     function test_supported_named_targets_are_exact_data() {
         return [
-            { tag: "browser", target: "android.browser.default" },
             { tag: "home", target: "android.navigate.home" },
             { tag: "back", target: "android.navigate.back" },
             { tag: "recent apps", target: "android.recent-apps" }
@@ -296,6 +307,35 @@ TestCase {
         verify(router.acceptPhoneTarget(envelope("request-target", data.target)))
         compare(targetSpy.count, 1)
         compare(targetSpy.signalArguments[0][0].target, data.target)
+        compare(targetSpy.signalArguments[0][0].description, undefined)
+    }
+
+    function test_labeled_termux_failure_uses_binding_description() {
+        var request = envelope("request-termux", {
+            type: "android.app.launch",
+            package: "com.termux"
+        }, undefined, "Termux")
+
+        verify(router.acceptPhoneTarget(request))
+        compare(targetSpy.count, 1)
+        compare(targetSpy.signalArguments[0][0], {
+            requestId: request.requestId,
+            target: request.target,
+            expiresAtUnixMs: request.expiresAtUnixMs,
+            helperEpoch: "17",
+            sessionGeneration: "3"
+        })
+        compare(targetSpy.signalArguments[0][0].description, undefined)
+
+        verify(router.consumePhoneTargetResult(request.requestId, "failed",
+                                               "target-failed"))
+        compare(failureNotificationSpy.count, 1)
+        compare(failureNotificationSpy.signalArguments[0][0],
+                "Couldn't open Termux.")
+        verify(failureNotificationSpy.signalArguments[0][0]
+               .indexOf("com.termux") < 0)
+        verify(failureNotificationSpy.signalArguments[0][0]
+               .indexOf("android.") < 0)
     }
 
     function test_old_semantic_and_passthrough_routing_surface_is_removed() {

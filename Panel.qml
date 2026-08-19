@@ -293,7 +293,7 @@ Panel {
         }
         onPhoneTargetCompleted: function (requestId, outcome,
                                           notificationCode) {
-            phoneTargetRouter.consumePhoneTargetResult(outcome,
+            phoneTargetRouter.consumePhoneTargetResult(requestId, outcome,
                                                        notificationCode);
         }
         onPreferenceUpdateFailed: function (reason) {

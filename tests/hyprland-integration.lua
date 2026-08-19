@@ -189,7 +189,6 @@ assert(#stored_config_commands == 0, "configure must only stage")
 
 android.define_submap("omarchy-android", function()
   android.bind("SUPER + ALT + A", "Close Android panel", android.close_panel)
-  android.bind("SUPER + SHIFT + B", "Browser", "android.browser.default")
   android.bind("SUPER + W", "Home", "android.navigate.home")
   android.bind("SUPER + ALT + P", "Package", {
     type = "android.app.launch",
@@ -200,7 +199,7 @@ end)
 
 assert(#submaps == 1, "the API must define exactly one submap")
 assert(submaps[1] == "omarchy-android")
-assert(#bindings == 5, "only declared phone bindings may be registered")
+assert(#bindings == 4, "only declared phone bindings may be registered")
 for _, binding in ipairs(bindings) do
   assert(binding.submap == "omarchy-android", "phone bindings must stay inside their submap")
   assert(type(binding.dispatcher) == "function", "deadlines must be created at dispatch time")
@@ -208,7 +207,7 @@ for _, binding in ipairs(bindings) do
   assert(type(binding.options.description) == "string")
 end
 assert(bindings[1].options.description == "Close Android panel")
-assert(bindings[2].options.description == "Browser")
+assert(bindings[2].options.description == "Home")
 
 for _, binding in ipairs(bindings) do
   assert(binding.keys ~= "SUPER + Q", "unsupported desktop chords must remain inert")
@@ -229,10 +228,11 @@ assert(execution_events[2].command == "omarchy-shell shell hide ollie.android")
 now_seconds = 1700000030
 now_milliseconds = 1700000030125
 bindings[2].dispatcher()
-local browser_json = command_envelope(execution_events[3].command)
-assert(json_string(browser_json, "target") == "android.browser.default")
-assert(json_integer(browser_json, "expiresAtUnixMs") == 1700000032125)
-local first_request_id = json_string(browser_json, "requestId")
+local home_json = command_envelope(execution_events[3].command)
+assert(json_string(home_json, "target") == "android.navigate.home")
+assert(json_string(home_json, "description") == "Home")
+assert(json_integer(home_json, "expiresAtUnixMs") == 1700000032125)
+local first_request_id = json_string(home_json, "requestId")
 assert(first_request_id ~= nil and first_request_id:match("^[A-Za-z0-9-]+$"))
 
 bindings[2].dispatcher()
@@ -241,18 +241,21 @@ assert(
   json_string(repeated_json, "requestId") ~= first_request_id,
   "each dispatch must have a fresh requestId"
 )
+assert(json_string(repeated_json, "description") == "Home")
 
-bindings[4].dispatcher()
+bindings[3].dispatcher()
 local package_json = command_envelope(execution_events[5].command)
 assert(package_json:match('"target"%s*:%s*{'), "typed target must stay an object")
 assert(json_string(package_json, "type") == "android.app.launch")
 assert(json_string(package_json, "package") == "com.example.files")
+assert(json_string(package_json, "description") == "Package")
 assert(json_integer(package_json, "expiresAtUnixMs") == 1700000032125)
 
-local invalid_target_ok, invalid_target_error = pcall(bindings[5].dispatcher)
+local invalid_target_ok, invalid_target_error = pcall(bindings[4].dispatcher)
 assert(invalid_target_ok, tostring(invalid_target_error))
 local invalid_json = command_envelope(execution_events[6].command)
 assert(json_string(invalid_json, "target") == "android.unsupported")
+assert(json_string(invalid_json, "description") == "Unsupported target")
 assert(
   #execution_events == 6,
   "an invalid target must be consumed by phone-target without desktop fallback"
@@ -279,5 +282,19 @@ assert(
   "configuration may be declared only once"
 )
 assert(#stored_config_commands == 1, "rejected calls must not reach the helper")
+now_seconds = 1700000100
+local original_date_popen = io.popen
+io.popen = function(command, mode)
+  if command == "/usr/bin/date +%s%3N" then
+    return nil
+  end
+  return original_date_popen(command, mode)
+end
+bindings[2].dispatcher()
+local fallback_json = command_envelope(execution_events[#execution_events].command)
+assert(json_string(fallback_json, "target") == "android.navigate.home")
+assert(json_string(fallback_json, "description") == "Home")
+assert(json_integer(fallback_json, "expiresAtUnixMs") == 1700000100000 + 2000)
+io.popen = original_date_popen
 os.time = original_time
 io.popen = original_popen

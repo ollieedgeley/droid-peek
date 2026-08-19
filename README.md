@@ -265,14 +265,25 @@ disabling Android-mode shortcuts, losing `interactive`, or restarting the
 helper resets the submap immediately. Outside phone mode, ordinary desktop
 bindings behave normally.
 
-The installed template enables only these four bindings:
+The installed template enables only these bindings:
 
 | Chord | Description | Target |
 | --- | --- | --- |
 | `SUPER + ALT + A` | Close Android panel | `android.close_panel` |
-| `SUPER + SHIFT + RETURN` | Browser | `android.browser.default` |
-| `SUPER + SHIFT + B` | Browser | `android.browser.default` |
-| `SUPER + W` | Close current window | `android.navigate.home` |
+| `ALT + TAB` | Recent apps | `android.recent-apps` |
+| `SUPER + W` | Home | `android.navigate.home` |
+| `SUPER + C` | Copy | `{ type = "android.keyevent", key = "copy" }` |
+| `SUPER + V` | Paste | `{ type = "android.keyevent", key = "paste" }` |
+| `SUPER + X` | Cut | `{ type = "android.keyevent", key = "cut" }` |
+| `XF86AudioRaiseVolume` | Volume up | `{ type = "android.keyevent", key = "volume-up" }` |
+| `XF86AudioLowerVolume` | Volume down | `{ type = "android.keyevent", key = "volume-down" }` |
+| `XF86AudioMute` | Mute | `{ type = "android.keyevent", key = "volume-mute" }` |
+| `XF86AudioNext` | Next track | `{ type = "android.keyevent", key = "media-next" }` |
+| `ALT + XF86AudioPlay` | Next track | `{ type = "android.keyevent", key = "media-next" }` |
+| `XF86AudioPause` | Play/pause | `{ type = "android.keyevent", key = "media-play-pause" }` |
+| `XF86AudioPlay` | Play/pause | `{ type = "android.keyevent", key = "media-play-pause" }` |
+| `XF86AudioPrev` | Previous track | `{ type = "android.keyevent", key = "media-previous" }` |
+| `ALT + SHIFT + XF86AudioPlay` | Previous track | `{ type = "android.keyevent", key = "media-previous" }` |
 
 The close callback synchronously resets Hyprland before requesting panel close,
 so a delayed close acknowledgement cannot strand keyboard ownership. The Home
@@ -288,10 +299,10 @@ android.bind("CTRL + ALT + SHIFT + P", "My Android app", {
 })
 ```
 
-Supported targets are `android.browser.default`, `android.navigate.home`,
-`android.navigate.back`, `android.recent-apps`, and a typed
-`android.app.launch` object with a validated package name. Arbitrary ADB or
-shell commands are not accepted.
+Supported targets are `android.navigate.home`, `android.navigate.back`,
+`android.recent-apps`, a typed `android.app.launch` object with a validated
+package name, and typed `android.keyevent` objects. Arbitrary ADB or shell
+commands are not accepted.
 
 Each target dispatch sends one base64url-encoded JSON envelope to
 `omarchy-shell ollie.android phoneTarget`. The envelope has a unique

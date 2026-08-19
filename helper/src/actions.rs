@@ -122,21 +122,9 @@ impl<'a> AdbActionAdapter<'a> {
         target: &PhoneTarget,
     ) -> Result<bool, ActionExecutionFailure> {
         let arguments = match target {
-            PhoneTarget::BrowserDefault => vec![
-                "-s",
-                selected_device,
-                "shell",
-                "am",
-                "start",
-                "-W",
-                "-a",
-                "android.intent.action.MAIN",
-                "-c",
-                "android.intent.category.APP_BROWSER",
-            ]
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
+            PhoneTarget::BrowserDefault => {
+                return self.launch_default_browser(selected_device);
+            }
             PhoneTarget::NavigateHome => key_arguments(selected_device, AndroidKey::Home),
             PhoneTarget::NavigateBack => key_arguments(selected_device, AndroidKey::Back),
             PhoneTarget::RecentApps => key_arguments(selected_device, AndroidKey::AppSwitch),
@@ -144,25 +132,48 @@ impl<'a> AdbActionAdapter<'a> {
                 if !valid_android_package(package) {
                     return Ok(false);
                 }
-                [
-                    "-s",
-                    selected_device,
-                    "shell",
-                    "monkey",
-                    "-p",
-                    package,
-                    "-c",
-                    "android.intent.category.LAUNCHER",
-                    "1",
-                ]
-                .into_iter()
-                .map(str::to_owned)
-                .collect()
+                app_launch_arguments(selected_device, package)
             }
             PhoneTarget::KeyEvent { key } => key_arguments(selected_device, *key),
         };
         self.runner
             .run_phone_target(CommandRequest::new("adb", arguments), self.cancellation)
+            .map(|output| output.succeeded)
+    }
+
+    fn launch_default_browser(
+        &mut self,
+        selected_device: &str,
+    ) -> Result<bool, ActionExecutionFailure> {
+        let captured = self.runner.run_captured_phone_target(
+            CommandRequest::new(
+                "adb",
+                [
+                    "-s",
+                    selected_device,
+                    "shell",
+                    "cmd",
+                    "role",
+                    "get-role-holders",
+                    "android.app.role.BROWSER",
+                ]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            ),
+            self.cancellation,
+        )?;
+        if !captured.succeeded {
+            return Ok(false);
+        }
+        let Some(package) = first_valid_role_holder(&captured.stdout) else {
+            return Ok(false);
+        };
+        self.runner
+            .run_phone_target(
+                CommandRequest::new("adb", app_launch_arguments(selected_device, package)),
+                self.cancellation,
+            )
             .map(|output| output.succeeded)
     }
 }
@@ -179,4 +190,37 @@ fn key_arguments(selected_device: &str, key: AndroidKey) -> Vec<String> {
     .into_iter()
     .map(str::to_owned)
     .collect()
+}
+
+fn app_launch_arguments(selected_device: &str, package: &str) -> Vec<String> {
+    [
+        "-s",
+        selected_device,
+        "shell",
+        "monkey",
+        "-p",
+        package,
+        "-c",
+        "android.intent.category.LAUNCHER",
+        "1",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn first_valid_role_holder(stdout: &str) -> Option<&str> {
+    stdout.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if valid_android_package(trimmed) {
+            return Some(trimmed);
+        }
+        trimmed
+            .split_whitespace()
+            .next()
+            .filter(|token| valid_android_package(token))
+    })
 }

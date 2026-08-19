@@ -70,9 +70,13 @@ impl CommandRunner for SlowActionRunner {
             return Ok(CommandOutput { succeeded: true });
         }
 
-        assert!(request.arguments().windows(2).any(|arguments| {
-            arguments[0] == "-a" && arguments[1] == "android.intent.action.MAIN"
-        }));
+        assert!(
+            request
+                .arguments()
+                .iter()
+                .any(|argument| { argument == "get-role-holders" || argument == "monkey" }),
+            "bounded phone-target work must be the browser role query or launch"
+        );
         let would_report_success_at = Instant::now() + Duration::from_secs(4);
         loop {
             if cancellation.is_cancelled() {

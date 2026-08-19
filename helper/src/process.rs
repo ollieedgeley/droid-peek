@@ -75,6 +75,16 @@ pub struct CommandOutput {
     pub succeeded: bool,
 }
 
+/// Bounded process output for callers that must inspect standard output.
+///
+/// This type has no `Debug` implementation so ADB stdout cannot be included
+/// in logs by accident.
+#[derive(Clone, Eq, PartialEq)]
+pub struct CapturedOutput {
+    pub succeeded: bool,
+    pub stdout: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CommandFailure {
     DependencyUnavailable,
@@ -154,6 +164,36 @@ pub trait CommandRunner {
         self.run(request, cancellation)
             .map_err(ActionExecutionFailure::from)
     }
+
+    fn run_captured(
+        &mut self,
+        request: CommandRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<CapturedOutput, CommandFailure> {
+        self.run(request, cancellation)
+            .map(|output| CapturedOutput {
+                succeeded: output.succeeded,
+                stdout: String::new(),
+            })
+    }
+
+    fn run_captured_phone_target(
+        &mut self,
+        request: CommandRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<CapturedOutput, ActionExecutionFailure> {
+        let captured = self
+            .run_captured(request, cancellation)
+            .map_err(ActionExecutionFailure::from)?;
+        if captured.succeeded {
+            Ok(captured)
+        } else {
+            Ok(CapturedOutput {
+                succeeded: false,
+                stdout: captured.stdout,
+            })
+        }
+    }
 }
 
 impl<T> CommandRunner for Box<T>
@@ -174,6 +214,22 @@ where
         cancellation: &CancellationToken,
     ) -> Result<CommandOutput, ActionExecutionFailure> {
         (**self).run_phone_target(request, cancellation)
+    }
+
+    fn run_captured(
+        &mut self,
+        request: CommandRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<CapturedOutput, CommandFailure> {
+        (**self).run_captured(request, cancellation)
+    }
+
+    fn run_captured_phone_target(
+        &mut self,
+        request: CommandRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<CapturedOutput, ActionExecutionFailure> {
+        (**self).run_captured_phone_target(request, cancellation)
     }
 }
 
@@ -196,8 +252,8 @@ impl AdbCommandRunner {
         &mut self,
         request: CommandRequest,
         cancellation: &CancellationToken,
-        classify_phone_target_failure: bool,
-    ) -> Result<(CommandOutput, Option<ActionExecutionFailure>), CommandFailure> {
+        capture_output: bool,
+    ) -> Result<(CommandOutput, Option<CapturedStreams>), CommandFailure> {
         if request.program() != "adb" {
             return Err(CommandFailure::DependencyUnavailable);
         }
@@ -213,7 +269,7 @@ impl AdbCommandRunner {
             } else {
                 Stdio::null()
             });
-        if classify_phone_target_failure {
+        if capture_output {
             command.stdout(Stdio::piped()).stderr(Stdio::piped());
         } else {
             command.stdout(Stdio::null()).stderr(Stdio::null());
@@ -222,7 +278,7 @@ impl AdbCommandRunner {
         let mut child = command
             .spawn()
             .map_err(|_| CommandFailure::DependencyUnavailable)?;
-        let mut capture = if classify_phone_target_failure {
+        let mut capture = if capture_output {
             match BoundedOutputCapture::start(&mut child) {
                 Ok(capture) => Some(capture),
                 Err(failure) => {
@@ -261,12 +317,7 @@ impl AdbCommandRunner {
                 Ok(Some(status)) => {
                     let captured = capture.map(BoundedOutputCapture::finish).transpose()?;
                     let succeeded = status.success();
-                    let classified = if succeeded {
-                        None
-                    } else {
-                        captured.as_ref().and_then(classify_action_failure)
-                    };
-                    return Ok((CommandOutput { succeeded }, classified));
+                    return Ok((CommandOutput { succeeded }, captured));
                 }
                 Ok(None) => thread::sleep(self.poll_interval),
                 Err(_) => {
@@ -277,6 +328,8 @@ impl AdbCommandRunner {
         }
     }
 }
+
+type CapturedStreams = [Zeroizing<Vec<u8>>; 2];
 
 struct BoundedOutputCapture {
     stdout: ChildStdout,
@@ -310,7 +363,7 @@ impl BoundedOutputCapture {
         read_available_bounded(&mut self.stderr, &mut self.stderr_bytes)
     }
 
-    fn finish(mut self) -> Result<[Zeroizing<Vec<u8>>; 2], CommandFailure> {
+    fn finish(mut self) -> Result<CapturedStreams, CommandFailure> {
         self.drain_available()?;
         Ok([self.stdout_bytes, self.stderr_bytes])
     }
@@ -349,7 +402,7 @@ fn read_available_bounded(
     Ok(())
 }
 
-fn classify_action_failure(output: &[Zeroizing<Vec<u8>>; 2]) -> Option<ActionExecutionFailure> {
+fn classify_action_failure(output: &CapturedStreams) -> Option<ActionExecutionFailure> {
     if output.iter().any(|stream| {
         contains_ascii_case_insensitive(stream, b"unauthorized")
             || contains_ascii_case_insensitive(stream, b"failed to authenticate")
@@ -394,12 +447,56 @@ impl CommandRunner for AdbCommandRunner {
         request: CommandRequest,
         cancellation: &CancellationToken,
     ) -> Result<CommandOutput, ActionExecutionFailure> {
-        let (output, classified) = self
+        let (output, captured) = self
             .run_internal(request, cancellation, true)
             .map_err(ActionExecutionFailure::from)?;
+        let classified = if output.succeeded {
+            None
+        } else {
+            captured.as_ref().and_then(classify_action_failure)
+        };
         match classified {
             Some(failure) => Err(failure),
             None => Ok(output),
         }
+    }
+
+    fn run_captured(
+        &mut self,
+        request: CommandRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<CapturedOutput, CommandFailure> {
+        let (output, captured) = self.run_internal(request, cancellation, true)?;
+        let stdout = match captured.as_ref() {
+            Some([stdout_bytes, _]) => String::from_utf8_lossy(stdout_bytes).into_owned(),
+            None => String::new(),
+        };
+        Ok(CapturedOutput {
+            succeeded: output.succeeded,
+            stdout,
+        })
+    }
+
+    fn run_captured_phone_target(
+        &mut self,
+        request: CommandRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<CapturedOutput, ActionExecutionFailure> {
+        let (output, captured) = self
+            .run_internal(request, cancellation, true)
+            .map_err(ActionExecutionFailure::from)?;
+        if !output.succeeded
+            && let Some(failure) = captured.as_ref().and_then(classify_action_failure)
+        {
+            return Err(failure);
+        }
+        let stdout = match captured.as_ref() {
+            Some([stdout_bytes, _]) => String::from_utf8_lossy(stdout_bytes).into_owned(),
+            None => String::new(),
+        };
+        Ok(CapturedOutput {
+            succeeded: output.succeeded,
+            stdout,
+        })
     }
 }

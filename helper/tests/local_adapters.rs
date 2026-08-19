@@ -136,6 +136,74 @@ fn adb_runner_classifies_only_bounded_phone_target_output() {
 }
 
 #[test]
+fn adb_runner_classifies_monkey_abort_as_an_action_failure() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
+    let directory = tempfile::tempdir().expect("temporary directory");
+
+    fn monkey_request() -> CommandRequest {
+        CommandRequest::new(
+            "adb",
+            vec![
+                "-s".to_owned(),
+                "selected-device".to_owned(),
+                "shell".to_owned(),
+                "monkey".to_owned(),
+                "-p".to_owned(),
+                "com.example.missing".to_owned(),
+                "-c".to_owned(),
+                "android.intent.category.LAUNCHER".to_owned(),
+                "1".to_owned(),
+            ],
+        )
+    }
+
+    for (name, body) in [
+        (
+            "monkey-abort-252",
+            "printf '** No activities found to run, monkey aborted.\\n'\nexit 252",
+        ),
+        (
+            "monkey-abort-zero",
+            "printf '** No activities found to run, monkey aborted.\\n'\nexit 0",
+        ),
+    ] {
+        let fake_adb = executable(directory.path(), name, body);
+        let mut runner = AdbCommandRunner::new(fake_adb, Duration::from_millis(2));
+        let result = runner.run_phone_target(monkey_request(), &CancellationToken::new());
+        assert_eq!(
+            result,
+            Ok(omarchy_android_helper::process::CommandOutput { succeeded: false }),
+            "{name} must be an action-only failure"
+        );
+        assert!(
+            !format!("{result:?}").contains("No activities found"),
+            "{name} must not expose Monkey text"
+        );
+    }
+
+    let success_adb = executable(
+        directory.path(),
+        "monkey-success",
+        "printf 'Events injected: 1\\n'\nexit 0",
+    );
+    let mut runner = AdbCommandRunner::new(success_adb, Duration::from_millis(2));
+    assert_eq!(
+        runner.run_phone_target(monkey_request(), &CancellationToken::new()),
+        Ok(omarchy_android_helper::process::CommandOutput { succeeded: true })
+    );
+
+    let unauthorized_abort = executable(
+        directory.path(),
+        "monkey-unauthorized",
+        "printf '** No activities found to run, monkey aborted.\\n'\nprintf 'error: device unauthorized' >&2\nexit 1",
+    );
+    let mut runner = AdbCommandRunner::new(unauthorized_abort, Duration::from_millis(2));
+    assert_eq!(
+        runner.run_phone_target(monkey_request(), &CancellationToken::new()),
+        Err(ActionExecutionFailure::Unauthorized)
+    );
+}
+#[test]
 fn adb_runner_preserves_generic_nonzero_results_for_other_commands_and_actions() {
     let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
     let directory = tempfile::tempdir().expect("temporary directory");

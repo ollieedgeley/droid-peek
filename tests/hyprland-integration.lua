@@ -188,7 +188,7 @@ android.configure({
 assert(#stored_config_commands == 0, "configure must only stage")
 
 android.define_submap("omarchy-android", function()
-  android.bind("SUPER + ESCAPE", "Close Android panel", android.close_panel)
+  android.bind("SUPER + ALT + A", "Close Android panel", android.close_panel)
   android.bind("SUPER + SHIFT + B", "Browser", "android.browser.default")
   android.bind("SUPER + W", "Home", "android.navigate.home")
   android.bind("SUPER + ALT + P", "Package", {

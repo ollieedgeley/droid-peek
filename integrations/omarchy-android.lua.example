@@ -19,9 +19,9 @@ android.configure({
 })
 
 android.define_submap("omarchy-android", function()
-  -- Mandatory escape from phone mode. It intentionally has no desktop effect
-  -- because this submap is inactive after the panel closes.
-  android.bind("SUPER + ESCAPE", "Close Android panel", android.close_panel)
+  -- Same chord as the desktop toggle. It has no desktop effect here because
+  -- this submap is inactive after the panel closes.
+  android.bind("SUPER + ALT + A", "Close Android panel", android.close_panel)
 
   -- Generic defaults preserve familiar Omarchy chords and descriptions.
   android.bind("SUPER + SHIFT + RETURN", "Browser", "android.browser.default")

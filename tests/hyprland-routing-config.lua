@@ -70,9 +70,9 @@ assert(
   "the template must install the approved scrcpy defaults"
 )
 
-assert(calls[1].keys == "SUPER + ESCAPE")
+assert(calls[1].keys == "SUPER + ALT + A")
 assert(calls[1].description == "Close Android panel")
-assert(calls[1].target == close_panel, "the mandatory escape must use close_panel")
+assert(calls[1].target == close_panel, "the mandatory close must use close_panel")
 
 assert(calls[2].keys == "SUPER + SHIFT + RETURN")
 assert(calls[2].description == "Browser")

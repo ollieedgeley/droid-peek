@@ -261,7 +261,7 @@ The installed template enables only these four bindings:
 
 | Chord | Description | Target |
 | --- | --- | --- |
-| `SUPER + ESCAPE` | Close Android panel | `android.close_panel` |
+| `SUPER + ALT + A` | Close Android panel | `android.close_panel` |
 | `SUPER + SHIFT + RETURN` | Browser | `android.browser.default` |
 | `SUPER + SHIFT + B` | Browser | `android.browser.default` |
 | `SUPER + W` | Close current window | `android.navigate.home` |

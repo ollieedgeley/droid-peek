@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use omarchy_android_helper::protocol::PROTOCOL_VERSION;
+use droid_peek_helper::protocol::PROTOCOL_VERSION;
 
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -45,7 +45,7 @@ fn protocol_v11_phone_target_endpoint_is_aligned_across_languages() {
     );
     assert!(
         widget.contains("function phoneTarget("),
-        "ollie.android must expose the phoneTarget shell endpoint"
+        "ollieedgeley.droidpeek must expose the phoneTarget shell endpoint"
     );
     assert!(
         !widget.contains("function action("),
@@ -58,22 +58,22 @@ fn protocol_v11_phone_target_endpoint_is_aligned_across_languages() {
         "Rust phone-target must carry the two-part session identity"
     );
     assert!(
-        phone_bindings.contains("omarchy-shell ollie.android phoneTarget"),
+        phone_bindings.contains("omarchy-shell ollieedgeley.droidpeek phoneTarget"),
         "Lua target bindings must dispatch only through phoneTarget"
     );
     assert!(
         widget.contains("function configureScrcpy(")
-            && phone_bindings.contains("omarchy-shell ollie.android configureScrcpy"),
+            && phone_bindings.contains("omarchy-shell ollieedgeley.droidpeek configureScrcpy"),
         "Lua and QML must use the exact configureScrcpy shell endpoint"
     );
     assert!(
-        !phone_bindings.contains("ollie.android phone-target")
-            && !phone_bindings.contains("ollie.android configure-scrcpy"),
+        !phone_bindings.contains("ollieedgeley.droidpeek phone-target")
+            && !phone_bindings.contains("ollieedgeley.droidpeek configure-scrcpy"),
         "kebab-case shell endpoints are not callable QML IPC methods"
     );
     assert!(
-        phone_bindings.contains("omarchy-shell shell hide ollie.android")
-            && !phone_bindings.contains("omarchy-shell ollie.android close"),
+        phone_bindings.contains("omarchy-shell shell hide ollieedgeley.droidpeek")
+            && !phone_bindings.contains("omarchy-shell ollieedgeley.droidpeek close"),
         "panel close must use the shell hide router, not the raw plugin target"
     );
 }
@@ -81,12 +81,12 @@ fn protocol_v11_phone_target_endpoint_is_aligned_across_languages() {
 #[test]
 fn phone_binding_assets_are_a_clean_cutover_from_action_routing() {
     let phone_bindings = source("integrations/phone-bindings.lua");
-    let template = source("integrations/omarchy-android.lua.example");
+    let template = source("integrations/droid-peek.lua.example");
 
     for retired_path in [
         "integrations/hyprland.lua",
         "integrations/action-catalog.lua",
-        "scripts/omarchy-android-action",
+        "scripts/droid-peek-action",
         "qml/state/SemanticActionRouter.qml",
     ] {
         assert_absent(retired_path);
@@ -99,7 +99,7 @@ fn phone_binding_assets_are_a_clean_cutover_from_action_routing() {
         "actionId",
         "commandPassthrough",
         "install_custom_bindings",
-        "omarchy-android-action",
+        "droid-peek-action",
     ];
     assert_excludes(&phone_bindings, &retired_names, "phone-binding API");
     assert_excludes(&template, &retired_names, "user template");
@@ -111,7 +111,7 @@ fn phone_binding_assets_are_a_clean_cutover_from_action_routing() {
         "the Lua API must own the named submap, mandatory close, and typed deadline"
     );
     assert!(
-        template.contains("android.define_submap(\"omarchy-android\"")
+        template.contains("android.define_submap(\"droid-peek\"")
             && template.contains("android.bind("),
         "the user template must declare direct bindings in one named submap"
     );
@@ -119,11 +119,11 @@ fn phone_binding_assets_are_a_clean_cutover_from_action_routing() {
 
 #[test]
 fn installer_and_template_share_the_exact_user_config_contract() {
-    let configurator = source("scripts/configure-phone-bindings");
-    let template = source("integrations/omarchy-android.lua.example");
+    let configurator = source("scripts/configure-droid-peek");
+    let template = source("integrations/droid-peek.lua.example");
     let loader_block = concat!(
-        "-- Omarchy Android plugin loader (managed)\n",
-        "require(\"hypr.omarchy-android\")"
+        "-- Droid Peek plugin loader (managed)\n",
+        "require(\"hypr.droid-peek\")"
     );
 
     assert!(
@@ -132,12 +132,12 @@ fn installer_and_template_share_the_exact_user_config_contract() {
     );
     assert!(
         configurator.contains("XDG_CONFIG_HOME")
-            && configurator.contains("omarchy-android.lua")
+            && configurator.contains("droid-peek.lua")
             && configurator.contains(loader_block),
         "the configurator and managed loader block drifted"
     );
     assert!(
-        template.contains("/.config/omarchy/plugins/ollie.android/integrations/phone-bindings.lua"),
+        template.contains("/.config/omarchy/plugins/ollieedgeley.droidpeek/integrations/phone-bindings.lua"),
         "the user template must load the plugin-owned API"
     );
 }

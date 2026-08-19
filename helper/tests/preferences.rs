@@ -1,6 +1,6 @@
 use std::{fs, os::unix::fs::PermissionsExt};
 
-use omarchy_android_helper::preferences::{
+use droid_peek_helper::preferences::{
     FilePreferenceStore, Preferences, PreviewScale, QuickAction, VideoQuality,
 };
 use tempfile::tempdir;
@@ -27,7 +27,7 @@ fn schema_one_defaults_enable_android_mode_shortcuts() {
 #[test]
 fn preferences_round_trip_in_private_schema_one_state_without_passthrough() {
     let directory = tempdir().expect("temporary state directory");
-    let store = FilePreferenceStore::new(directory.path().join("omarchy-android"));
+    let store = FilePreferenceStore::new(directory.path().join("droid-peek"));
     let preferences = Preferences {
         keep_connected: true,
         android_mode_shortcuts: false,
@@ -70,7 +70,7 @@ fn preferences_round_trip_in_private_schema_one_state_without_passthrough() {
 #[test]
 fn non_schema_one_or_noncanonical_preferences_are_removed_without_migration() {
     let directory = tempdir().expect("temporary state directory");
-    let store = FilePreferenceStore::new(directory.path().join("omarchy-android"));
+    let store = FilePreferenceStore::new(directory.path().join("droid-peek"));
     fs::create_dir_all(store.directory()).expect("create state directory");
 
     for contents in [

@@ -10,13 +10,13 @@ usage() {
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root_dir="$(cd "$script_dir/.." && pwd)"
-template="$root_dir/integrations/omarchy-android.lua.example"
+template="$root_dir/integrations/droid-peek.lua.example"
 config_home="${XDG_CONFIG_HOME:-${HOME:?HOME is required}/.config}"
 hypr_dir="$config_home/hypr"
 bindings_file="$hypr_dir/bindings.lua"
-user_module="$hypr_dir/omarchy-android.lua"
-loader_block='-- Omarchy Android plugin loader (managed)
-require("hypr.omarchy-android")'
+user_module="$hypr_dir/droid-peek.lua"
+loader_block='-- Droid Peek plugin loader (managed)
+require("hypr.droid-peek")'
 loader_comment="${loader_block%%$'\n'*}"
 loader_require="${loader_block#*$'\n'}"
 
@@ -55,11 +55,11 @@ uninstall_bindings() {
 
   local destination_dir temporary
   destination_dir="$(dirname "$destination")"
-  temporary="$(mktemp "$destination_dir/.omarchy-android-bindings.XXXXXX")"
+  temporary="$(mktemp "$destination_dir/.droid-peek-bindings.XXXXXX")"
   trap 'rm -f "$temporary"' RETURN
   sed \
-    -e '/^$/{N;/\n-- Omarchy Android plugin loader (managed)$/{N;/^\n-- Omarchy Android plugin loader (managed)\nrequire("hypr\.omarchy-android")$/d;}}' \
-    -e '/^-- Omarchy Android plugin loader (managed)$/{N;/^-- Omarchy Android plugin loader (managed)\nrequire("hypr\.omarchy-android")$/d;}' \
+    -e '/^$/{N;/\n-- Droid Peek plugin loader (managed)$/{N;/^\n-- Droid Peek plugin loader (managed)\nrequire("hypr\.droid-peek")$/d;}}' \
+    -e '/^-- Droid Peek plugin loader (managed)$/{N;/^-- Droid Peek plugin loader (managed)\nrequire("hypr\.droid-peek")$/d;}' \
     "$bindings_file" >"$temporary"
   chown --reference="$destination" "$temporary"
   chmod --reference="$destination" "$temporary"

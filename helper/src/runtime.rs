@@ -1243,7 +1243,7 @@ pub fn default_runtime_directory() -> Option<PathBuf> {
     env::var_os("XDG_RUNTIME_DIR")
         .filter(|directory| !directory.is_empty())
         .map(PathBuf::from)
-        .map(|root| root.join("omarchy-android"))
+        .map(|root| root.join("droid-peek"))
 }
 
 #[cfg(test)]

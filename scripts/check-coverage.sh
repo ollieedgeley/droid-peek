@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-report="$(mktemp "${TMPDIR:-/tmp}/omarchy-android-coverage.XXXXXX.json")"
+report="$(mktemp "${TMPDIR:-/tmp}/droid-peek-coverage.XXXXXX.json")"
 trap 'rm -f "$report"' EXIT
 
 command -v jq >/dev/null || {

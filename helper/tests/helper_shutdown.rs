@@ -35,7 +35,7 @@ fn stdin_eof_stops_pairing_child_and_removes_qr_artifact() {
     fs::create_dir(&runtime_root).expect("runtime root");
     fs::create_dir(&state_root).expect("state root");
     let inherited_path = std::env::var("PATH").expect("PATH");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_omarchy-android-helper"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_droid-peek-helper"))
         .args(["--helper-epoch", "73001"])
         .env(
             "PATH",
@@ -81,7 +81,7 @@ fn stdin_eof_stops_pairing_child_and_removes_qr_artifact() {
         !avahi_process.exists(),
         "fake Avahi child survived helper shutdown"
     );
-    let runtime_directory = runtime_root.join("omarchy-android");
+    let runtime_directory = runtime_root.join("droid-peek");
     assert!(
         fs::read_dir(runtime_directory)
             .expect("runtime directory")
@@ -96,13 +96,13 @@ fn stdin_eof_stops_pairing_child_and_removes_qr_artifact() {
 
 #[test]
 fn guardian_parent_process() {
-    let Some(directory) = std::env::var_os("OMARCHY_ANDROID_GUARDIAN_TEST_DIR") else {
+    let Some(directory) = std::env::var_os("DROID_PEEK_GUARDIAN_TEST_DIR") else {
         return;
     };
     let directory = std::path::PathBuf::from(directory);
     let executables = directory.join("bin");
     let inherited_path = std::env::var("PATH").expect("PATH");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_omarchy-android-helper"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_droid-peek-helper"))
         .args([
             "--scrcpy-guardian",
             &std::process::id().to_string(),
@@ -152,7 +152,7 @@ fn parent_death_guardian_stops_scrcpy_after_abrupt_helper_exit() {
 
     let status = Command::new(std::env::current_exe().expect("current test executable"))
         .args(["--exact", "guardian_parent_process"])
-        .env("OMARCHY_ANDROID_GUARDIAN_TEST_DIR", directory.path())
+        .env("DROID_PEEK_GUARDIAN_TEST_DIR", directory.path())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()

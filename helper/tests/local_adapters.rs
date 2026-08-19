@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use omarchy_android_helper::{
+use droid_peek_helper::{
     process::{
         ActionExecutionFailure, AdbCommandRunner, CancellationToken, CommandFailure,
         CommandRequest, CommandRunner,
@@ -131,7 +131,7 @@ fn adb_runner_classifies_only_bounded_phone_target_output() {
             ),
             &CancellationToken::new(),
         ),
-        Ok(omarchy_android_helper::process::CommandOutput { succeeded: false })
+        Ok(droid_peek_helper::process::CommandOutput { succeeded: false })
     );
 }
 
@@ -172,7 +172,7 @@ fn adb_runner_classifies_monkey_abort_as_an_action_failure() {
         let result = runner.run_phone_target(monkey_request(), &CancellationToken::new());
         assert_eq!(
             result,
-            Ok(omarchy_android_helper::process::CommandOutput { succeeded: false }),
+            Ok(droid_peek_helper::process::CommandOutput { succeeded: false }),
             "{name} must be an action-only failure"
         );
         assert!(
@@ -189,7 +189,7 @@ fn adb_runner_classifies_monkey_abort_as_an_action_failure() {
     let mut runner = AdbCommandRunner::new(success_adb, Duration::from_millis(2));
     assert_eq!(
         runner.run_phone_target(monkey_request(), &CancellationToken::new()),
-        Ok(omarchy_android_helper::process::CommandOutput { succeeded: true })
+        Ok(droid_peek_helper::process::CommandOutput { succeeded: true })
     );
 
     let unauthorized_abort = executable(
@@ -230,7 +230,7 @@ fn adb_runner_preserves_generic_nonzero_results_for_other_commands_and_actions()
     );
     assert_eq!(
         result,
-        Ok(omarchy_android_helper::process::CommandOutput { succeeded: false })
+        Ok(droid_peek_helper::process::CommandOutput { succeeded: false })
     );
     assert!(!format!("{result:?}").contains("private detail"));
 
@@ -245,7 +245,7 @@ fn adb_runner_preserves_generic_nonzero_results_for_other_commands_and_actions()
             CommandRequest::new("adb", vec!["devices".to_owned()]),
             &CancellationToken::new(),
         ),
-        Ok(omarchy_android_helper::process::CommandOutput { succeeded: false })
+        Ok(droid_peek_helper::process::CommandOutput { succeeded: false })
     );
 }
 

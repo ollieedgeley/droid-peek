@@ -142,7 +142,7 @@ TestCase {
         commandSpy.clear()
 
         state.receiveLine(event("qr-waiting", {
-            artifact: "/run/user/1000/omarchy-android/qr.svg",
+            artifact: "/run/user/1000/droid-peek/qr.svg",
             expiresInSeconds: 120
         }))
         compare(state.activity, "qr-waiting")

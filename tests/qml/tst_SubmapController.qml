@@ -43,9 +43,9 @@ TestCase {
                 dispatcher: 'hl.dsp.submap("reset")'
             },
             {
-                tag: "omarchy-android",
-                submap: "omarchy-android",
-                dispatcher: 'hl.dsp.submap("omarchy-android")'
+                tag: "droid-peek",
+                submap: "droid-peek",
+                dispatcher: 'hl.dsp.submap("droid-peek")'
             }
         ]
     }
@@ -70,7 +70,7 @@ TestCase {
 
     function test_phone_mode_is_exactly_interactive_and_android_mode_enabled() {
         controller.applicationState = "interactive"
-        compare(calls, ["submap:omarchy-android"])
+        compare(calls, ["submap:droid-peek"])
 
         calls = []
         controller.androidModeShortcuts = false
@@ -97,11 +97,11 @@ TestCase {
 
     function test_repeating_the_same_desired_state_does_not_redispatch() {
         controller.applicationState = "interactive"
-        compare(calls, ["submap:omarchy-android"])
+        compare(calls, ["submap:droid-peek"])
 
         controller.applicationState = "interactive"
         controller.androidModeShortcuts = true
-        compare(calls, ["submap:omarchy-android"])
+        compare(calls, ["submap:droid-peek"])
     }
 
     function test_phone_mode_close_resets_synchronously_before_requesting_close() {
@@ -145,7 +145,7 @@ TestCase {
         verify(controller.isCurrentRequest(firstId))
         verify(!controller.isCurrentRequest(firstId - 1))
 
-        verify(controller.requestSubmap("omarchy-android"))
+        verify(controller.requestSubmap("droid-peek"))
         compare(requestIds.length, 2)
         var secondId = requestIds[1]
         verify(secondId > firstId)

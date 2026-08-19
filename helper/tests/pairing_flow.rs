@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use omarchy_android_helper::{
+use droid_peek_helper::{
     persistence::TrustedDevice,
     process::{CommandFailure, CommandOutput, CommandRequest, CommandRunner},
     protocol::{FailureReason, PairingEvent as Event, PairingMethod},

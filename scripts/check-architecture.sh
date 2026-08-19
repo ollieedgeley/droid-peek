@@ -24,7 +24,7 @@ for file in ./*.qml qml/**/*.qml; do
   fi
 done
 
-phone_target_ipc="ollie.android"
+phone_target_ipc="ollieedgeley.droidpeek"
 phone_target_ipc+=" phone-target"
 
 for retired in \
@@ -32,7 +32,7 @@ for retired in \
   integrations/action-catalog.lua \
   integrations/config.example.lua \
   integrations/hyprland.lua \
-  scripts/omarchy-android-action; do
+  scripts/droid-peek-action; do
   if [[ -e "$retired" ]]; then
     printf 'retired phone-binding asset remains: %s\n' "$retired" >&2
     exit 1

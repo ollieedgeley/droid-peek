@@ -133,7 +133,7 @@ TestCase {
         if (controller.applicationState === "interactive")
             controller.applicationState = "closed"
         controller.applicationState = "interactive"
-        compare(controller.desiredSubmap, "omarchy-android")
+        compare(controller.desiredSubmap, "droid-peek")
     }
 
     function emitSupersededExits(process, controller, exitCode) {
@@ -170,15 +170,15 @@ TestCase {
         var state = objectNamed("pairingState")
 
         becomeInteractive(controller)
-        compare(process.dispatchedSubmap, "omarchy-android")
+        compare(process.dispatchedSubmap, "droid-peek")
 
         controller.closePanel()
         controller.helperRestarted()
         becomeInteractive(controller)
-        compare(process.dispatchedSubmap, "omarchy-android")
+        compare(process.dispatchedSubmap, "droid-peek")
         verify(process.startedRequests.length >= 2)
         compare(process.startedRequests[process.startedRequests.length - 1].submap,
-                "omarchy-android")
+                "droid-peek")
 
         emitSupersededExits(process, controller, 1)
 
@@ -196,7 +196,7 @@ TestCase {
 
         becomeInteractive(controller)
         emitSupersededExits(process, controller, 0)
-        compare(process.startedRequests[0].submap, "omarchy-android")
+        compare(process.startedRequests[0].submap, "droid-peek")
         verify(controller.isCurrentRequest(process.startedRequests[0].requestId))
 
         process.exited(0)
@@ -215,7 +215,7 @@ TestCase {
         becomeInteractive(controller)
         emitSupersededExits(process, controller, 1)
         compare(state.localIntegrationAvailable, true)
-        compare(process.startedRequests[0].submap, "omarchy-android")
+        compare(process.startedRequests[0].submap, "droid-peek")
         verify(controller.isCurrentRequest(process.startedRequests[0].requestId))
 
         process.exited(1)
@@ -237,7 +237,7 @@ TestCase {
         var process = objectNamed("submapProcess")
 
         becomeInteractive(controller)
-        compare(process.dispatchedSubmap, "omarchy-android")
+        compare(process.dispatchedSubmap, "droid-peek")
 
         controller.closePanel()
 
@@ -245,7 +245,7 @@ TestCase {
         compare(controller.lastDispatchedSubmap, "")
         compare(process.startedRequests[process.startedRequests.length - 1].submap,
                 "reset")
-        verify(controller.desiredSubmap !== "omarchy-android"
+        verify(controller.desiredSubmap !== "droid-peek"
                || process.dispatchedSubmap === "reset")
     }
 }

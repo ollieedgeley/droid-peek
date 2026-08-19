@@ -104,7 +104,7 @@ pub fn default_state_directory() -> Option<PathBuf> {
     env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-        .map(|root| root.join("omarchy-android"))
+        .map(|root| root.join("droid-peek"))
 }
 
 #[derive(Deserialize, Serialize)]

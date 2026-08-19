@@ -254,7 +254,7 @@ TestCase {
         compare(failureNotificationSpy.count, 1)
         compare(failureNotificationSpy.signalArguments[0][0], data.message)
         compare(failureNotificationSpy.signalArguments[0][1],
-                "omarchy-android-phone-target-" + data.code)
+                "droid-peek-phone-target-" + data.code)
         verify(failureNotificationSpy.signalArguments[0][0]
                .indexOf("android.") < 0)
         verify(failureNotificationSpy.signalArguments[0][0]
@@ -269,7 +269,7 @@ TestCase {
 
         compare(failureNotificationSpy.count, 1)
         compare(failureNotificationSpy.signalArguments[0][1],
-                "omarchy-android-phone-target-target-failed")
+                "droid-peek-phone-target-target-failed")
     }
 
     function test_distinct_failures_are_not_coalesced() {

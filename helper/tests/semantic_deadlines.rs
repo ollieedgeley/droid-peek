@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use omarchy_android_helper::{
+use droid_peek_helper::{
     actions::PhoneTarget,
     input::{AndroidKey, DisplayGeometry, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
@@ -366,7 +366,7 @@ fn runtime_bounds_input_and_start_over_disconnect_commands() {
     let input_started = Instant::now();
     assert_eq!(
         backend.key_input(AndroidKey::Back),
-        Err(omarchy_android_helper::protocol::FailureReason::Disconnected)
+        Err(droid_peek_helper::protocol::FailureReason::Disconnected)
     );
     assert!(input_started.elapsed() < Duration::from_millis(1_500));
 

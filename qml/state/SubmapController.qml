@@ -10,7 +10,7 @@ QtObject {
 
     readonly property string desiredSubmap: applicationState === "interactive"
                                                     && androidModeShortcuts
-                                                ? "omarchy-android"
+                                                ? "droid-peek"
                                                 : "reset"
 
     signal submapCommandRequested(var command, string submap, int requestId)
@@ -19,9 +19,9 @@ QtObject {
     function commandForSubmap(submap) {
         if (submap === "reset")
             return ["hyprctl", "dispatch", 'hl.dsp.submap("reset")'];
-        if (submap === "omarchy-android")
+        if (submap === "droid-peek")
             return ["hyprctl", "dispatch",
-                    'hl.dsp.submap("omarchy-android")'];
+                    'hl.dsp.submap("droid-peek")'];
         return null;
     }
 

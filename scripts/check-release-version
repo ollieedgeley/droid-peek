@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root_dir"
+
+fail() {
+  printf '%s\n' "$1" >&2
+  exit 1
+}
+
+semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+
+manifest_id=""
+manifest_version=""
+while IFS= read -r line; do
+  if [[ -z "$manifest_id" && "$line" =~ \"id\":[[:space:]]*\"([^\"]+)\" ]]; then
+    manifest_id="${BASH_REMATCH[1]}"
+  elif [[ -z "$manifest_version" && "$line" =~ \"version\":[[:space:]]*\"([^\"]+)\" ]]; then
+    manifest_version="${BASH_REMATCH[1]}"
+  fi
+done <manifest.json
+
+[[ "$manifest_id" == "ollieedgeley.droidpeek" ]] ||
+  fail "manifest id must be ollieedgeley.droidpeek"
+[[ -n "$manifest_version" ]] || fail "manifest version is missing"
+[[ "$manifest_version" =~ $semver ]] || fail "manifest version is not SemVer"
+
+[[ -f helper/Cargo.toml ]] || fail "helper/Cargo.toml is missing"
+cargo_version=""
+in_package=0
+while IFS= read -r line; do
+  if [[ "$line" == "[package]" ]]; then
+    in_package=1
+    continue
+  fi
+  if ((in_package)) && [[ "$line" =~ ^\[ ]]; then
+    break
+  fi
+  if ((in_package)) && [[ "$line" =~ ^version[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
+    cargo_version="${BASH_REMATCH[1]}"
+    break
+  fi
+done <helper/Cargo.toml
+[[ "$cargo_version" == "$manifest_version" ]] ||
+  fail "helper Cargo.toml version disagrees with the manifest"
+
+[[ -f qml/BuildInfo.qml ]] || fail "qml/BuildInfo.qml is missing"
+qml_version="$(
+  sed -n 's/^[[:space:]]*readonly property string releaseVersion: "\([^"]*\)"/\1/p' \
+    qml/BuildInfo.qml
+)"
+[[ "$qml_version" == "$manifest_version" ]] ||
+  fail "QML releaseVersion disagrees with the manifest"
+
+[[ -f integrations/build-info.lua ]] || fail "integrations/build-info.lua is missing"
+lua_version="$(
+  sed -n 's/^[[:space:]]*release_version = "\([^"]*\)",\?/\1/p' \
+    integrations/build-info.lua
+)"
+[[ "$lua_version" == "$manifest_version" ]] ||
+  fail "Lua release_version disagrees with the manifest"

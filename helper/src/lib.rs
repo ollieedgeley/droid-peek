@@ -2,7 +2,7 @@
 #![cfg_attr(not(test), deny(clippy::expect_used, clippy::unwrap_used))]
 #![deny(clippy::todo, clippy::unimplemented)]
 
-//! Pure, testable contracts for the Omarchy Android local helper.
+//! Pure, testable contracts for the Droid Peek local helper.
 //!
 //! Process execution, mDNS discovery, persistence, and device input are added
 //! only after their Phase 0 contracts have explicit tests.

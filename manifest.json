@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "id": "ollie.android",
-  "name": "Omarchy Android",
-  "version": "0.1.0",
-  "author": "Ollie",
+  "id": "ollieedgeley.droidpeek",
+  "name": "Droid Peek",
+  "version": "1.0.0",
+  "author": "Ollie Edgeley",
   "description": "One Android phone in an Omarchy bar panel",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Android",
+    "displayName": "Droid Peek",
     "description": "Pair and control one Android phone",
     "category": "Connectivity",
     "allowMultiple": false

@@ -105,7 +105,7 @@ QtObject {
         failureNotificationTimes[notificationCode] = now;
         phoneTargetFailureNotificationRequested(
                     message,
-                    "omarchy-android-phone-target-" + notificationCode);
+                    "droid-peek-phone-target-" + notificationCode);
         return true;
     }
 

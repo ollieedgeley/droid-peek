@@ -84,8 +84,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "omarchy-android-helper"
-version = "0.1.0"
+name = "droid-peek-helper"
+version = "1.0.0"
 dependencies = [
  "nix",
  "qrcode",

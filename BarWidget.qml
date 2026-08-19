@@ -6,7 +6,7 @@ import "qml/session/SessionRegistry.js" as SessionRegistry
 BarWidget {
     id: root
 
-    moduleName: "ollie.android"
+    moduleName: "ollieedgeley.droidpeek"
     property var panel: null
     readonly property bool opened: panel && panel.opened === true
                                    && panel.hostWidget === root
@@ -138,7 +138,7 @@ BarWidget {
     onBarChanged: bindSharedPanel()
 
     IpcHandler {
-        target: "ollie.android"
+        target: "ollieedgeley.droidpeek"
 
         function phoneTarget(encodedEnvelope: string): bool {
             var item = root.routedWidget()
@@ -159,7 +159,7 @@ BarWidget {
         anchors.fill: parent
         bar: root.bar
         text: "󰄜"
-        tooltipText: "Omarchy Android"
+        tooltipText: "Droid Peek"
         onPressed: function(button) {
             if (button === Qt.LeftButton) root.togglePanel()
         }

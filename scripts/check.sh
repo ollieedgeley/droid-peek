@@ -4,7 +4,7 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 omarchy_path="${OMARCHY_PATH:-/usr/share/omarchy}"
 qt6_bin="${QT6_BIN:-/usr/lib/qt6/bin}"
-lint_root="$(mktemp -d "${TMPDIR:-/tmp}/omarchy-android-qml.XXXXXX")"
+lint_root="$(mktemp -d "${TMPDIR:-/tmp}/droid-peek-qml.XXXXXX")"
 
 cleanup_lint_root() {
   unlink "$lint_root/qs/Ui" 2>/dev/null || true
@@ -27,12 +27,14 @@ run_check() {
 }
 
 run_check "validate plugin manifest" omarchy plugin validate .
+run_check "check release version" scripts/check-release-version
 run_check "test installed theme alignment" tests/theme-alignment.sh
 run_check "test phone-binding configurator" tests/semantic-action-dispatcher.sh
+run_check "test setup and cleanup" tests/setup-droid-peek.sh
 run_check "test phone-binding API" lua tests/hyprland-integration.lua integrations/phone-bindings.lua
 run_check "test phone-binding template" lua tests/hyprland-routing-config.lua integrations/phone-bindings.lua
 run_check "check architecture contracts" scripts/check-architecture.sh
-run_check "lint QML" "$qt6_bin/qmllint" -I "$lint_root" BarWidget.qml Panel.qml qml/components/NestedEscapeScope.qml qml/components/PhonePreview.qml qml/components/PhoneToolbar.qml qml/components/Settings.qml qml/state/ApplicationState.qml qml/state/PairingState.qml qml/state/PhoneTargetRouter.qml qml/state/SubmapController.qml
+run_check "lint QML" "$qt6_bin/qmllint" -I "$lint_root" BarWidget.qml Panel.qml qml/BuildInfo.qml qml/components/NestedEscapeScope.qml qml/components/PhonePreview.qml qml/components/PhoneToolbar.qml qml/components/Settings.qml qml/state/ApplicationState.qml qml/state/PairingState.qml qml/state/PhoneTargetRouter.qml qml/state/SubmapController.qml
 run_check "run QML tests" "$qt6_bin/qmltestrunner" -import "$lint_root" -import "$root_dir/tests/qml/imports" -input tests/qml
 run_check "check Rust formatting" cargo fmt --manifest-path helper/Cargo.toml -- --check
 run_check "lint Rust" cargo clippy --manifest-path helper/Cargo.toml --all-targets --all-features --locked -- -D warnings

@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use omarchy_android_helper::{
+use droid_peek_helper::{
     preferences::VideoQuality,
     process::CancellationToken,
     session::{

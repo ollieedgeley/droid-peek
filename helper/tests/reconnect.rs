@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use omarchy_android_helper::{
+use droid_peek_helper::{
     actions::PhoneTarget,
     input::{AndroidKey, DisplayGeometry, NormalizedPoint},
     persistence::{FileTrustedDeviceStore, TrustedDevice},
@@ -332,7 +332,7 @@ impl SessionRunner for BlockingSession {
         &mut self,
         target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<omarchy_android_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
     ) -> Result<SessionExit, SessionFailure> {
         self.qualities
             .lock()
@@ -362,7 +362,7 @@ impl SessionRunner for RecordingConfigSession {
         &mut self,
         _target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<omarchy_android_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
     ) -> Result<SessionExit, SessionFailure> {
         self.runs
             .lock()
@@ -391,7 +391,7 @@ impl SessionRunner for BlockingQualitySession {
         &mut self,
         _target: &str,
         _cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<omarchy_android_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
     ) -> Result<SessionExit, SessionFailure> {
         self.run_called.store(true, Ordering::Release);
         on_started(None);
@@ -416,7 +416,7 @@ impl SessionRunner for EndingSession {
         &mut self,
         _target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<omarchy_android_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
     ) -> Result<SessionExit, SessionFailure> {
         *self.cancellation.lock().expect("session cancellation lock") = Some(cancellation.clone());
         on_started(None);
@@ -438,7 +438,7 @@ impl SessionRunner for ControlledSession {
         &mut self,
         _target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<omarchy_android_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
     ) -> Result<SessionExit, SessionFailure> {
         self.runs.fetch_add(1, Ordering::AcqRel);
         on_started(None);

@@ -1,11 +1,11 @@
-use omarchy_android_helper::actions::PhoneTarget;
-use omarchy_android_helper::input::{AndroidKey, DisplayGeometry, NormalizedPoint};
-use omarchy_android_helper::preferences::{Preferences, PreviewScale, QuickAction, VideoQuality};
-use omarchy_android_helper::protocol::{
+use droid_peek_helper::actions::PhoneTarget;
+use droid_peek_helper::input::{AndroidKey, DisplayGeometry, NormalizedPoint};
+use droid_peek_helper::preferences::{Preferences, PreviewScale, QuickAction, VideoQuality};
+use droid_peek_helper::protocol::{
     ActionFailureCode, Event, FailureReason, PROTOCOL_VERSION, PairingBackend,
     PairingRequestFailure, PhoneTargetFailure, ProtocolEngine, QrPresentation,
 };
-use omarchy_android_helper::scrcpy_config::ScrcpyConfiguration;
+use droid_peek_helper::scrcpy_config::ScrcpyConfiguration;
 
 const HELPER_EPOCH: &str = "73001";
 
@@ -40,7 +40,7 @@ struct FakePairingBackend {
 impl PairingBackend for FakePairingBackend {
     fn start_qr_pairing(&mut self) -> Result<QrPresentation, PairingRequestFailure> {
         Ok(QrPresentation {
-            artifact: "/run/user/1000/omarchy-android/qr.svg".into(),
+            artifact: "/run/user/1000/droid-peek/qr.svg".into(),
             expires_in_seconds: 120,
         })
     }

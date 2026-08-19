@@ -1,6 +1,6 @@
 use std::{fs, os::unix::fs::PermissionsExt, process::Command};
 
-use omarchy_android_helper::scrcpy_config::{
+use droid_peek_helper::scrcpy_config::{
     FileScrcpyConfigStore, ScrcpyConfigError, ScrcpyConfiguration, decode_arguments_envelope,
 };
 use tempfile::tempdir;
@@ -131,7 +131,7 @@ fn decodes_base64url_json_without_exposing_arguments_to_shell_syntax() {
 #[test]
 fn helper_store_subcommand_persists_validated_arguments_and_prints_only_revision() {
     let state_root = tempdir().expect("temporary state root");
-    let output = Command::new(env!("CARGO_BIN_EXE_omarchy-android-helper"))
+    let output = Command::new(env!("CARGO_BIN_EXE_droid-peek-helper"))
         .args([
             "store-scrcpy-args",
             "WyItLWtlZXAtYWN0aXZlIiwiLS10dXJuLXNjcmVlbi1vZmYiXQ",
@@ -145,7 +145,7 @@ fn helper_store_subcommand_persists_validated_arguments_and_prints_only_revision
     let revision = String::from_utf8(output.stdout).expect("UTF-8 revision");
     assert!(revision.trim().bytes().all(|byte| byte.is_ascii_hexdigit()));
     assert!(output.stderr.is_empty());
-    let stored = FileScrcpyConfigStore::new(state_root.path().join("omarchy-android"))
+    let stored = FileScrcpyConfigStore::new(state_root.path().join("droid-peek"))
         .load()
         .expect("stored configuration");
     assert_eq!(

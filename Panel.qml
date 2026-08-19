@@ -32,6 +32,14 @@ Panel {
     readonly property color contentForeground: popupPalette.text
     readonly property color contentBackground: popupPalette.background
     readonly property var phonePreview: phonePreviewLoader.item
+    readonly property bool retainMountedPreview: pairingState.keepConnected
+                                                 && pairingState.sessionStarted
+                                                 && pairingState.previewReadyGeneration !== ""
+                                                 && pairingState.previewReadyGeneration
+                                                    === pairingState.sessionGeneration
+    readonly property bool previewCaptureWanted: pairingState.sessionStarted
+                                                 && (root.opened
+                                                     || root.retainMountedPreview)
     readonly property int setupSpacing: Style.space(12)
     readonly property int minimumQrSize: Style.space(180)
     readonly property int maximumQrSize: Style.space(240)
@@ -302,6 +310,12 @@ Panel {
             root.settingsOpen = false;
             root.managementOpen = false;
         }
+    }
+
+    Binding {
+        target: pairingState
+        property: "previewSurfaceMounted"
+        value: phonePreviewLoader.active
     }
 
     PhoneTargetRouter {
@@ -621,8 +635,7 @@ Panel {
                         Loader {
                             id: phonePreviewLoader
                             anchors.fill: parent
-                            active: root.opened
-                                    && pairingState.sessionStarted
+                            active: root.previewCaptureWanted
                             source: Qt.resolvedUrl(
                                         "qml/components/PhonePreview.qml")
                             onLoaded: {
@@ -633,8 +646,7 @@ Panel {
                                     return root.contentForeground;
                                 });
                                 item.captureRequested = Qt.binding(function () {
-                                    return root.opened
-                                            && pairingState.sessionStarted;
+                                    return root.previewCaptureWanted;
                                 });
                                 item.helperEpoch = Qt.binding(function () {
                                     return root.acceptedHelperEpoch;

@@ -38,6 +38,7 @@ QtObject {
     property string scrcpyRetryRevision: ""
     property int firstFrameTimeoutMs: 5000
     property bool previewFailed: false
+    property bool previewSurfaceMounted: false
 
     readonly property Timer firstFrameTimer: Timer {
         interval: root.firstFrameTimeoutMs
@@ -112,6 +113,8 @@ QtObject {
         firstFrameTimer.stop();
         if (previewReadyGeneration === sessionGeneration)
             return;
+        if (!previewSurfaceMounted)
+            return;
         firstFrameTimer.start();
     }
 
@@ -127,11 +130,22 @@ QtObject {
     }
 
     function handleFirstFrameTimeout() {
+        if (!previewSurfaceMounted)
+            return;
         if (!sessionStarted || previewReadyGeneration === sessionGeneration)
             return;
         presentPreviewFailed();
         stopSession();
         sessionStarted = false;
+    }
+
+    onPreviewSurfaceMountedChanged: {
+        if (!previewSurfaceMounted) {
+            cancelFirstFrameWatch();
+            return;
+        }
+        if (sessionStarted && previewReadyGeneration !== sessionGeneration)
+            startFirstFrameWatch();
     }
 
     function tickQrExpiry() {

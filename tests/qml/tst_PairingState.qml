@@ -79,6 +79,7 @@ TestCase {
         state.reset()
         state.hasTrustedDevice = false
         state.helperEpoch = "17"
+        state.previewSurfaceMounted = false
         commandSpy.clear()
         cancellationSpy.clear()
         phoneTargetCompletedSpy.clear()
@@ -613,6 +614,7 @@ TestCase {
     function test_missing_first_frame_stops_session_with_preview_failed() {
         state.firstFrameTimeoutMs = 20
         establishLiveSession()
+        state.previewSurfaceMounted = true
         commandSpy.clear()
 
         tryCompare(commandSpy, "count", 1)
@@ -637,6 +639,46 @@ TestCase {
         compare(state.statusDescription,
                 "The phone connected but the panel never received a picture.")
         compare(state.connectionPresentationActive, false)
+    }
+
+    function test_retain_unmounted_first_frame_timeout_does_not_stop_session() {
+        state.keepConnected = true
+        state.firstFrameTimeoutMs = 20
+        establishLiveSession()
+        state.previewSurfaceMounted = true
+        state.previewSurfaceMounted = false
+        commandSpy.clear()
+
+        wait(50)
+        compare(commandSpy.count, 0)
+        compare(state.sessionStarted, true)
+        verify(state.statusTitle !== "Preview failed")
+        compare(state.statusTitle, "Phone connected")
+    }
+
+    function test_remount_after_retain_restarts_first_frame_watch() {
+        state.keepConnected = true
+        state.firstFrameTimeoutMs = 20
+        establishLiveSession()
+        state.previewSurfaceMounted = true
+        state.previewSurfaceMounted = false
+        commandSpy.clear()
+
+        wait(50)
+        compare(commandSpy.count, 0)
+        compare(state.sessionStarted, true)
+        verify(state.statusTitle !== "Preview failed")
+
+        state.previewSurfaceMounted = true
+        tryCompare(commandSpy, "count", 1)
+        compare(commandAt(0), {
+            version: 11,
+            type: "stop-session",
+            helperEpoch: "17",
+            sessionGeneration: "1"
+        })
+        compare(state.statusTitle, "Preview failed")
+        compare(state.sessionStarted, false)
     }
 
 

@@ -1,16 +1,32 @@
 import QtQuick
 import Quickshell.Io
 import qs.Ui
+import "qml/session/SessionRegistry.js" as SessionRegistry
 
 BarWidget {
     id: root
 
     moduleName: "ollie.android"
     property var panel: null
-    readonly property bool opened: panel ? panel.opened === true : false
+    readonly property bool opened: panel && panel.opened === true
+                                   && panel.hostWidget === root
+
+    function bindSharedPanel() {
+        panel = SessionRegistry.ensurePanel(Qt.resolvedUrl("Panel.qml"),
+                                            root.bar || root)
+        injectPanel()
+    }
 
     function open() {
-        if (panel)
+        bindSharedPanel()
+        if (!panel)
+            return
+        panel.hostWidget = root
+        panel.anchorItem = button
+        if ("bar" in panel)
+            panel.bar = root.bar
+        injectPanel()
+        if (panel.opened !== true)
             panel.open()
     }
 
@@ -24,12 +40,10 @@ BarWidget {
     }
 
     function togglePanel() {
-        if (!panel)
-            return;
         if (opened)
             close();
         else
-            panel.open();
+            open();
     }
 
     function routedWidget() {
@@ -66,6 +80,8 @@ BarWidget {
     }
 
     function phoneTarget(encodedEnvelope) {
+        if (!root.panel)
+            bindSharedPanel();
         var request = decodePhoneTarget(encodedEnvelope);
         if (request === null || !root.panel
                 || !("acceptPhoneTarget" in root.panel))
@@ -74,6 +90,8 @@ BarWidget {
     }
 
     function configureScrcpy(revision, encodedConfiguration) {
+        if (!root.panel)
+            bindSharedPanel();
         var scrcpyArguments = decodeEnvelope(encodedConfiguration, 24000);
         if (typeof revision !== "string" || !/^[0-9a-f]{16}$/.test(revision)
                 || !validScrcpyArguments(scrcpyArguments) || !root.panel
@@ -116,19 +134,8 @@ BarWidget {
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
 
-    onBarChanged: injectPanel()
-
-    Loader {
-        id: panelLoader
-        active: true
-        source: Qt.resolvedUrl("Panel.qml")
-        visible: false
-        onLoaded: {
-            root.panel = item
-            root.injectPanel()
-            Qt.callLater(root.injectPanel)
-        }
-    }
+    Component.onCompleted: bindSharedPanel()
+    onBarChanged: bindSharedPanel()
 
     IpcHandler {
         target: "ollie.android"

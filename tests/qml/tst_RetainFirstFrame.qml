@@ -140,6 +140,9 @@ TestCase {
         compare(panelLoader.status, Loader.Ready)
         panelLoader.item.open()
         compare(panelLoader.item.opened, true)
+        tryVerify(function () {
+            return panelLoader.item.acceptedHelperEpoch !== ""
+        })
         var root = panelLoader.item
         root.settingsOpen = false
         root.managementOpen = false

@@ -4,6 +4,8 @@ import QtQuick
 
 QtObject {
     function env(name) {
+        if (name === "HOME")
+            return "/tmp/droid-peek-test-home"
         return ""
     }
 

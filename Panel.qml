@@ -26,13 +26,11 @@ Panel {
                                          ? []
                                          : [helperExecutable, "--acceptance-log"]
     property bool helperShutdownPending: false
+    property bool helperIntentionalStop: false
     property bool settingsOpen: false
     property bool managementOpen: false
     property int helperEpochCounter: 0
     property string acceptedHelperEpoch: ""
-    readonly property var helperLaunchCommand: helperCommand.concat(
-                                                    ["--helper-epoch",
-                                                     acceptedHelperEpoch])
     readonly property var barIdentity: hostWidget || root
     readonly property string applicationState: applicationStateModel.applicationState
     readonly property var popupPalette: Color.popups
@@ -213,6 +211,9 @@ Panel {
         helperEpochCounter += 1;
         acceptedHelperEpoch = String(helperEpochCounter);
         submapController.helperRestarted();
+        helperIntentionalStop = false;
+        helperProcess.command = root.helperCommand.concat(
+                    ["--helper-epoch", acceptedHelperEpoch]);
         helperProcess.running = true;
     }
 
@@ -224,6 +225,7 @@ Panel {
         if (helperVersionProcess.running)
             helperVersionProcess.running = false;
         helperVersionProcess.observedVersion = "";
+        helperIntentionalStop = true;
         helperProcess.running = false;
         acceptedHelperEpoch = "";
         pairingState.reset();
@@ -263,7 +265,7 @@ Panel {
     }
 
     BuildInfo {
-        id: BuildInfo
+        id: buildInfo
     }
 
     ApplicationState {
@@ -457,7 +459,7 @@ Panel {
             helperVersionProcess.observedVersion = "";
             if (!root.opened)
                 return;
-            if (exitCode !== 0 || version !== BuildInfo.releaseVersion) {
+            if (exitCode !== 0 || version !== buildInfo.releaseVersion) {
                 pairingState.localIntegrationFailure();
                 return;
             }
@@ -467,7 +469,6 @@ Panel {
 
     Process {
         id: helperProcess
-        command: root.helperLaunchCommand
         stdinEnabled: true
         running: false
         stdout: SplitParser {
@@ -475,13 +476,22 @@ Panel {
                 pairingState.receiveLine(data);
             }
         }
+
         onRunningChanged: {
-            if (!running && root.acceptedHelperEpoch !== "") {
-                root.acceptedHelperEpoch = "";
-                submapController.helperRestarted();
-                if (root.opened)
-                    pairingState.protocolFailure();
+            if (running) {
+                root.helperIntentionalStop = false;
+                return;
             }
+            if (root.acceptedHelperEpoch === "")
+                return;
+            root.acceptedHelperEpoch = "";
+            submapController.helperRestarted();
+            if (root.helperIntentionalStop) {
+                root.helperIntentionalStop = false;
+                return;
+            }
+            if (root.opened)
+                root.launchHelper();
         }
     }
 

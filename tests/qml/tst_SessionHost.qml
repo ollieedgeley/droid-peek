@@ -72,11 +72,28 @@ TestCase {
     }
 
     function test_ensurePanel_returns_identical_instance() {
-        var first = SessionRegistry.ensurePanel(panelUrl(), sharedBar)
+        var seen = null
+        var first = SessionRegistry.ensurePanel(panelUrl(), sharedBar,
+                                                function (created) {
+                                                    seen = created
+                                                })
         var second = SessionRegistry.ensurePanel(panelUrl(), sharedBar)
         verify(first !== null)
+        compare(first, seen)
         compare(first, second)
         compare(SessionRegistry.panel, first)
+    }
+
+    function test_ensurePanel_missing_file_returns_null() {
+        var seen = "unset"
+        var created = SessionRegistry.ensurePanel(
+                    Qt.resolvedUrl("../../missing-panel.qml"), sharedBar,
+                    function (panel) {
+                        seen = panel
+                    })
+        compare(created, null)
+        compare(SessionRegistry.panel, null)
+        compare(seen, "unset")
     }
 
     function test_second_owner_rebinds_without_second_helper() {
@@ -88,8 +105,10 @@ TestCase {
         compare(widgetA.item.opened, true)
         compare(widgetB.item.opened, false)
         compare(widgetA.item.panel.hostWidget, widgetA.item)
+        tryVerify(function () {
+            return widgetA.item.panel.acceptedHelperEpoch !== ""
+        })
         var epoch = widgetA.item.panel.acceptedHelperEpoch
-        verify(epoch !== "")
 
         widgetB.item.open()
         compare(widgetA.item.panel, widgetB.item.panel)

@@ -12,22 +12,27 @@ BarWidget {
                                    && panel.hostWidget === root
 
     function bindSharedPanel() {
-        panel = SessionRegistry.ensurePanel(Qt.resolvedUrl("Panel.qml"),
-                                            root.bar || root)
-        injectPanel()
+        SessionRegistry.ensurePanel(Qt.resolvedUrl("Panel.qml"),
+                                    root.bar || root, function (created) {
+            root.panel = created
+            injectPanel()
+        })
     }
 
     function open() {
-        bindSharedPanel()
-        if (!panel)
-            return
-        panel.hostWidget = root
-        panel.anchorItem = button
-        if ("bar" in panel)
-            panel.bar = root.bar
-        injectPanel()
-        if (panel.opened !== true)
-            panel.open()
+        SessionRegistry.ensurePanel(Qt.resolvedUrl("Panel.qml"),
+                                    root.bar || root, function (created) {
+            root.panel = created
+            if (!root.panel)
+                return
+            root.panel.hostWidget = root
+            root.panel.anchorItem = button
+            if ("bar" in root.panel)
+                root.panel.bar = root.bar
+            injectPanel()
+            if (root.panel.opened !== true)
+                root.panel.open()
+        })
     }
 
     function close() {

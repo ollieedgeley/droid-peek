@@ -441,16 +441,33 @@ TestCase {
         establishLiveSession()
 
         state.localIntegrationFailure()
-        compare(state.helperReady, false)
+        compare(state.helperReady, true)
         compare(state.hasTrustedDevice, true)
         compare(state.sessionStarted, false)
         compare(state.localIntegrationAvailable, false)
         compare(state.reason, "dependency-unavailable")
+        compare(state.statusTitle, "Android keyboard shortcuts unavailable")
+        compare(state.statusDescription,
+                "Desktop phone shortcuts could not be activated. The phone connection may still be retained.")
 
         state.receiveLine(event("session-started", {
             sessionGeneration: "1"
         }))
         compare(state.sessionStarted, false)
+        compare(state.localIntegrationAvailable, false)
+
+        state.retryLocalIntegration()
+        compare(state.localIntegrationAvailable, true)
+        compare(state.helperReady, true)
+
+        state.receiveLine(event("session-started", {
+            sessionGeneration: "1"
+        }))
+        compare(state.sessionStarted, false)
+
+        state.localIntegrationFailure()
+        compare(state.localIntegrationAvailable, false)
+        compare(state.helperReady, true)
 
         state.helperEpoch = "18"
         compare(state.localIntegrationAvailable, true)

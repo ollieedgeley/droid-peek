@@ -7,7 +7,7 @@ TestCase {
 
     property var calls: []
     property var commands: []
-
+    property var requestIds: []
     SubmapController {
         id: controller
     }
@@ -15,9 +15,10 @@ TestCase {
     Connections {
         target: controller
 
-        function onSubmapCommandRequested(command, submap) {
+        function onSubmapCommandRequested(command, submap, requestId) {
             commands.push(command)
             calls.push("submap:" + submap)
+            requestIds.push(requestId)
         }
 
         function onPanelCloseRequested() {
@@ -28,10 +29,10 @@ TestCase {
     function init() {
         controller.reset()
         calls = []
-        controller.applicationState = "closed"
         controller.androidModeShortcuts = true
         calls = []
         commands = []
+        requestIds = []
     }
 
     function test_allowed_submaps_generate_exact_typed_command_argv_data() {
@@ -134,5 +135,36 @@ TestCase {
         calls = []
         controller.dispatchFailed()
         compare(calls, ["submap:reset"])
+    }
+
+    function test_request_ids_increase_and_only_latest_is_current() {
+        verify(controller.requestSubmap("reset"))
+        compare(requestIds.length, 1)
+        var firstId = requestIds[0]
+        verify(firstId > 0)
+        verify(controller.isCurrentRequest(firstId))
+        verify(!controller.isCurrentRequest(firstId - 1))
+
+        verify(controller.requestSubmap("omarchy-android"))
+        compare(requestIds.length, 2)
+        var secondId = requestIds[1]
+        verify(secondId > firstId)
+        verify(!controller.isCurrentRequest(firstId))
+        verify(controller.isCurrentRequest(secondId))
+
+        controller.forceReset()
+        compare(requestIds.length, 3)
+        var thirdId = requestIds[2]
+        verify(thirdId > secondId)
+        verify(!controller.isCurrentRequest(firstId))
+        verify(!controller.isCurrentRequest(secondId))
+        verify(controller.isCurrentRequest(thirdId))
+        compare(controller.requestGeneration, thirdId)
+
+        var generationBeforeReset = controller.requestGeneration
+        controller.reset()
+        verify(controller.requestGeneration > generationBeforeReset)
+        verify(controller.isCurrentRequest(controller.requestGeneration))
+        verify(!controller.isCurrentRequest(thirdId))
     }
 }

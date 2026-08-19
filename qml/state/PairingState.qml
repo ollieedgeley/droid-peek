@@ -462,7 +462,6 @@ QtObject {
     }
 
     function localIntegrationFailure() {
-        helperReady = false;
         connectionPresentationActive = false;
         previewReadyGeneration = "";
         sessionGeneration = "";
@@ -475,9 +474,14 @@ QtObject {
         pairingStage = "local-integration-failed";
         activity = "";
         reason = "dependency-unavailable";
-        statusTitle = "Android keyboard controls unavailable";
-        statusDescription = "The desktop shortcut mode could not be activated.";
+        statusTitle = "Android keyboard shortcuts unavailable";
+        statusDescription = "Desktop phone shortcuts could not be activated. The phone connection may still be retained.";
         lifecycleFailure(reason);
+    }
+
+    function retryLocalIntegration() {
+        if (!localIntegrationAvailable)
+            localIntegrationAvailable = true;
     }
 
     function advanceGeneration(generation) {

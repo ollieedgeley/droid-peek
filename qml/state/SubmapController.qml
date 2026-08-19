@@ -6,13 +6,14 @@ QtObject {
     property string applicationState: "closed"
     property bool androidModeShortcuts: true
     property string lastDispatchedSubmap: ""
+    property int requestGeneration: 0
 
     readonly property string desiredSubmap: applicationState === "interactive"
                                                     && androidModeShortcuts
                                                 ? "omarchy-android"
                                                 : "reset"
 
-    signal submapCommandRequested(var command, string submap)
+    signal submapCommandRequested(var command, string submap, int requestId)
     signal panelCloseRequested()
 
     function commandForSubmap(submap) {
@@ -28,8 +29,13 @@ QtObject {
         var command = commandForSubmap(submap);
         if (command === null)
             return false;
-        submapCommandRequested(command, submap);
+        requestGeneration += 1;
+        submapCommandRequested(command, submap, requestGeneration);
         return true;
+    }
+
+    function isCurrentRequest(requestId) {
+        return requestId === requestGeneration;
     }
 
     function dispatchDesiredState() {

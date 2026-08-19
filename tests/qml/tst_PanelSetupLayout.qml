@@ -208,14 +208,14 @@ TestCase {
         state.localIntegrationFailure()
 
         compare(state.sessionState, "dependency-unavailable")
-        compare(state.statusTitle, "Android keyboard controls unavailable")
+        compare(state.statusTitle, "Android keyboard shortcuts unavailable")
         compare(state.statusDescription,
-                "The desktop shortcut mode could not be activated.")
+                "Desktop phone shortcuts could not be activated. The phone connection may still be retained.")
 
         var title = objectNamed("setupHeadingTitle")
         var tag = objectNamed("setupHeadingTag")
         var description = objectNamed("setupDescription")
-        tryCompare(tag, "text", "Unavailable")
+        tryCompare(tag, "text", "Shortcuts")
         compare(title.text, state.statusTitle)
         compare(description.text, state.statusDescription)
         verify(description.visible)

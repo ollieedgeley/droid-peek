@@ -326,12 +326,21 @@ Panel {
 
     SubmapController {
         id: submapController
+        objectName: "submapController"
         applicationState: root.applicationState
         androidModeShortcuts: pairingState.androidModeShortcuts
-        onSubmapCommandRequested: function (command, submap) {
-            submapProcess.running = false;
+        onSubmapCommandRequested: function (command, submap, requestId) {
+            if (submapProcess.running)
+                submapProcess.running = false;
             submapProcess.dispatchedSubmap = submap;
+            submapProcess.requestId = requestId;
             submapProcess.command = command;
+            var started = submapProcess.startedRequests.slice();
+            started.push({
+                             requestId: requestId,
+                             submap: submap
+                         });
+            submapProcess.startedRequests = started;
             submapProcess.running = true;
         }
         onPanelCloseRequested: root.close()
@@ -339,16 +348,26 @@ Panel {
 
     Process {
         id: submapProcess
+        objectName: "submapProcess"
         property string dispatchedSubmap: "reset"
+        property int requestId: 0
+        property var startedRequests: []
         running: false
     }
     Connections {
         target: submapProcess
         function onExited(exitCode) {
+            var started = submapProcess.startedRequests.slice();
+            if (started.length === 0)
+                return;
+            var completed = started.shift();
+            submapProcess.startedRequests = started;
+            if (!submapController.isCurrentRequest(completed.requestId))
+                return;
             if (exitCode === 0)
                 return;
             pairingState.localIntegrationFailure();
-            if (submapProcess.dispatchedSubmap === "reset") {
+            if (completed.submap === "reset") {
                 submapResetRetry.restart();
             } else {
                 submapController.dispatchFailed();
@@ -483,10 +502,13 @@ Panel {
                                     id: setupHeadingTag
                                     objectName: "setupHeadingTag"
                                     anchors.centerIn: parent
-                                    text: pairingState.sessionState
-                                          === "dependency-unavailable"
-                                          ? "Unavailable"
+                                    text: pairingState.pairingStage
+                                          === "local-integration-failed"
+                                          ? "Shortcuts"
                                           : pairingState.sessionState
+                                            === "dependency-unavailable"
+                                            ? "Unavailable"
+                                            : pairingState.sessionState
                                     color: Qt.darker(root.contentForeground,
                                                      1.4)
                                     font.family: Style.fontFamily
@@ -807,11 +829,17 @@ Panel {
                     }
 
                     Button {
-                        visible: pairingState.sessionState === "disconnected"
+                        objectName: "reconnectButton"
+                        visible: (pairingState.sessionState === "disconnected"
+                                  || pairingState.pairingStage
+                                     === "local-integration-failed")
                                  && !applicationStateModel.captureSurfaceRequired
                         text: "Reconnect"
                         foreground: root.contentForeground
-                        onClicked: pairingState.reconnectTrustedDevice()
+                        onClicked: {
+                            pairingState.retryLocalIntegration();
+                            pairingState.reconnectTrustedDevice();
+                        }
                     }
                     Button {
                         objectName: "fallbackStartOverButton"

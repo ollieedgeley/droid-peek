@@ -507,8 +507,8 @@ fn invalid_phone_target_request_ids_are_rejected_before_stale_identity_can_echo_
 fn typed_phone_targets_are_correlated_and_forwarded_with_identity() {
     let mut engine = engine(FakePairingBackend::default());
     for (request_id, target) in [
-        ("browser", r#""android.browser.default""#),
         ("home", r#""android.navigate.home""#),
+        ("recents", r#""android.recent-apps""#),
         (
             "package",
             r#"{"type":"android.app.launch","package":"com.example.notes"}"#,
@@ -527,8 +527,8 @@ fn typed_phone_targets_are_correlated_and_forwarded_with_identity() {
 
     let backend = engine.into_backend();
     assert_eq!(backend.phone_targets.len(), 4);
-    assert_eq!(backend.phone_targets[0].0, PhoneTarget::BrowserDefault);
-    assert_eq!(backend.phone_targets[1].0, PhoneTarget::NavigateHome);
+    assert_eq!(backend.phone_targets[0].0, PhoneTarget::NavigateHome);
+    assert_eq!(backend.phone_targets[1].0, PhoneTarget::RecentApps);
     assert_eq!(
         backend.phone_targets[2].0,
         PhoneTarget::AppLaunch {

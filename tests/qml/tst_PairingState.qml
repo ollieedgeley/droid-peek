@@ -484,7 +484,7 @@ TestCase {
         state.sendPointerSwipe(0.1, 0.2, 0.8, 0.9, 1080, 2400, 320)
         state.sendKeyInput("back")
         state.sendTextInput("a")
-        state.sendPhoneTarget("request-1", "android.browser.default", expiresAtUnixMs)
+        state.sendPhoneTarget("request-1", "android.navigate.home", expiresAtUnixMs)
 
         compare(commandSpy.count, 5)
         for (var index = 0; index < commandSpy.count; ++index) {
@@ -496,7 +496,7 @@ TestCase {
             version: 11,
             type: "phone-target",
             requestId: "request-1",
-            target: "android.browser.default",
+            target: "android.navigate.home",
             expiresAtUnixMs: expiresAtUnixMs,
             helperEpoch: "17",
             sessionGeneration: "1"

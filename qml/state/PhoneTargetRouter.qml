@@ -8,6 +8,7 @@ QtObject {
     property string sessionGeneration: ""
     readonly property int failureCoalesceWindowMs: 2000
     property var failureNotificationTimes: ({})
+    property var pendingLabels: ({})
 
     signal phoneTargetRequested(var request)
     signal phoneTargetFailureNotificationRequested(string message,
@@ -50,6 +51,10 @@ QtObject {
         return match !== null && match[0].length === keyName.length;
     }
 
+    function validDescription(description) {
+        return typeof description === "string" && description.length > 0;
+    }
+
     function validTarget(target) {
         if (typeof target === "string")
             return validNamedTarget(target);
@@ -66,7 +71,11 @@ QtObject {
         return false;
     }
 
-    function consumePhoneTargetResult(outcome, notificationCode) {
+    function consumePhoneTargetResult(requestId, outcome, notificationCode) {
+        var label = typeof requestId === "string"
+                ? pendingLabels[requestId] : undefined;
+        if (typeof requestId === "string")
+            delete pendingLabels[requestId];
         if (outcome !== "failed")
             return false;
         var message = "";
@@ -86,6 +95,8 @@ QtObject {
         default:
             return false;
         }
+        if (typeof label === "string" && label.length > 0)
+            message = "Couldn't open " + label + ".";
         var now = Date.now();
         var previous = failureNotificationTimes[notificationCode];
         if (typeof previous === "number" && now >= previous
@@ -108,11 +119,17 @@ QtObject {
                 || !validDeadline(request.expiresAtUnixMs))
             return false;
         var keys = Object.keys(request);
-        if (keys.length !== 3
+        if ((keys.length !== 3 && keys.length !== 4)
                 || keys.indexOf("requestId") < 0
                 || keys.indexOf("target") < 0
                 || keys.indexOf("expiresAtUnixMs") < 0)
             return false;
+        if (keys.length === 4
+                && (keys.indexOf("description") < 0
+                    || !validDescription(request.description)))
+            return false;
+        if (validDescription(request.description))
+            pendingLabels[request.requestId] = request.description;
         phoneTargetRequested({
             requestId: request.requestId,
             target: request.target,

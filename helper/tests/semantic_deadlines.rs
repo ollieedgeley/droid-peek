@@ -74,8 +74,8 @@ impl CommandRunner for SlowActionRunner {
             request
                 .arguments()
                 .iter()
-                .any(|argument| { argument == "get-role-holders" || argument == "monkey" }),
-            "bounded phone-target work must be the browser role query or launch"
+                .any(|argument| argument == "monkey"),
+            "bounded phone-target work must be the named app launch"
         );
         let would_report_success_at = Instant::now() + Duration::from_secs(4);
         loop {
@@ -256,7 +256,9 @@ fn runtime_rejects_invalid_phone_target_deadlines_and_bounds_accepted_work() {
 
     assert_eq!(
         backend.phone_target(
-            PhoneTarget::BrowserDefault,
+            PhoneTarget::AppLaunch {
+                package: "com.example.notes".to_owned(),
+            },
             "expired-action",
             unix_time_ms() - 1_000,
         ),
@@ -268,7 +270,9 @@ fn runtime_rejects_invalid_phone_target_deadlines_and_bounds_accepted_work() {
 
     assert_eq!(
         backend.phone_target(
-            PhoneTarget::BrowserDefault,
+            PhoneTarget::AppLaunch {
+                package: "com.example.notes".to_owned(),
+            },
             "unreasonable-future-action",
             unix_time_ms() + 60_000,
         ),
@@ -281,7 +285,9 @@ fn runtime_rejects_invalid_phone_target_deadlines_and_bounds_accepted_work() {
     let started = Instant::now();
     assert_eq!(
         backend.phone_target(
-            PhoneTarget::BrowserDefault,
+            PhoneTarget::AppLaunch {
+                package: "com.example.notes".to_owned(),
+            },
             "slow-action",
             unix_time_ms() + 2_000,
         ),

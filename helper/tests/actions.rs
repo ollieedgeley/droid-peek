@@ -4,8 +4,8 @@ use omarchy_android_helper::{
     actions::{AdbActionAdapter, PhoneTarget},
     input::AndroidKey,
     process::{
-        ActionExecutionFailure, CancellationToken, CapturedOutput, CommandFailure, CommandOutput,
-        CommandRequest, CommandRunner,
+        ActionExecutionFailure, CancellationToken, CommandFailure, CommandOutput, CommandRequest,
+        CommandRunner,
     },
 };
 
@@ -46,7 +46,6 @@ fn key_events() -> [(&'static str, AndroidKey, &'static str); 21] {
 #[test]
 fn phone_targets_are_a_small_typed_allowlist() {
     for (wire, expected) in [
-        (r#""android.browser.default""#, PhoneTarget::BrowserDefault),
         (r#""android.navigate.home""#, PhoneTarget::NavigateHome),
         (r#""android.navigate.back""#, PhoneTarget::NavigateBack),
         (r#""android.recent-apps""#, PhoneTarget::RecentApps),
@@ -81,6 +80,7 @@ fn phone_targets_are_a_small_typed_allowlist() {
 #[test]
 fn phone_targets_reject_unknown_shapes_packages_and_command_source() {
     for target in [
+        r#""android.browser.default""#,
         r#""android.launcher.search""#,
         r#""android.shell""#,
         r#""android.keyevent""#,
@@ -116,7 +116,6 @@ fn phone_targets_reject_unknown_shapes_packages_and_command_source() {
 struct FakeActionRunner {
     requests: Vec<CommandRequest>,
     outputs: VecDeque<Result<CommandOutput, CommandFailure>>,
-    captured: VecDeque<Result<CapturedOutput, CommandFailure>>,
 }
 
 impl CommandRunner for FakeActionRunner {
@@ -130,128 +129,6 @@ impl CommandRunner for FakeActionRunner {
             .pop_front()
             .unwrap_or(Ok(CommandOutput { succeeded: true }))
     }
-
-    fn run_captured(
-        &mut self,
-        request: CommandRequest,
-        cancellation: &CancellationToken,
-    ) -> Result<CapturedOutput, CommandFailure> {
-        if let Some(captured) = self.captured.pop_front() {
-            self.requests.push(request);
-            return captured;
-        }
-        self.run(request, cancellation)
-            .map(|output| CapturedOutput {
-                succeeded: output.succeeded,
-                stdout: String::new(),
-            })
-    }
-}
-
-#[test]
-fn browser_target_launches_the_role_holder_package_without_a_url() {
-    let mut runner = FakeActionRunner {
-        captured: VecDeque::from([Ok(CapturedOutput {
-            succeeded: true,
-            stdout: "com.android.chrome".to_owned(),
-        })]),
-        ..FakeActionRunner::default()
-    };
-    let cancellation = CancellationToken::new();
-    let mut adapter = AdbActionAdapter::new(&mut runner, &cancellation);
-
-    assert_eq!(
-        adapter.execute("device.local:38100", &PhoneTarget::BrowserDefault),
-        Ok(true)
-    );
-
-    assert_eq!(runner.requests.len(), 2);
-    assert_eq!(runner.requests[0].program(), "adb");
-    assert_eq!(
-        runner.requests[0].arguments(),
-        [
-            "-s",
-            "device.local:38100",
-            "shell",
-            "cmd",
-            "role",
-            "get-role-holders",
-            "android.app.role.BROWSER",
-        ]
-    );
-    assert_eq!(
-        runner.requests[1].arguments(),
-        [
-            "-s",
-            "device.local:38100",
-            "shell",
-            "monkey",
-            "-p",
-            "com.android.chrome",
-            "-c",
-            "android.intent.category.LAUNCHER",
-            "1",
-        ]
-    );
-    assert!(runner.requests.iter().all(|request| {
-        request.arguments().iter().all(|argument| {
-            !argument.contains("://")
-                && argument != "--package"
-                && argument != "-n"
-                && argument != "-W"
-                && !argument.contains("APP_BROWSER")
-        })
-    }));
-}
-
-#[test]
-fn browser_target_fails_closed_when_role_holders_are_empty() {
-    let mut runner = FakeActionRunner {
-        captured: VecDeque::from([Ok(CapturedOutput {
-            succeeded: true,
-            stdout: "  \n".to_owned(),
-        })]),
-        ..FakeActionRunner::default()
-    };
-    let cancellation = CancellationToken::new();
-    let mut adapter = AdbActionAdapter::new(&mut runner, &cancellation);
-
-    assert_eq!(
-        adapter.execute("device.local:38100", &PhoneTarget::BrowserDefault),
-        Ok(false)
-    );
-    assert_eq!(runner.requests.len(), 1);
-    assert_eq!(
-        runner.requests[0].arguments(),
-        [
-            "-s",
-            "device.local:38100",
-            "shell",
-            "cmd",
-            "role",
-            "get-role-holders",
-            "android.app.role.BROWSER",
-        ]
-    );
-}
-
-#[test]
-fn browser_target_fails_closed_when_role_holder_is_invalid() {
-    let mut runner = FakeActionRunner {
-        captured: VecDeque::from([Ok(CapturedOutput {
-            succeeded: true,
-            stdout: "not a package".to_owned(),
-        })]),
-        ..FakeActionRunner::default()
-    };
-    let cancellation = CancellationToken::new();
-    let mut adapter = AdbActionAdapter::new(&mut runner, &cancellation);
-
-    assert_eq!(
-        adapter.execute("device.local:38100", &PhoneTarget::BrowserDefault),
-        Ok(false)
-    );
-    assert_eq!(runner.requests.len(), 1);
 }
 
 #[test]
@@ -351,17 +228,13 @@ fn target_adapter_preserves_process_failure_as_an_action_outcome() {
             Ok(CommandOutput { succeeded: false }),
             Err(CommandFailure::Cancelled),
         ]),
-        captured: VecDeque::from([Ok(CapturedOutput {
-            succeeded: true,
-            stdout: "com.android.chrome".to_owned(),
-        })]),
         ..FakeActionRunner::default()
     };
     let cancellation = CancellationToken::new();
     let mut adapter = AdbActionAdapter::new(&mut runner, &cancellation);
 
     assert_eq!(
-        adapter.execute("device.local:38100", &PhoneTarget::BrowserDefault),
+        adapter.execute("device.local:38100", &PhoneTarget::NavigateHome),
         Ok(false)
     );
     assert_eq!(

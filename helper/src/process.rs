@@ -365,6 +365,12 @@ fn classify_action_failure(output: &CapturedStreams) -> Option<ActionExecutionFa
     None
 }
 
+fn monkey_launch_aborted(output: &CapturedStreams) -> bool {
+    output.iter().any(|stream| {
+        contains_ascii_case_insensitive(stream, b"no activities found to run, monkey aborted")
+    })
+}
+
 fn contains_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
         .windows(needle.len())
@@ -394,14 +400,12 @@ impl CommandRunner for AdbCommandRunner {
         let (output, captured) = self
             .run_internal(request, cancellation, true)
             .map_err(ActionExecutionFailure::from)?;
-        let classified = if output.succeeded {
-            None
-        } else {
-            captured.as_ref().and_then(classify_action_failure)
-        };
-        match classified {
-            Some(failure) => Err(failure),
-            None => Ok(output),
+        if let Some(failure) = captured.as_ref().and_then(classify_action_failure) {
+            return Err(failure);
         }
+        if captured.as_ref().is_some_and(monkey_launch_aborted) {
+            return Ok(CommandOutput { succeeded: false });
+        }
+        Ok(output)
     }
 }

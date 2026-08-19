@@ -12,10 +12,10 @@ use std::{
     time::Duration,
 };
 
-use omarchy_android_helper::qr::{
+use droid_peek_helper::qr::{
     Clock, EntropySource, QrArtifact, QrCeremony, QrRenderer, RuntimeQrRenderer,
 };
-use omarchy_android_helper::{
+use droid_peek_helper::{
     process::{CommandFailure, CommandOutput, CommandRequest, CommandRunner},
     protocol::{Event, PROTOCOL_VERSION, PairingBackend, ProtocolEngine},
     runtime::{ProtocolSink, RuntimeDependencies, RuntimePairingBackend},
@@ -452,7 +452,7 @@ fn replacement_uses_active_qr_material_and_suppresses_stale_worker_events() {
         [
             Event::Pairing {
                 helper_epoch: HELPER_EPOCH.to_owned(),
-                method: omarchy_android_helper::protocol::PairingMethod::Qr,
+                method: droid_peek_helper::protocol::PairingMethod::Qr,
             }
             .to_line(),
             Event::Paired {
@@ -556,7 +556,7 @@ fn manual_worker_starts_after_the_synchronous_pairing_event() {
         [
             Event::Pairing {
                 helper_epoch: HELPER_EPOCH.to_owned(),
-                method: omarchy_android_helper::protocol::PairingMethod::ManualCode,
+                method: droid_peek_helper::protocol::PairingMethod::ManualCode,
             }
             .to_line(),
             Event::Paired {

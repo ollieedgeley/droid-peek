@@ -78,8 +78,20 @@ io.popen = function(command, mode)
       end,
     }
   end
+  if command:match("%[.*/%.local/bin/droid%-peek%-helper%] %-%-version$") then
+    assert(mode == "r", "helper version command must be read-only")
+    return {
+      read = function(_, format)
+        assert(format == "*l")
+        return "1.0.0"
+      end,
+      close = function()
+        return true
+      end,
+    }
+  end
   assert(
-    command:match("^%[omarchy%-android%-helper%] store%-scrcpy%-args %[([A-Za-z0-9_-]+)%]$"),
+    command:match("^%[.*/%.local/bin/droid%-peek%-helper%] store%-scrcpy%-args %[([A-Za-z0-9_-]+)%]$"),
     "configure must call the fixed plugin helper store subcommand"
   )
   assert(mode == "r", "configuration store command must be read-only")
@@ -121,7 +133,7 @@ end
 
 local function command_envelope(command)
   local encoded = command:match(
-    "^omarchy%-shell ollie%.android phoneTarget %[([A-Za-z0-9_-]+)%]$"
+    "^omarchy%-shell ollieedgeley%.droidpeek phoneTarget %[([A-Za-z0-9_-]+)%]$"
   )
   assert(encoded ~= nil, "target must use the phoneTarget shell endpoint")
   assert(not encoded:find("=", 1, true), "base64url envelope must omit padding")
@@ -139,7 +151,7 @@ end
 
 local wrong_name_api = dofile(integration)
 local wrong_name_ok = pcall(wrong_name_api.define_submap, "other-submap", function() end)
-assert(not wrong_name_ok, "only the named omarchy-android submap is supported")
+assert(not wrong_name_ok, "only the named droid-peek submap is supported")
 assert(#submaps == 0, "an invalid submap name must not reach Hyprland")
 
 local android = dofile(integration)
@@ -187,7 +199,7 @@ android.configure({
 })
 assert(#stored_config_commands == 0, "configure must only stage")
 
-android.define_submap("omarchy-android", function()
+android.define_submap("droid-peek", function()
   android.bind("SUPER + ALT + A", "Close Android panel", android.close_panel)
   android.bind("SUPER + W", "Home", "android.navigate.home")
   android.bind("SUPER + ALT + P", "Package", {
@@ -198,10 +210,10 @@ android.define_submap("omarchy-android", function()
 end)
 
 assert(#submaps == 1, "the API must define exactly one submap")
-assert(submaps[1] == "omarchy-android")
+assert(submaps[1] == "droid-peek")
 assert(#bindings == 4, "only declared phone bindings may be registered")
 for _, binding in ipairs(bindings) do
-  assert(binding.submap == "omarchy-android", "phone bindings must stay inside their submap")
+  assert(binding.submap == "droid-peek", "phone bindings must stay inside their submap")
   assert(type(binding.dispatcher) == "function", "deadlines must be created at dispatch time")
   assert(type(binding.options) == "table")
   assert(type(binding.options.description) == "string")
@@ -214,7 +226,7 @@ for _, binding in ipairs(bindings) do
 end
 assert(o.bind == desktop_bind, "defining the submap must not intercept desktop bindings")
 
-local duplicate_ok = pcall(android.define_submap, "omarchy-android", function() end)
+local duplicate_ok = pcall(android.define_submap, "droid-peek", function() end)
 assert(not duplicate_ok, "the API must not define a second submap")
 assert(#submaps == 1, "a duplicate definition must not reach Hyprland")
 
@@ -223,7 +235,7 @@ assert(#execution_events == 2, "close must request panel close and reset synchro
 assert(execution_events[1].kind == "submap")
 assert(execution_events[1].name == "reset")
 assert(execution_events[2].kind == "command")
-assert(execution_events[2].command == "omarchy-shell shell hide ollie.android")
+assert(execution_events[2].command == "omarchy-shell shell hide ollieedgeley.droidpeek")
 
 now_seconds = 1700000030
 now_milliseconds = 1700000030125
@@ -272,7 +284,7 @@ assert(stored_json:match('^%["%-%-keep%-active","%-%-turn%-screen%-off",'))
 assert(stored_json:find("Téléphone", 1, true))
 local configure_command = execution_events[7].command
 local configure_revision, configure_envelope = configure_command:match(
-  "^omarchy%-shell ollie%.android configureScrcpy %[([0-9a-f]+)%] %[([A-Za-z0-9_-]+)%]$"
+  "^omarchy%-shell ollieedgeley%.droidpeek configureScrcpy %[([0-9a-f]+)%] %[([A-Za-z0-9_-]+)%]$"
 )
 assert(configure_revision == revision)
 assert(decode_base64url(assert(configure_envelope)) == stored_json)

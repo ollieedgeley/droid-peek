@@ -2,9 +2,9 @@
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-configurator="$root_dir/scripts/configure-phone-bindings"
-template="$root_dir/integrations/omarchy-android.lua.example"
-test_root="$(mktemp -d "${TMPDIR:-/tmp}/omarchy-android-config-test.XXXXXX")"
+configurator="$root_dir/scripts/configure-droid-peek"
+template="$root_dir/integrations/droid-peek.lua.example"
+test_root="$(mktemp -d "${TMPDIR:-/tmp}/droid-peek-config-test.XXXXXX")"
 
 cleanup() {
   rm -rf "$test_root"
@@ -22,8 +22,8 @@ assert_exact_loader_count() {
   local actual
   actual="$(
     awk '
-      previous == "-- Omarchy Android plugin loader (managed)" &&
-        $0 == "require(\"hypr.omarchy-android\")" { count += 1 }
+      previous == "-- Droid Peek plugin loader (managed)" &&
+        $0 == "require(\"hypr.droid-peek\")" { count += 1 }
       { previous = $0 }
       END { print count + 0 }
     ' "$path"
@@ -51,7 +51,7 @@ cat >"$xdg_home/hypr/bindings.lua" <<'EOF'
 -- user binding before plugin block
 require("hypr.user-bindings")
 
--- Omarchy Android plugin loader (managed)
+-- Droid Peek plugin loader (managed)
 require("hypr.user-lookalike")
 -- user binding after lookalike
 EOF
@@ -59,22 +59,22 @@ cp "$xdg_home/hypr/bindings.lua" "$test_root/original-bindings.lua"
 
 HOME="$fake_home" XDG_CONFIG_HOME="$xdg_home" "$configurator" install
 
-[[ -f "$xdg_home/hypr/omarchy-android.lua" ]] ||
+[[ -f "$xdg_home/hypr/droid-peek.lua" ]] ||
   fail "install did not copy the user phone-binding template"
-cmp -s "$template" "$xdg_home/hypr/omarchy-android.lua" ||
+cmp -s "$template" "$xdg_home/hypr/droid-peek.lua" ||
   fail "first install did not copy the packaged template byte-for-byte"
-[[ ! -e "$fake_home/.config/hypr/omarchy-android.lua" ]] ||
+[[ ! -e "$fake_home/.config/hypr/droid-peek.lua" ]] ||
   fail "XDG_CONFIG_HOME must take precedence over HOME/.config"
 assert_exact_loader_count "$xdg_home/hypr/bindings.lua" 1
 cp "$xdg_home/hypr/bindings.lua" "$test_root/installed-bindings.lua"
 
-printf '\n-- user-owned edit after installation\n' >>"$xdg_home/hypr/omarchy-android.lua"
-cp "$xdg_home/hypr/omarchy-android.lua" "$test_root/user-edited-phone-bindings.lua"
+printf '\n-- user-owned edit after installation\n' >>"$xdg_home/hypr/droid-peek.lua"
+cp "$xdg_home/hypr/droid-peek.lua" "$test_root/user-edited-phone-bindings.lua"
 
 HOME="$fake_home" XDG_CONFIG_HOME="$xdg_home" "$configurator" install
 cmp -s "$test_root/installed-bindings.lua" "$xdg_home/hypr/bindings.lua" ||
   fail "repeat install changed bindings.lua or duplicated the loader"
-cmp -s "$test_root/user-edited-phone-bindings.lua" "$xdg_home/hypr/omarchy-android.lua" ||
+cmp -s "$test_root/user-edited-phone-bindings.lua" "$xdg_home/hypr/droid-peek.lua" ||
   fail "repeat install overwrote the user-owned phone bindings"
 assert_exact_loader_count "$xdg_home/hypr/bindings.lua" 1
 
@@ -86,7 +86,7 @@ HOME="$fake_home" \
   "$configurator" uninstall
 cmp -s "$test_root/original-bindings.lua" "$xdg_home/hypr/bindings.lua" ||
   fail "uninstall changed user bindings or failed to remove only the managed block"
-cmp -s "$test_root/user-edited-phone-bindings.lua" "$xdg_home/hypr/omarchy-android.lua" ||
+cmp -s "$test_root/user-edited-phone-bindings.lua" "$xdg_home/hypr/droid-peek.lua" ||
   fail "uninstall must preserve the user-owned phone bindings"
 assert_exact_loader_count "$xdg_home/hypr/bindings.lua" 0
 bindings_metadata_after="$(stat -c '%u:%g:%a' "$xdg_home/hypr/bindings.lua")"
@@ -128,18 +128,18 @@ cat >"$home_fallback/.config/hypr/bindings.lua" <<'EOF'
 -- independent HOME fixture
 require("hypr.home-user")
 EOF
-cat >"$home_fallback/.config/hypr/omarchy-android.lua" <<'EOF'
+cat >"$home_fallback/.config/hypr/droid-peek.lua" <<'EOF'
 -- existing user configuration must win
 return "user-owned"
 EOF
 cp \
-  "$home_fallback/.config/hypr/omarchy-android.lua" \
+  "$home_fallback/.config/hypr/droid-peek.lua" \
   "$test_root/existing-phone-bindings.lua"
 
 env -u XDG_CONFIG_HOME HOME="$home_fallback" "$configurator" install
 cmp -s \
   "$test_root/existing-phone-bindings.lua" \
-  "$home_fallback/.config/hypr/omarchy-android.lua" ||
+  "$home_fallback/.config/hypr/droid-peek.lua" ||
   fail "install overwrote an existing HOME-based user configuration"
 assert_exact_loader_count "$home_fallback/.config/hypr/bindings.lua" 1
 
@@ -154,5 +154,5 @@ cmp -s \
   fail "HOME-based uninstall did not preserve every user-owned byte"
 cmp -s \
   "$test_root/existing-phone-bindings.lua" \
-  "$home_fallback/.config/hypr/omarchy-android.lua" ||
+  "$home_fallback/.config/hypr/droid-peek.lua" ||
   fail "HOME-based uninstall removed the user-owned phone configuration"

@@ -582,7 +582,7 @@ QtObject {
         } else {
             sessionState = "dependency-unavailable";
             statusTitle = "Local dependency unavailable";
-            statusDescription = "Recheck the documented Omarchy Android dependencies.";
+            statusDescription = "Recheck the documented Droid Peek dependencies.";
         }
         lifecycleFailure(failureReason);
     }

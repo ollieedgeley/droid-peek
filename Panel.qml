@@ -7,17 +7,24 @@ import "qml/PanelLifecycle.js" as PanelLifecycle
 import "qml/state"
 import "qml/components"
 import "qml/PreviewGeometry.js" as PreviewGeometry
+import "qml"
 
 Panel {
     id: root
 
-    moduleName: "ollie.android"
-    ipcTarget: "ollie.android"
+    moduleName: "ollieedgeley.droidpeek"
+    ipcTarget: "ollieedgeley.droidpeek"
     manageIpc: false
 
     property var anchorItem: null
     property var hostWidget: null
-    property var helperCommand: ["omarchy-android-helper", "--acceptance-log"]
+    readonly property string helperExecutable: {
+        var home = Quickshell.env("HOME");
+        return home ? home + "/.local/bin/droid-peek-helper" : "";
+    }
+    readonly property var helperCommand: helperExecutable === ""
+                                         ? []
+                                         : [helperExecutable, "--acceptance-log"]
     property bool helperShutdownPending: false
     property bool settingsOpen: false
     property bool managementOpen: false
@@ -190,6 +197,17 @@ Panel {
     }
 
     function launchHelper() {
+        if (helperProcess.running || helperVersionProcess.running)
+            return;
+        if (helperExecutable === "") {
+            pairingState.localIntegrationFailure();
+            return;
+        }
+        helperVersionProcess.observedVersion = "";
+        helperVersionProcess.running = true;
+    }
+
+    function startHelperAfterVersionCheck() {
         if (helperProcess.running)
             return;
         helperEpochCounter += 1;
@@ -203,6 +221,9 @@ Panel {
             return;
         helperShutdownPending = false;
         helperStopTimer.stop();
+        if (helperVersionProcess.running)
+            helperVersionProcess.running = false;
+        helperVersionProcess.observedVersion = "";
         helperProcess.running = false;
         acceptedHelperEpoch = "";
         pairingState.reset();
@@ -219,6 +240,9 @@ Panel {
                     && pairingState.sessionState === "unpaired")
                 pairingState.startQrPairing();
         } else {
+            if (helperVersionProcess.running)
+                helperVersionProcess.running = false;
+            helperVersionProcess.observedVersion = "";
             submapController.helperRestarted();
             manualCode.text = "";
             startOverDialog.opened = false;
@@ -236,6 +260,10 @@ Panel {
             settingsOpen = false;
             managementOpen = false;
         }
+    }
+
+    BuildInfo {
+        id: BuildInfo
     }
 
     ApplicationState {
@@ -301,7 +329,7 @@ Panel {
                 "omarchy-notification-send",
                 "-g", "󰄜",
                 "-u", "low",
-                "Omarchy DroidPeek",
+                "Droid Peek",
                 "Android settings could not be saved."
             ]);
         }
@@ -333,7 +361,7 @@ Panel {
                 "omarchy-notification-send",
                 "-g", "󰄜",
                 "-u", "low",
-                "Omarchy DroidPeek",
+                "Droid Peek",
                 message
             ]);
         }
@@ -410,6 +438,31 @@ Panel {
         repeat: true
         running: root.opened && pairingState.pairingStage === "qr-waiting" && pairingState.qrExpiresInSeconds > 0
         onTriggered: pairingState.tickQrExpiry()
+    }
+
+    Process {
+        id: helperVersionProcess
+        property string observedVersion: ""
+        command: root.helperExecutable === ""
+                 ? []
+                 : [root.helperExecutable, "--version"]
+        running: false
+        stdout: SplitParser {
+            onRead: function (data) {
+                helperVersionProcess.observedVersion = data;
+            }
+        }
+        onExited: function (exitCode) {
+            var version = helperVersionProcess.observedVersion;
+            helperVersionProcess.observedVersion = "";
+            if (!root.opened)
+                return;
+            if (exitCode !== 0 || version !== BuildInfo.releaseVersion) {
+                pairingState.localIntegrationFailure();
+                return;
+            }
+            root.startHelperAfterVersionCheck();
+        }
     }
 
     Process {

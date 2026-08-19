@@ -28,7 +28,7 @@ pub(crate) fn remove_file_if_present(path: &Path) -> io::Result<()> {
 fn temporary_file(directory: &Path) -> io::Result<tempfile::NamedTempFile> {
     ensure_private_directory(directory)?;
     let temporary = tempfile::Builder::new()
-        .prefix(".omarchy-android-")
+        .prefix(".droid-peek-")
         .tempfile_in(directory)?;
     temporary
         .as_file()

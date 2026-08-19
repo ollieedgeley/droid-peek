@@ -1,17 +1,17 @@
 use std::{fs, os::unix::fs::PermissionsExt};
 
-use omarchy_android_helper::persistence::{FileTrustedDeviceStore, TrustedDevice};
+use droid_peek_helper::persistence::{FileTrustedDeviceStore, TrustedDevice};
 use tempfile::tempdir;
 
 #[test]
 fn saves_only_the_service_identity_in_private_state() {
     let directory = tempdir().expect("temporary state directory");
-    let store = FileTrustedDeviceStore::new(directory.path().join("omarchy-android"));
+    let store = FileTrustedDeviceStore::new(directory.path().join("droid-peek"));
     let device = TrustedDevice::new("adb-14141FD6F00081-TnSdi9").expect("valid service name");
 
     store.save(&device).expect("save trusted device");
 
-    let state_directory = directory.path().join("omarchy-android");
+    let state_directory = directory.path().join("droid-peek");
     let state_path = state_directory.join("trusted-device.json");
     let contents = fs::read_to_string(&state_path).expect("read trusted-device state");
     assert_eq!(
@@ -49,7 +49,7 @@ fn saves_only_the_service_identity_in_private_state() {
 #[test]
 fn missing_or_malformed_state_is_safely_unpaired() {
     let directory = tempdir().expect("temporary state directory");
-    let store = FileTrustedDeviceStore::new(directory.path().join("omarchy-android"));
+    let store = FileTrustedDeviceStore::new(directory.path().join("droid-peek"));
     assert!(store.load().expect("load missing state").is_none());
 
     fs::create_dir_all(store.directory()).expect("create state directory");
@@ -66,7 +66,7 @@ fn missing_or_malformed_state_is_safely_unpaired() {
 #[test]
 fn remove_forgets_a_saved_device_and_is_idempotent() {
     let directory = tempdir().expect("temporary state directory");
-    let store = FileTrustedDeviceStore::new(directory.path().join("omarchy-android"));
+    let store = FileTrustedDeviceStore::new(directory.path().join("droid-peek"));
     let device = TrustedDevice::new("adb-14141FD6F00081-TnSdi9").expect("valid service name");
     store.save(&device).expect("save trusted device");
 

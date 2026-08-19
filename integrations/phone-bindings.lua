@@ -2,13 +2,14 @@ if o == nil then
   require("default.hypr.helpers")
 end
 
-local SUBMAP_NAME = "omarchy-android"
+local SUBMAP_NAME = "droid-peek"
 local submap_defined = false
 local defining_submap = false
 local request_sequence = 0
 local staged_scrcpy_arguments = nil
 local configuration_committed = false
-local helper_executable = "omarchy-android-helper"
+local helper_executable
+local build_info
 local reserved_scrcpy_arguments = {
   ["--serial"] = true,
   ["--select-usb"] = true,
@@ -31,7 +32,23 @@ local reserved_scrcpy_arguments = {
 }
 
 local function fail(message)
-  error("omarchy-android: " .. message, 3)
+  error("droid-peek: " .. message, 3)
+end
+
+local home = os.getenv("HOME")
+if type(home) ~= "string" or home == "" then
+  fail("HOME is required")
+end
+helper_executable = home .. "/.local/bin/droid-peek-helper"
+
+local source = debug.getinfo(1, "S").source
+local integration_directory = source:match("^@(.*)/[^/]+$")
+  or (home .. "/.config/omarchy/plugins/ollieedgeley.droidpeek/integrations")
+build_info = dofile(integration_directory .. "/build-info.lua")
+if type(build_info) ~= "table"
+    or type(build_info.release_version) ~= "string"
+    or build_info.release_version == "" then
+  fail("build info is unavailable")
 end
 
 local function json_string(value)
@@ -141,14 +158,14 @@ local function dispatch_target(target, description)
     json_string(description),
     "}",
   })
-  local command = "omarchy-shell ollie.android phoneTarget "
+  local command = "omarchy-shell ollieedgeley.droidpeek phoneTarget "
     .. o.shell_quote(base64url(envelope))
   hl.exec_cmd(command)
 end
 
 local function close_panel()
   hl.dispatch(hl.dsp.submap("reset"))
-  hl.exec_cmd("omarchy-shell shell hide ollie.android")
+  hl.exec_cmd("omarchy-shell shell hide ollieedgeley.droidpeek")
 end
 
 local function validated_scrcpy_arguments(arguments)
@@ -212,34 +229,47 @@ local function configure(configuration)
   staged_scrcpy_arguments = validated_scrcpy_arguments(configuration.scrcpyArgs)
 end
 
-local function commit_configuration()
-  if defining_submap or not submap_defined or staged_scrcpy_arguments == nil
-      or configuration_committed then
-    fail("commitConfiguration must be called once after define_submap")
-  end
-  local arguments_json = scrcpy_arguments_json(staged_scrcpy_arguments)
+local function run_helper_line(arguments)
   local process = io.popen(
-    o.shell_quote(helper_executable)
-      .. " store-scrcpy-args "
-      .. o.shell_quote(base64url(arguments_json)),
+    o.shell_quote(helper_executable) .. " " .. arguments,
     "r"
   )
   if process == nil then
     fail("unable to start configuration helper")
   end
-  local revision = process:read("*l")
+  local output = process:read("*l")
   local closed, _, exit_code = process:close()
   -- Hyprland owns SIGCHLD and may reap the helper before Lua closes the pipe.
   if not closed and exit_code ~= 10 then
     fail("configuration helper failed")
   end
+  return output
+end
+
+local function require_helper_version()
+  local version = run_helper_line("--version")
+  if type(version) ~= "string" or version ~= build_info.release_version then
+    fail("configuration helper version mismatch")
+  end
+end
+
+local function commit_configuration()
+  if defining_submap or not submap_defined or staged_scrcpy_arguments == nil
+      or configuration_committed then
+    fail("commitConfiguration must be called once after define_submap")
+  end
+  require_helper_version()
+  local arguments_json = scrcpy_arguments_json(staged_scrcpy_arguments)
+  local revision = run_helper_line(
+    "store-scrcpy-args " .. o.shell_quote(base64url(arguments_json))
+  )
   if type(revision) ~= "string"
       or not revision:match("^[0-9a-f]+$") or #revision ~= 16 then
     fail("configuration helper returned an invalid revision")
   end
   configuration_committed = true
   hl.exec_cmd(
-    "omarchy-shell ollie.android configureScrcpy "
+    "omarchy-shell ollieedgeley.droidpeek configureScrcpy "
       .. o.shell_quote(revision)
       .. " "
       .. o.shell_quote(base64url(arguments_json))

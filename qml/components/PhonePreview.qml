@@ -13,7 +13,7 @@ Item {
     property string sessionGeneration: "0"
     property string applicationState: "closed"
     readonly property string deviceId: "/dev/video42"
-    readonly property string deviceDescription: "Omarchy Android"
+    readonly property string deviceDescription: "Droid Peek"
     property var videoInputs: mediaDevices.videoInputs
     readonly property var popupPalette: Color.popups
     property color foreground: popupPalette.text

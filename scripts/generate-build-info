@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root_dir"
+
+fail() {
+  printf '%s\n' "$1" >&2
+  exit 1
+}
+
+version=""
+while IFS= read -r line; do
+  if [[ "$line" =~ \"version\":[[:space:]]*\"([^\"]+)\" ]]; then
+    version="${BASH_REMATCH[1]}"
+    break
+  fi
+done <manifest.json
+
+[[ -n "$version" ]] || fail "manifest version is missing"
+[[ "$version" =~ ^[0-9A-Za-z.+-]+$ ]] || fail "manifest version is not safe to embed"
+
+cat >qml/BuildInfo.qml <<EOF
+import QtQuick
+
+QtObject {
+    readonly property string releaseVersion: "$version"
+}
+EOF
+
+cat >integrations/build-info.lua <<EOF
+return {
+  release_version = "$version",
+}
+EOF

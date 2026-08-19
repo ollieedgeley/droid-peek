@@ -79,11 +79,11 @@ TestCase {
 
     function test_capture_identity_is_exact_and_unique() {
         compare(preview.deviceId, "/dev/video42")
-        compare(preview.deviceDescription, "Omarchy Android")
+        compare(preview.deviceDescription, "Droid Peek")
         var inputs = [
             { id: "/dev/video0", description: "USB Camera" },
             { id: preview.deviceId, description: preview.deviceDescription },
-            { id: "/dev/video43", description: "Omarchy Android Backup" }
+            { id: "/dev/video43", description: "Droid Peek Backup" }
         ]
 
         compare(preview.findDeviceIndex(inputs, preview.deviceId,

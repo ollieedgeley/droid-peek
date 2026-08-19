@@ -205,7 +205,7 @@ where
 }
 
 const PRODUCTION_V4L2_SINK: &str = "/dev/video42";
-const PRODUCTION_V4L2_CARD: &str = "Omarchy Android";
+const PRODUCTION_V4L2_CARD: &str = "Droid Peek";
 const PRODUCTION_V4L2_SYSFS: &str = "/sys/class/video4linux/video42";
 const SESSION_START_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -321,7 +321,7 @@ impl ScrcpySessionRunner {
     /// Constructs a runner with an isolated sink for fake process tests.
     ///
     /// This constructor does not validate the injected sink as the production
-    /// Omarchy Android video device.
+    /// Droid Peek video device.
     #[doc(hidden)]
     #[must_use]
     pub fn new_with_test_sink(
@@ -399,7 +399,7 @@ impl ScrcpySessionRunner {
             Ok(sink)
         } else {
             Err(io::Error::other(
-                "capture sink does not match the Omarchy Android video device",
+                "capture sink does not match the Droid Peek video device",
             ))
         }
     }
@@ -590,7 +590,7 @@ mod tests {
             Some(expected_readiness_path.as_path())
         );
         assert!(runner.validate_production_identity);
-        assert_eq!(PRODUCTION_V4L2_CARD, "Omarchy Android");
+        assert_eq!(PRODUCTION_V4L2_CARD, "Droid Peek");
     }
 
     fn valid_sink_metadata() -> SinkMetadata {
@@ -612,7 +612,7 @@ mod tests {
             metadata,
             metadata,
             "81:42\n",
-            "Omarchy Android\n",
+            "Droid Peek\n",
         ));
     }
 
@@ -628,7 +628,7 @@ mod tests {
             metadata,
             metadata,
             "81:42\n",
-            "Omarchy Android\n",
+            "Droid Peek\n",
         ));
         assert!(!validate_capture_sink_identity(
             SinkMetadata {
@@ -638,7 +638,7 @@ mod tests {
             metadata,
             metadata,
             "81:42\n",
-            "Omarchy Android\n",
+            "Droid Peek\n",
         ));
     }
 
@@ -654,7 +654,7 @@ mod tests {
             },
             metadata,
             "81:42\n",
-            "Omarchy Android\n",
+            "Droid Peek\n",
         ));
         assert!(!validate_capture_sink_identity(
             metadata,
@@ -664,7 +664,7 @@ mod tests {
                 ..metadata
             },
             "81:42\n",
-            "Omarchy Android\n",
+            "Droid Peek\n",
         ));
     }
 
@@ -677,14 +677,14 @@ mod tests {
             metadata,
             metadata,
             "81:41\n",
-            "Omarchy Android\n",
+            "Droid Peek\n",
         ));
         assert!(!validate_capture_sink_identity(
             metadata,
             metadata,
             metadata,
             "81:42\n",
-            "Omarchy Android Backup\n",
+            "Droid Peek Backup\n",
         ));
     }
 }

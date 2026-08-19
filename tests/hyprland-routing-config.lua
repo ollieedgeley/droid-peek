@@ -1,6 +1,6 @@
 local supplied_path = assert(arg[1], "integration path")
 local integration_directory = supplied_path:match("^(.*)/[^/]+$") or "."
-local template_path = integration_directory .. "/omarchy-android.lua.example"
+local template_path = integration_directory .. "/droid-peek.lua.example"
 
 local calls = {}
 local submaps = {}
@@ -44,7 +44,7 @@ dofile = function(path)
   table.insert(api_requests, path)
   assert(
     path
-      == "/temporary-home/.config/omarchy/plugins/ollie.android/integrations/phone-bindings.lua",
+      == "/temporary-home/.config/omarchy/plugins/ollieedgeley.droidpeek/integrations/phone-bindings.lua",
     "the user template must load the plugin-owned phone-binding API"
   )
   return android
@@ -61,7 +61,7 @@ assert(template_ok, tostring(template_error))
 
 assert(#api_requests == 1, "the template must load exactly one plugin API")
 assert(#submaps == 1, "the template must define exactly one named submap")
-assert(submaps[1] == "omarchy-android")
+assert(submaps[1] == "droid-peek")
 assert(#calls == 15, "the release template must enable only the documented active bindings")
 assert(configuration_committed, "the template must commit its configuration")
 assert(

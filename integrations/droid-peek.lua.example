@@ -1,10 +1,10 @@
--- ~/.config/hypr/omarchy-android.lua
+-- ~/.config/hypr/droid-peek.lua
 --
 -- Droid Peek phone-mode bindings. Edit for your own phone.
 
 local android = dofile(
   os.getenv("HOME")
-    .. "/.config/omarchy/plugins/ollie.android/integrations/phone-bindings.lua"
+    .. "/.config/omarchy/plugins/ollieedgeley.droidpeek/integrations/phone-bindings.lua"
 )
 
 -- Session. Android still controls locking.
@@ -12,7 +12,7 @@ android.configure({
   scrcpyArgs = { "--keep-active", "--turn-screen-off", "--stay-awake" },
 })
 
-android.define_submap("omarchy-android", function()
+android.define_submap("droid-peek", function()
   -- Panel
   android.bind("SUPER + ALT + A", "Close Android panel", android.close_panel)
 

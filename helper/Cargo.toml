@@ -1,6 +1,6 @@
 [package]
-name = "omarchy-android-helper"
-version = "0.1.0"
+name = "droid-peek-helper"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
 publish = false
@@ -14,9 +14,9 @@ tempfile = "3"
 zeroize = "1"
 
 [lib]
-name = "omarchy_android_helper"
+name = "droid_peek_helper"
 path = "src/lib.rs"
 
 [[bin]]
-name = "omarchy-android-helper"
+name = "droid-peek-helper"
 path = "src/main.rs"

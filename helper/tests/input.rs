@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use omarchy_android_helper::{
+use droid_peek_helper::{
     input::{AdbInputAdapter, AndroidKey, DisplayGeometry, NormalizedPoint},
     process::{CancellationToken, CommandFailure, CommandOutput, CommandRequest, CommandRunner},
 };

@@ -1,0 +1,590 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PLUGIN_ID='ollieedgeley.droidpeek'
+CARD_LABEL='Droid Peek'
+VIDEO_NR=42
+HELPER_INSTALL_NAME='droid-peek-helper'
+REQUIRED_PACKAGES=(
+  android-tools
+  avahi
+  scrcpy
+  qt6-multimedia
+  v4l2loopback-dkms
+  linux-headers
+)
+LOADER_COMMENT='-- Droid Peek plugin loader (managed)'
+LOADER_REQUIRE='require("hypr.droid-peek")'
+
+usage() {
+  cat <<EOF
+usage: ${0##*/} [--dry-run]
+
+Prepare this Omarchy host for Droid Peek after the plugin source is installed
+and left disabled. Prints the full plan first. Normal mode asks for
+confirmation before the first privileged step.
+
+Environment:
+  DROID_PEEK_HELPER_ASSET_DIR
+    Local directory containing the versioned helper asset and SHA256SUMS.
+    Used instead of downloading GitHub Release assets. Intended for tests
+    and offline verification. The helper is never resolved from PATH.
+EOF
+  exit "${1:-0}"
+}
+
+fail() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+dry_run=0
+while (($#)); do
+  case "$1" in
+    --dry-run)
+      dry_run=1
+      ;;
+    -h | --help)
+      usage 0
+      ;;
+    *)
+      usage 64
+      ;;
+  esac
+  shift
+done
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root_dir="$(cd "$script_dir/.." && pwd)"
+host_root="${DROID_PEEK_HOST_ROOT:-}"
+asset_dir="${DROID_PEEK_HELPER_ASSET_DIR:-}"
+config_home="${XDG_CONFIG_HOME:-${HOME:?HOME is required}/.config}"
+hypr_dir="$config_home/hypr"
+user_module="$hypr_dir/droid-peek.lua"
+bindings_file="$hypr_dir/bindings.lua"
+helper_path="$HOME/.local/bin/$HELPER_INSTALL_NAME"
+tmp_dir=""
+release_version=""
+helper_filename=""
+helper_url=""
+sums_url=""
+helper_source=""
+missing_packages=()
+avahi_action=""
+v4l2_action=""
+lua_action=""
+loader_action=""
+modules_load_file=""
+modprobe_file=""
+video_dev=""
+video_sysfs=""
+module_sysfs=""
+cleanup_tmp() {
+  if [[ -n "${tmp_dir:-}" && -d "$tmp_dir" ]]; then
+    rm -rf "$tmp_dir"
+  fi
+}
+trap cleanup_tmp EXIT
+
+host_path() {
+  printf '%s%s' "$host_root" "$1"
+}
+
+run_privileged() {
+  if [[ -n "$host_root" ]] || [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+write_root_file() {
+  local path="$1"
+  local content="$2"
+  if [[ -n "$host_root" ]]; then
+    mkdir -p "$(dirname -- "$path")"
+    printf '%s\n' "$content" >"$path"
+    return
+  fi
+  printf '%s\n' "$content" | run_privileged tee "$path" >/dev/null
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+}
+
+json_field() {
+  jq -r "$1" "$root_dir/manifest.json"
+}
+
+has_loader() {
+  [[ -f "$bindings_file" ]] || return 1
+  awk -v comment="$LOADER_COMMENT" -v loader="$LOADER_REQUIRE" '
+    previous == comment && $0 == loader { found = 1 }
+    { previous = $0 }
+    END { exit found ? 0 : 1 }
+  ' "$bindings_file"
+}
+
+plugin_list_json() {
+  require_cmd omarchy
+  omarchy plugin list --json
+}
+
+plugin_is_enabled() {
+  local plugins
+  plugins="$(plugin_list_json)" || fail "could not query plugin state; is the Omarchy shell running?"
+  jq -e --arg id "$PLUGIN_ID" 'any(.[]; .id == $id and .enabled == true)' >/dev/null <<<"$plugins"
+}
+
+plugin_is_discovered() {
+  local plugins
+  plugins="$(plugin_list_json)" || fail "could not query plugin state; is the Omarchy shell running?"
+  jq -e --arg id "$PLUGIN_ID" 'any(.[]; .id == $id)' >/dev/null <<<"$plugins"
+}
+
+video_name() {
+  local name_file="$video_sysfs/name"
+  [[ -f "$name_file" ]] || return 1
+  tr -d '\n' <"$name_file"
+}
+
+is_loopback_sysfs() {
+  local sysfs="$1"
+  local resolved driver
+  [[ -e "$sysfs/device" ]] || return 1
+  resolved="$(readlink -f -- "$sysfs/device" 2>/dev/null || true)"
+  [[ "$resolved" == *"/virtual/video4linux/"* ]] && return 0
+  driver="$(readlink -f -- "$sysfs/device/driver" 2>/dev/null || true)"
+  [[ "$driver" == *"v4l2loopback"* ]]
+}
+
+other_loopback_exists() {
+  local entry
+  [[ -d "$(host_path /sys/class/video4linux)" ]] || return 1
+  for entry in "$(host_path /sys/class/video4linux)"/video*; do
+    [[ -e "$entry" ]] || continue
+    [[ "$(basename -- "$entry")" == "video$VIDEO_NR" ]] && continue
+    is_loopback_sysfs "$entry" && return 0
+  done
+  return 1
+}
+
+video_in_use() {
+  [[ -e "$video_dev" ]] || return 1
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -s "$video_dev" 2>/dev/null
+    return
+  fi
+  return 1
+}
+
+module_loaded() {
+  [[ -d "$module_sysfs" ]]
+}
+
+v4l2_collision() {
+  printf '%s\n' "$1" >&2
+  printf '%s\n' "No V4L2 files were changed. Reboot into a host without a colliding loopback device, or recover the existing /dev/video$VIDEO_NR configuration manually, then re-run setup." >&2
+  exit 1
+}
+
+inspect_v4l2() {
+  if module_loaded; then
+    if other_loopback_exists; then
+      v4l2_collision "V4L2 collision: another v4l2loopback device is already present."
+    fi
+    if [[ ! -e "$video_dev" || ! -d "$video_sysfs" ]]; then
+      v4l2_collision "V4L2 collision: v4l2loopback is loaded but /dev/video$VIDEO_NR is missing."
+    fi
+    if ! is_loopback_sysfs "$video_sysfs"; then
+      v4l2_collision "V4L2 collision: /dev/video$VIDEO_NR exists but is not a v4l2loopback device."
+    fi
+    local name
+    name="$(video_name || true)"
+    if [[ "$name" != "$CARD_LABEL" ]]; then
+      v4l2_collision "V4L2 collision: /dev/video$VIDEO_NR is labelled '${name:-unknown}', not '$CARD_LABEL'."
+    fi
+    if video_in_use; then
+      v4l2_collision "V4L2 collision: /dev/video$VIDEO_NR is in use."
+    fi
+    v4l2_action="write-files-only"
+    return
+  fi
+
+  if [[ -e "$video_dev" || -d "$video_sysfs" ]]; then
+    v4l2_collision "V4L2 collision: /dev/video$VIDEO_NR exists while v4l2loopback is not loaded."
+  fi
+  if other_loopback_exists; then
+    v4l2_collision "V4L2 collision: another v4l2loopback device is already present."
+  fi
+  v4l2_action="write-and-load"
+}
+
+modules_load_content='v4l2loopback'
+modprobe_content="options v4l2loopback video_nr=$VIDEO_NR card_label=\"$CARD_LABEL\" exclusive_caps=0"
+
+file_has_content() {
+  local path="$1"
+  local expected="$2"
+  [[ -f "$path" ]] && [[ "$(<"$path")" == "$expected" || "$(<"$path")" == "$expected"$'\n' ]]
+}
+
+confirm_yes() {
+  local prompt="$1"
+  local answer=""
+  printf '%s' "$prompt"
+  if ! IFS= read -r answer; then
+    answer=""
+  fi
+  [[ "$answer" == [yY] || "$answer" == [yY][eE][sS] ]]
+}
+
+run_check_release_version() {
+  local checker="${DROID_PEEK_CHECK_RELEASE_VERSION:-$script_dir/check-release-version}"
+  [[ -x "$checker" ]] || fail "missing release check: $checker"
+  "$checker" || fail "release version check failed; no changes were made."
+}
+
+check_architecture() {
+  local machine
+  machine="$(uname -m)"
+  [[ "$machine" == "x86_64" ]] ||
+    fail "unsupported architecture '$machine'. The first Droid Peek release supports only x86_64. No changes were made."
+}
+
+check_kernel() {
+  local release pkgbase_file pkgbase
+  release="$(uname -r)"
+  pkgbase_file="$(host_path /usr/lib/modules/"$release"/pkgbase)"
+  if [[ ! -f "$pkgbase_file" ]]; then
+    fail "could not determine the running kernel package (missing $pkgbase_file). The first Droid Peek release supports only Arch's linux kernel with matching linux-headers. Boot that kernel, then re-run setup. No changes were made."
+  fi
+  pkgbase="$(tr -d '[:space:]' <"$pkgbase_file")"
+  [[ "$pkgbase" == "linux" ]] ||
+    fail "the running kernel '$release' is supplied by '$pkgbase', not Arch's linux package. The first Droid Peek release supports only the stock linux kernel with linux-headers. Boot that kernel, or install matching headers for this kernel manually, then re-run setup. No changes were made."
+}
+
+refuse_if_plugin_enabled() {
+  if plugin_is_enabled; then
+    fail "plugin $PLUGIN_ID is enabled. Disable it with 'omarchy plugin disable $PLUGIN_ID' before changing the host. No changes were made."
+  fi
+}
+
+collect_missing_packages() {
+  local pkg
+  require_cmd omarchy
+  missing_packages=()
+  for pkg in "${REQUIRED_PACKAGES[@]}"; do
+    if ! omarchy pkg present "$pkg"; then
+      missing_packages+=("$pkg")
+    fi
+  done
+}
+
+inspect_helper() {
+  release_version="$(json_field '.version')"
+  [[ -n "$release_version" && "$release_version" != "null" ]] ||
+    fail "manifest.json does not contain a release version."
+  helper_filename="$HELPER_INSTALL_NAME-$release_version-x86_64-unknown-linux-gnu"
+  if [[ -n "$asset_dir" ]]; then
+    helper_source="$asset_dir/$helper_filename"
+    helper_url="$helper_source"
+    sums_url="$asset_dir/SHA256SUMS"
+  else
+    helper_url="https://github.com/ollieedgeley/droid-peek/releases/download/v${release_version}/$helper_filename"
+    sums_url="https://github.com/ollieedgeley/droid-peek/releases/download/v${release_version}/SHA256SUMS"
+    helper_source="$helper_url"
+  fi
+}
+
+inspect_avahi() {
+  if systemctl is-active --quiet avahi-daemon.service &&
+    systemctl is-enabled --quiet avahi-daemon.service; then
+    avahi_action="already"
+  else
+    avahi_action="enable"
+  fi
+}
+
+inspect_user_config() {
+  if [[ -e "$user_module" ]]; then
+    lua_action="preserve"
+  else
+    lua_action="copy"
+  fi
+  if has_loader; then
+    loader_action="present"
+  else
+    loader_action="append"
+  fi
+}
+
+print_plan() {
+  local pkg
+  printf '%s\n' "Droid Peek setup plan"
+  printf '%s\n' "====================="
+  printf '\nPackages:\n'
+  printf '  already present:'
+  if ((${#missing_packages[@]} == 0)); then
+    printf ' %s' "${REQUIRED_PACKAGES[@]}"
+    printf '\n'
+    printf '  install via omarchy pkg add: (none)\n'
+  else
+    for pkg in "${REQUIRED_PACKAGES[@]}"; do
+      local listed=0
+      local missing
+      for missing in "${missing_packages[@]}"; do
+        if [[ "$pkg" == "$missing" ]]; then
+          listed=1
+          break
+        fi
+      done
+      if ((listed == 0)); then
+        printf ' %s' "$pkg"
+      fi
+    done
+    printf '\n'
+    printf '  install via omarchy pkg add:'
+    printf ' %s' "${missing_packages[@]}"
+    printf '\n'
+  fi
+
+  printf '\nHelper:\n'
+  printf '  version: %s\n' "$release_version"
+  printf '  asset: %s\n' "$helper_source"
+  printf '  SHA256SUMS: %s\n' "$sums_url"
+  printf '  install path: %s (mode 0755)\n' "$helper_path"
+  if [[ -n "$asset_dir" ]]; then
+    printf '  source: local asset directory (DROID_PEEK_HELPER_ASSET_DIR)\n'
+  else
+    printf '  source: GitHub Release v%s\n' "$release_version"
+  fi
+
+  printf '\nAvahi:\n'
+  if [[ "$avahi_action" == "already" ]]; then
+    printf '  avahi-daemon.service is already enabled and running\n'
+  else
+    printf '  enable and start avahi-daemon.service\n'
+    printf '  this is a host service change so the phone can be discovered on the local network\n'
+  fi
+
+  printf '\nV4L2:\n'
+  printf '  %s (v4l2loopback)\n' "$modules_load_file"
+  printf '  %s (video_nr=%s card_label="%s" exclusive_caps=0)\n' \
+    "$modprobe_file" "$VIDEO_NR" "$CARD_LABEL"
+  if [[ "$v4l2_action" == "write-and-load" ]]; then
+    printf '  load v4l2loopback once and verify /dev/video%s labelled %s\n' "$VIDEO_NR" "$CARD_LABEL"
+  else
+    printf '  module already loaded with inactive /dev/video%s labelled %s; write files only\n' \
+      "$VIDEO_NR" "$CARD_LABEL"
+  fi
+
+  printf '\nUser configuration:\n'
+  if [[ "$lua_action" == "preserve" ]]; then
+    printf '  leave existing %s unchanged\n' "$user_module"
+  else
+    printf '  copy integrations/droid-peek.lua.example -> %s\n' "$user_module"
+  fi
+  if [[ "$loader_action" == "present" ]]; then
+    printf '  managed loader already present in %s\n' "$bindings_file"
+  else
+    printf '  append managed require("hypr.droid-peek") loader to %s\n' "$bindings_file"
+  fi
+  printf '\n'
+}
+
+parse_sha256sums() {
+  local file="$1"
+  local expected_name="$2"
+  local line digest name count=0
+  [[ -s "$file" ]] || fail "SHA256SUMS is empty."
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -n "$line" ]] || fail "SHA256SUMS contains a blank line."
+    count=$((count + 1))
+    if [[ "$line" =~ ^([0-9a-fA-F]{64})[[:space:]]+\*?([^[:space:]]+)$ ]]; then
+      digest="${BASH_REMATCH[1]}"
+      name="${BASH_REMATCH[2]}"
+    else
+      fail "SHA256SUMS line is malformed."
+    fi
+    [[ "$name" == "$expected_name" ]] ||
+      fail "SHA256SUMS names '$name', expected '$expected_name'."
+  done <"$file"
+  [[ "$count" -eq 1 ]] || fail "SHA256SUMS must contain exactly one SHA-256 line, found $count."
+  printf '%s\n' "$digest"
+}
+
+fetch_helper_assets() {
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/droid-peek-setup.XXXXXX")"
+  if [[ -n "$asset_dir" ]]; then
+    [[ -f "$asset_dir/$helper_filename" ]] ||
+      fail "local helper asset not found: $asset_dir/$helper_filename"
+    [[ -f "$asset_dir/SHA256SUMS" ]] || fail "local SHA256SUMS not found: $asset_dir/SHA256SUMS"
+    cp -- "$asset_dir/$helper_filename" "$tmp_dir/$helper_filename"
+    cp -- "$asset_dir/SHA256SUMS" "$tmp_dir/SHA256SUMS"
+    return
+  fi
+  require_cmd curl
+  curl -fsSL --output "$tmp_dir/$helper_filename" "$helper_url" ||
+    fail "failed to download helper asset from $helper_url"
+  curl -fsSL --output "$tmp_dir/SHA256SUMS" "$sums_url" ||
+    fail "failed to download SHA256SUMS from $sums_url"
+}
+
+install_helper() {
+  local expected actual version_output
+  fetch_helper_assets
+  expected="$(parse_sha256sums "$tmp_dir/SHA256SUMS" "$helper_filename")"
+  actual="$(sha256sum -- "$tmp_dir/$helper_filename" | awk '{print $1}')"
+  [[ "${actual,,}" == "${expected,,}" ]] ||
+    fail "helper checksum mismatch. Expected $expected, got $actual. The helper was not installed."
+  chmod 0755 "$tmp_dir/$helper_filename"
+  version_output="$("$tmp_dir/$helper_filename" --version)" ||
+    fail "helper --version failed. The helper was not installed."
+  [[ "$version_output" == "$release_version" ]] ||
+    fail "helper --version reported '$version_output', expected '$release_version'. The helper was not installed."
+  mkdir -p "$(dirname -- "$helper_path")"
+  install -m 0755 "$tmp_dir/$helper_filename" "$helper_path"
+  version_output="$("$helper_path" --version)" ||
+    fail "installed helper --version failed at $helper_path."
+  [[ "$version_output" == "$release_version" ]] ||
+    fail "installed helper --version reported '$version_output', expected '$release_version'."
+}
+
+install_packages() {
+  ((${#missing_packages[@]})) || return 0
+  omarchy pkg add "${missing_packages[@]}"
+}
+
+enable_avahi() {
+  if [[ "$avahi_action" == "already" ]]; then
+    return 0
+  fi
+  printf '%s\n' "Enabling avahi-daemon.service. This is a host service change so wireless debugging discovery can work."
+  run_privileged systemctl enable --now avahi-daemon.service
+}
+
+provision_v4l2() {
+  if ! file_has_content "$modules_load_file" "$modules_load_content"; then
+    write_root_file "$modules_load_file" "$modules_load_content"
+  fi
+  if ! file_has_content "$modprobe_file" "$modprobe_content"; then
+    write_root_file "$modprobe_file" "$modprobe_content"
+  fi
+  if [[ "$v4l2_action" == "write-and-load" ]]; then
+    run_privileged modprobe v4l2loopback
+  fi
+}
+
+configure_user() {
+  "$script_dir/configure-droid-peek" install
+}
+
+report_partial_config() {
+  printf '%s\n' "Setup failed after user configuration. The managed loader may have been added to $bindings_file." >&2
+  printf '%s\n' "Existing user module $user_module was not rewritten." >&2
+  printf '%s\n' "To remove only the managed loader: $script_dir/configure-droid-peek uninstall" >&2
+}
+
+verify_setup() {
+  local version_output name
+  [[ -x "$helper_path" ]] || {
+    printf '%s\n' "helper is not executable at $helper_path." >&2
+    return 1
+  }
+  version_output="$("$helper_path" --version)" || {
+    printf '%s\n' "helper --version failed at $helper_path." >&2
+    return 1
+  }
+  [[ "$version_output" == "$release_version" ]] || {
+    printf '%s\n' "helper --version reported '$version_output', expected '$release_version'." >&2
+    return 1
+  }
+
+  [[ -e "$video_dev" ]] || {
+    printf '%s\n' "dedicated V4L2 device $video_dev is missing." >&2
+    return 1
+  }
+  name="$(video_name || true)"
+  [[ "$name" == "$CARD_LABEL" ]] || {
+    printf '%s\n' "dedicated V4L2 device is labelled '${name:-unknown}', expected '$CARD_LABEL'." >&2
+    return 1
+  }
+
+  systemctl is-active --quiet avahi-daemon.service || {
+    printf '%s\n' "avahi-daemon.service is not active." >&2
+    return 1
+  }
+
+  plugin_is_discovered || {
+    printf '%s\n' "plugin $PLUGIN_ID is not discovered. Run: omarchy-shell shell rescanPlugins" >&2
+    return 1
+  }
+  if plugin_is_enabled; then
+    printf '%s\n' "plugin $PLUGIN_ID became enabled before verification finished." >&2
+    return 1
+  fi
+
+  [[ -e "$user_module" ]] || {
+    printf '%s\n' "user module $user_module is missing." >&2
+    return 1
+  }
+  has_loader || {
+    printf '%s\n' "managed loader is missing from $bindings_file." >&2
+    return 1
+  }
+}
+
+offer_enable() {
+  printf '%s\n' "Setup completed. Enable Droid Peek only after reviewing the host changes."
+  printf '%s\n' "  omarchy plugin enable $PLUGIN_ID"
+  if confirm_yes "Enable the plugin now? [y/N] "; then
+    omarchy plugin enable "$PLUGIN_ID"
+  else
+    printf '%s\n' "Left disabled. Enable later with: omarchy plugin enable $PLUGIN_ID"
+  fi
+}
+
+require_cmd uname
+require_cmd jq
+require_cmd sha256sum
+require_cmd install
+require_cmd awk
+
+modules_load_file="$(host_path /etc/modules-load.d/droid-peek.conf)"
+modprobe_file="$(host_path /etc/modprobe.d/droid-peek.conf)"
+video_dev="$(host_path /dev/video$VIDEO_NR)"
+video_sysfs="$(host_path /sys/class/video4linux/video$VIDEO_NR)"
+module_sysfs="$(host_path /sys/module/v4l2loopback)"
+
+run_check_release_version
+check_architecture
+check_kernel
+refuse_if_plugin_enabled
+collect_missing_packages
+inspect_helper
+inspect_avahi
+inspect_v4l2
+inspect_user_config
+print_plan
+
+if ((dry_run)); then
+  printf '%s\n' "Dry-run: no changes were made."
+  exit 0
+fi
+
+confirm_yes "Proceed with these host changes? [y/N] " ||
+  fail "setup cancelled. No changes were made."
+
+install_packages
+install_helper
+enable_avahi
+provision_v4l2
+configure_user
+if ! verify_setup; then
+  report_partial_config
+  exit 1
+fi
+offer_enable

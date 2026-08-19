@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use omarchy_android_helper::{
+use droid_peek_helper::{
     persistence::default_state_directory,
     private_fs::create_private_file,
     protocol::{Event, PairingBackend, ProtocolEngine},
@@ -23,6 +23,9 @@ use omarchy_android_helper::{
 };
 
 fn main() -> io::Result<()> {
+    if run_version_request()? {
+        return Ok(());
+    }
     if run_scrcpy_guardian(env::args_os().skip(1))? {
         return Ok(());
     }
@@ -82,6 +85,21 @@ fn main() -> io::Result<()> {
     result
 }
 
+fn run_version_request() -> io::Result<bool> {
+    let mut arguments = env::args_os().skip(1);
+    if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--version")) {
+        return Ok(false);
+    }
+    if arguments.next().is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "usage: droid-peek-helper --version",
+        ));
+    }
+    println!("{}", env!("CARGO_PKG_VERSION"));
+    Ok(true)
+}
+
 fn run_store_scrcpy_arguments() -> io::Result<bool> {
     let mut arguments = env::args_os().skip(1);
     if arguments.next().as_deref() != Some(std::ffi::OsStr::new("store-scrcpy-args")) {
@@ -110,7 +128,7 @@ fn run_store_scrcpy_arguments() -> io::Result<bool> {
 fn invalid_store_arguments() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidInput,
-        "usage: omarchy-android-helper store-scrcpy-args BASE64URL_JSON",
+        "usage: droid-peek-helper store-scrcpy-args BASE64URL_JSON",
     )
 }
 
@@ -151,7 +169,7 @@ fn startup_arguments() -> io::Result<StartupArguments> {
 fn invalid_arguments() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidInput,
-        "usage: omarchy-android-helper --helper-epoch DECIMAL [--acceptance-log]",
+        "usage: droid-peek-helper --helper-epoch DECIMAL [--acceptance-log]",
     )
 }
 

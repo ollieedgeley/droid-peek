@@ -198,15 +198,22 @@ impl FileScrcpyConfigStore {
             Err(error) => return Err(error),
         };
         let mut serialized = String::new();
-        file.take((MAX_TOTAL_BYTES * 2) as u64)
-            .read_to_string(&mut serialized)?;
-        let snapshot: Snapshot = serde_json::from_str(&serialized).map_err(invalid_snapshot)?;
-        let configuration = ScrcpyConfiguration::validated(snapshot.arguments)
-            .map_err(|_| invalid_snapshot("invalid scrcpy arguments"))?;
-        if configuration.revision != snapshot.revision {
-            return Err(invalid_snapshot("scrcpy revision mismatch"));
+        match file
+            .take((MAX_TOTAL_BYTES * 2) as u64)
+            .read_to_string(&mut serialized)
+        {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                remove_file_if_present(&self.path)?;
+                return Ok(ScrcpyConfiguration::empty());
+            }
+            Err(error) => return Err(error),
         }
-        Ok(configuration)
+        if let Some(configuration) = configuration_from_snapshot(&serialized) {
+            return Ok(configuration);
+        }
+        remove_file_if_present(&self.path)?;
+        Ok(ScrcpyConfiguration::empty())
     }
 
     pub fn store(&self, configuration: &ScrcpyConfiguration) -> io::Result<()> {
@@ -224,6 +231,12 @@ impl FileScrcpyConfigStore {
         .map_err(io::Error::other)?;
         atomic_replace(&self.path, |file| file.write_all(&serialized))
     }
+}
+
+fn configuration_from_snapshot(serialized: &str) -> Option<ScrcpyConfiguration> {
+    let snapshot: Snapshot = serde_json::from_str(serialized).ok()?;
+    let configuration = ScrcpyConfiguration::validated(snapshot.arguments).ok()?;
+    (configuration.revision == snapshot.revision).then_some(configuration)
 }
 
 fn invalid_snapshot(error: impl std::fmt::Display) -> io::Error {

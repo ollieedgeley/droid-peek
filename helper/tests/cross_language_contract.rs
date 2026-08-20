@@ -172,8 +172,9 @@ fn public_docs_state_the_live_scrcpy_control_rule() {
     assert!(
         template.contains("--keep-active")
             && template.contains("--turn-screen-off")
-            && template.contains("--stay-awake"),
-        "the shipped template must keep the device-awake flags that require control"
+            && template.contains("--stay-awake")
+            && template.contains("--keyboard=uhid"),
+        "the shipped template must keep the device-awake flags that require control and the UHID keyboard default"
     );
     assert!(
         architecture.contains("`scrcpyArgs`")
@@ -186,5 +187,37 @@ fn public_docs_state_the_live_scrcpy_control_rule() {
     assert!(
         architecture.contains("QML-originated input uses a separate validated ADB adapter"),
         "ARCHITECTURE.md must keep the true QML ADB-adapter sentence"
+    );
+}
+
+#[test]
+fn public_docs_and_template_cover_component_launch() {
+    let template = source("integrations/droid-peek.lua.example");
+    let docs = source("docs/CONFIGURATION.md");
+
+    for needle in [
+        "android.component.launch",
+        "OnePlus Global Search",
+        "Google App Search",
+        "Samsung Finder",
+        "com.oppo.quicksearchbox",
+        "com.oplus.globalsearch.ui.SearchActivity",
+        "com.google.android.googlequicksearchbox",
+        "com.google.android.googlequicksearchbox.SearchActivity",
+        "com.samsung.android.app.galaxyfinder",
+        ".GalaxyFinderActivity",
+        "SUPER + SPACE",
+        "--keyboard=uhid",
+    ] {
+        assert!(template.contains(needle), "template must include {needle}");
+    }
+
+    assert!(
+        docs.contains("android.component.launch")
+            && docs.contains("Couldn't open OnePlus Global Search.")
+            && docs.contains("Couldn't open Samsung")
+            && docs.contains("--keyboard=uhid")
+            && docs.contains("never rewritten"),
+        "CONFIGURATION.md must document component launch, friendly failures, UHID default, and that existing lua is not rewritten"
     );
 }

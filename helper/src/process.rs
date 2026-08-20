@@ -346,14 +346,21 @@ fn read_available_bounded(
     Ok(())
 }
 
-fn classify_action_failure(output: &CapturedStreams) -> Option<ActionExecutionFailure> {
+fn classify_action_failure(
+    output: &CapturedStreams,
+    echoed_fragments: &[String],
+) -> Option<ActionExecutionFailure> {
     if output.iter().any(|stream| {
-        contains_ascii_case_insensitive(stream, b"unauthorized")
+        contains_ascii_case_insensitive(stream, b"error: device unauthorized")
             || contains_ascii_case_insensitive(stream, b"failed to authenticate")
     }) {
         return Some(ActionExecutionFailure::Unauthorized);
     }
-    if output.iter().any(|stream| {
+    let sanitized = [
+        sanitize_echoes(&output[0], echoed_fragments),
+        sanitize_echoes(&output[1], echoed_fragments),
+    ];
+    if sanitized.iter().any(|stream| {
         contains_ascii_case_insensitive(stream, b"device offline")
             || contains_ascii_case_insensitive(stream, b"device not found")
             || contains_ascii_case_insensitive(stream, b"no devices/emulators found")
@@ -365,9 +372,77 @@ fn classify_action_failure(output: &CapturedStreams) -> Option<ActionExecutionFa
     None
 }
 
+fn sanitize_echoes(stream: &[u8], echoed_fragments: &[String]) -> Vec<u8> {
+    echoed_fragments
+        .iter()
+        .fold(stream.to_vec(), |bytes, fragment| {
+            let needle = fragment.as_bytes();
+            if needle.is_empty() {
+                bytes
+            } else {
+                remove_subslice(&bytes, needle)
+            }
+        })
+}
+
+fn remove_subslice(haystack: &[u8], needle: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(haystack.len());
+    let mut index = 0;
+    while index < haystack.len() {
+        if haystack[index..].starts_with(needle) {
+            index += needle.len();
+        } else {
+            result.push(haystack[index]);
+            index += 1;
+        }
+    }
+    result
+}
+
+fn component_echo_fragments(arguments: &[String]) -> Vec<String> {
+    let Some(index) = arguments.windows(2).position(|pair| pair[0] == "-n") else {
+        return Vec::new();
+    };
+    let component = posix_shell_unquote(&arguments[index + 1]);
+    let mut fragments = Vec::new();
+    if !component.is_empty() {
+        fragments.push(component.clone());
+    }
+    if let Some((package, activity)) = component.split_once('/') {
+        if !package.is_empty() {
+            fragments.push(package.to_owned());
+        }
+        if !activity.is_empty() {
+            fragments.push(activity.to_owned());
+        }
+    }
+    fragments
+}
+
+fn posix_shell_unquote(value: &str) -> String {
+    let Some(inner) = value
+        .strip_prefix('\'')
+        .and_then(|value| value.strip_suffix('\''))
+    else {
+        return value.to_owned();
+    };
+    inner.replace("'\\''", "'")
+}
+
 fn monkey_launch_aborted(output: &CapturedStreams) -> bool {
     output.iter().any(|stream| {
         contains_ascii_case_insensitive(stream, b"no activities found to run, monkey aborted")
+    })
+}
+
+fn activity_manager_launch_failed(output: &CapturedStreams) -> bool {
+    output.iter().any(|stream| {
+        contains_ascii_case_insensitive(stream, b"error type 3")
+            || contains_ascii_case_insensitive(stream, b"does not exist")
+            || contains_ascii_case_insensitive(stream, b"unable to resolve intent")
+            || contains_ascii_case_insensitive(stream, b"no activity found")
+            || contains_ascii_case_insensitive(stream, b"permission denial")
+            || contains_ascii_case_insensitive(stream, b"permission denied")
     })
 }
 
@@ -397,13 +472,23 @@ impl CommandRunner for AdbCommandRunner {
         request: CommandRequest,
         cancellation: &CancellationToken,
     ) -> Result<CommandOutput, ActionExecutionFailure> {
+        let echoed_fragments = component_echo_fragments(request.arguments());
         let (output, captured) = self
             .run_internal(request, cancellation, true)
             .map_err(ActionExecutionFailure::from)?;
-        if let Some(failure) = captured.as_ref().and_then(classify_action_failure) {
+        if let Some(failure) = captured
+            .as_ref()
+            .and_then(|output| classify_action_failure(output, &echoed_fragments))
+        {
             return Err(failure);
         }
         if captured.as_ref().is_some_and(monkey_launch_aborted) {
+            return Ok(CommandOutput { succeeded: false });
+        }
+        if captured
+            .as_ref()
+            .is_some_and(activity_manager_launch_failed)
+        {
             return Ok(CommandOutput { succeeded: false });
         }
         Ok(output)

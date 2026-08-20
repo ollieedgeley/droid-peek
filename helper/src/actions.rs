@@ -13,6 +13,7 @@ pub enum PhoneTarget {
     NavigateBack,
     RecentApps,
     AppLaunch { package: String },
+    ComponentLaunch { package: String, activity: String },
     KeyEvent { key: AndroidKey },
 }
 
@@ -21,6 +22,7 @@ pub enum PhoneTarget {
 enum PhoneTargetWire {
     Named(NamedPhoneTarget),
     AppLaunch(AppLaunchTarget),
+    ComponentLaunch(ComponentLaunchTarget),
     KeyEvent(KeyEventTarget),
 }
 
@@ -46,6 +48,21 @@ struct AppLaunchTarget {
 enum AppLaunchType {
     #[serde(rename = "android.app.launch")]
     AppLaunch,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ComponentLaunchTarget {
+    #[serde(rename = "type")]
+    target_type: ComponentLaunchType,
+    package: String,
+    activity: String,
+}
+
+#[derive(Deserialize)]
+enum ComponentLaunchType {
+    #[serde(rename = "android.component.launch")]
+    ComponentLaunch,
 }
 
 #[derive(Deserialize)]
@@ -77,6 +94,16 @@ impl<'de> Deserialize<'de> for PhoneTarget {
             }) if valid_android_package(&package) => Ok(Self::AppLaunch { package }),
             PhoneTargetWire::AppLaunch(_) => {
                 Err(serde::de::Error::custom("invalid Android package"))
+            }
+            PhoneTargetWire::ComponentLaunch(ComponentLaunchTarget {
+                target_type: ComponentLaunchType::ComponentLaunch,
+                package,
+                activity,
+            }) if !package.contains('\0') && !activity.contains('\0') => {
+                Ok(Self::ComponentLaunch { package, activity })
+            }
+            PhoneTargetWire::ComponentLaunch(_) => {
+                Err(serde::de::Error::custom("invalid Android component"))
             }
             PhoneTargetWire::KeyEvent(KeyEventTarget {
                 target_type: KeyEventType::KeyEvent,
@@ -127,6 +154,12 @@ impl<'a> AdbActionAdapter<'a> {
                 }
                 app_launch_arguments(selected_device, package)
             }
+            PhoneTarget::ComponentLaunch { package, activity } => {
+                if package.contains('\0') || activity.contains('\0') {
+                    return Ok(false);
+                }
+                component_launch_arguments(selected_device, package, activity)
+            }
             PhoneTarget::KeyEvent { key } => key_arguments(selected_device, *key),
         };
         self.runner
@@ -160,6 +193,36 @@ fn app_launch_arguments(selected_device: &str, package: &str) -> Vec<String> {
         "-c",
         "android.intent.category.LAUNCHER",
         "1",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn posix_shell_quote(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('\'');
+    for character in value.chars() {
+        if character == '\'' {
+            quoted.push_str("'\\''");
+        } else {
+            quoted.push(character);
+        }
+    }
+    quoted.push('\'');
+    quoted
+}
+
+fn component_launch_arguments(selected_device: &str, package: &str, activity: &str) -> Vec<String> {
+    let component = posix_shell_quote(&format!("{package}/{activity}"));
+    [
+        "-s",
+        selected_device,
+        "shell",
+        "am",
+        "start",
+        "-n",
+        component.as_str(),
     ]
     .into_iter()
     .map(str::to_owned)

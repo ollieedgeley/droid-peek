@@ -71,6 +71,43 @@ TestCase {
         compare(targetSpy.signalArguments[0][0].target, request.target)
     }
 
+    function test_typed_component_target_is_preserved_data() {
+        return [
+            {
+                tag: "full activity",
+                target: {
+                    type: "android.component.launch",
+                    package: "com.oppo.quicksearchbox",
+                    activity: "com.oplus.globalsearch.ui.SearchActivity"
+                }
+            },
+            {
+                tag: "shorthand activity",
+                target: {
+                    type: "android.component.launch",
+                    package: "com.samsung.android.app.galaxyfinder",
+                    activity: ".GalaxyFinderActivity"
+                }
+            },
+            {
+                tag: "non package shape",
+                target: {
+                    type: "android.component.launch",
+                    package: "bad package",
+                    activity: "Search Activity"
+                }
+            }
+        ]
+    }
+
+    function test_typed_component_target_is_preserved(data) {
+        var request = envelope("request-component", data.target)
+
+        verify(router.acceptPhoneTarget(request))
+        compare(targetSpy.count, 1)
+        compare(targetSpy.signalArguments[0][0].target, request.target)
+    }
+
     function test_key_event_targets_are_admitted_lexically_data() {
         return [
             {
@@ -130,6 +167,130 @@ TestCase {
         verify(!router.acceptPhoneTarget(
                    envelope("request-invalid-key-event", data.target)))
         compare(targetSpy.count, 0)
+    }
+
+    function test_malformed_component_targets_notify_locally_data() {
+        return [
+            {
+                tag: "missing activity",
+                target: {
+                    type: "android.component.launch",
+                    package: "com.example.app"
+                }
+            },
+            {
+                tag: "missing package",
+                target: {
+                    type: "android.component.launch",
+                    activity: ".SearchActivity"
+                }
+            },
+            {
+                tag: "empty package",
+                target: {
+                    type: "android.component.launch",
+                    package: "",
+                    activity: ".SearchActivity"
+                }
+            },
+            {
+                tag: "empty activity",
+                target: {
+                    type: "android.component.launch",
+                    package: "com.example.app",
+                    activity: ""
+                }
+            },
+            {
+                tag: "nonstring package",
+                target: {
+                    type: "android.component.launch",
+                    package: 1,
+                    activity: ".SearchActivity"
+                }
+            },
+            {
+                tag: "nonstring activity",
+                target: {
+                    type: "android.component.launch",
+                    package: "com.example.app",
+                    activity: ["SearchActivity"]
+                }
+            },
+            {
+                tag: "extra field",
+                target: {
+                    type: "android.component.launch",
+                    package: "com.example.app",
+                    activity: ".SearchActivity",
+                    extra: true
+                }
+            }
+        ]
+    }
+
+    function test_malformed_component_targets_notify_locally(data) {
+        var request = envelope("request-malformed-component", data.target,
+                               undefined, "Samsung Finder")
+
+        verify(!router.acceptPhoneTarget(request))
+        compare(targetSpy.count, 0)
+        compare(failureNotificationSpy.count, 1)
+        compare(failureNotificationSpy.signalArguments[0][0],
+                "Android shortcut is not supported.")
+        verify(failureNotificationSpy.signalArguments[0][0]
+               .indexOf("Couldn't open") < 0)
+        verify(failureNotificationSpy.signalArguments[0][0]
+               .indexOf("Samsung Finder") < 0)
+        verify(failureNotificationSpy.signalArguments[0][0]
+               .indexOf("com.example") < 0)
+    }
+
+    function test_malformed_component_invalid_target_is_coalesced() {
+        var target = {
+            type: "android.component.launch",
+            package: "com.example.app"
+        }
+
+        verify(!router.acceptPhoneTarget(envelope("request-a", target)))
+        verify(!router.acceptPhoneTarget(envelope("request-b", target)))
+
+        compare(targetSpy.count, 0)
+        compare(failureNotificationSpy.count, 1)
+        compare(failureNotificationSpy.signalArguments[0][0],
+                "Android shortcut is not supported.")
+    }
+
+    function test_malformed_component_inadmissible_request_is_silent_data() {
+        return [
+            { tag: "missing epoch", propertyName: "helperEpoch", value: "" },
+            {
+                tag: "missing generation",
+                propertyName: "sessionGeneration",
+                value: ""
+            },
+            { tag: "expired deadline", expired: true },
+            {
+                tag: "extra envelope key",
+                extraKey: "helperEpoch",
+                extraValue: "16"
+            }
+        ]
+    }
+
+    function test_malformed_component_inadmissible_request_is_silent(data) {
+        if (data.propertyName)
+            router[data.propertyName] = data.value
+        var request = envelope("request-malformed-component", {
+            type: "android.component.launch",
+            package: "com.example.app"
+        }, data.expired ? Date.now() - 1 : undefined)
+        if (data.extraKey)
+            request[data.extraKey] = data.extraValue
+
+        verify(!router.acceptPhoneTarget(request))
+        compare(targetSpy.count, 0)
+        compare(failureNotificationSpy.count, 0)
     }
 
     function test_only_interactive_state_admits_phone_targets_data() {
@@ -334,6 +495,37 @@ TestCase {
                 "Couldn't open Termux.")
         verify(failureNotificationSpy.signalArguments[0][0]
                .indexOf("com.termux") < 0)
+        verify(failureNotificationSpy.signalArguments[0][0]
+               .indexOf("android.") < 0)
+    }
+
+    function test_labeled_component_failure_uses_binding_description() {
+        var request = envelope("request-component", {
+            type: "android.component.launch",
+            package: "com.samsung.android.app.galaxyfinder",
+            activity: ".GalaxyFinderActivity"
+        }, undefined, "Samsung Finder")
+
+        verify(router.acceptPhoneTarget(request))
+        compare(targetSpy.count, 1)
+        compare(targetSpy.signalArguments[0][0], {
+            requestId: request.requestId,
+            target: request.target,
+            expiresAtUnixMs: request.expiresAtUnixMs,
+            helperEpoch: "17",
+            sessionGeneration: "3"
+        })
+        compare(targetSpy.signalArguments[0][0].description, undefined)
+
+        verify(router.consumePhoneTargetResult(request.requestId, "failed",
+                                               "target-failed"))
+        compare(failureNotificationSpy.count, 1)
+        compare(failureNotificationSpy.signalArguments[0][0],
+                "Couldn't open Samsung Finder.")
+        verify(failureNotificationSpy.signalArguments[0][0]
+               .indexOf("com.samsung") < 0)
+        verify(failureNotificationSpy.signalArguments[0][0]
+               .indexOf("GalaxyFinder") < 0)
         verify(failureNotificationSpy.signalArguments[0][0]
                .indexOf("android.") < 0)
     }

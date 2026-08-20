@@ -208,11 +208,16 @@ android.define_submap("droid-peek", function()
   })
   android.bind("SUPER + U", "Unsupported target", "android.unsupported")
   android.bind("SUPER + ALT + SHIFT + A", "Close by documented name", "android.close_panel")
+  android.bind("SUPER + ALT + G", "Component", {
+    type = "android.component.launch",
+    package = "com.example.search",
+    activity = "com.example.search.SearchActivity",
+  })
 end)
 
 assert(#submaps == 1, "the API must define exactly one submap")
 assert(submaps[1] == "droid-peek")
-assert(#bindings == 5, "only declared phone bindings may be registered")
+assert(#bindings == 6, "only declared phone bindings may be registered")
 for _, binding in ipairs(bindings) do
   assert(binding.submap == "droid-peek", "phone bindings must stay inside their submap")
   assert(type(binding.dispatcher) == "function", "deadlines must be created at dispatch time")
@@ -325,3 +330,11 @@ assert(
   execution_events[events_before_named_close + 2].command
     == "omarchy-shell shell hide ollieedgeley.droidpeek"
 )
+
+bindings[6].dispatcher()
+local component_json = command_envelope(execution_events[#execution_events].command)
+assert(component_json:match('"target"%s*:%s*{'), "typed target must stay an object")
+assert(json_string(component_json, "type") == "android.component.launch")
+assert(json_string(component_json, "package") == "com.example.search")
+assert(json_string(component_json, "activity") == "com.example.search.SearchActivity")
+assert(json_string(component_json, "description") == "Component")

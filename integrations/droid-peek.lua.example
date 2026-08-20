@@ -9,7 +9,7 @@ local android = dofile(
 
 -- Session. Android still controls locking.
 android.configure({
-  scrcpyArgs = { "--keep-active", "--turn-screen-off", "--stay-awake" },
+  scrcpyArgs = { "--keep-active", "--turn-screen-off", "--stay-awake", "--keyboard=uhid" },
 })
 
 android.define_submap("droid-peek", function()
@@ -37,6 +37,30 @@ android.define_submap("droid-peek", function()
   android.bind("XF86AudioPlay", "Play/pause", { type = "android.keyevent", key = "media-play-pause" })
   android.bind("XF86AudioPrev", "Previous track", { type = "android.keyevent", key = "media-previous" })
   android.bind("ALT + SHIFT + XF86AudioPlay", "Previous track", { type = "android.keyevent", key = "media-previous" })
+
+  -- Search
+  -- Uncomment at most one. Super+Space is shared.
+
+  -- OnePlus Global Search
+  -- android.bind("SUPER + SPACE", "OnePlus Global Search", {
+  --   type = "android.component.launch",
+  --   package = "com.oppo.quicksearchbox",
+  --   activity = "com.oplus.globalsearch.ui.SearchActivity"
+  -- })
+
+  -- Google App Search
+  -- android.bind("SUPER + SPACE", "Google App Search", {
+  --   type = "android.component.launch",
+  --   package = "com.google.android.googlequicksearchbox",
+  --   activity = "com.google.android.googlequicksearchbox.SearchActivity"
+  -- })
+
+  -- Samsung Finder
+  -- android.bind("SUPER + SPACE", "Samsung Finder", {
+  --   type = "android.component.launch",
+  --   package = "com.samsung.android.app.galaxyfinder",
+  --   activity = ".GalaxyFinderActivity"
+  -- })
 
   -- Browsers
   -- Uncomment the one installed on your phone.

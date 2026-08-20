@@ -56,8 +56,8 @@ the helper resets the submap immediately. Outside phone mode, ordinary
 desktop bindings behave normally.
 
 The shipped defaults cover panel close, Home, Recents, Android-local
-copy/cut/paste, and supported volume and media keys. Optional app and browser
-examples stay commented until you enable them.
+copy/cut/paste, and supported volume and media keys. Optional app, browser,
+and component-launch examples stay commented until you enable them.
 
 | Chord | Description | Target |
 | --- | --- | --- |
@@ -103,9 +103,30 @@ adb shell pm list packages | grep -i termux
 Use the returned text after `package:` in the binding. Android documents this
 package-manager query in its [ADB guide](https://developer.android.com/tools/adb).
 
+### Add a component binding
+
+```lua
+android.bind("SUPER + SPACE", "OnePlus Global Search", {
+  type = "android.component.launch",
+  package = "com.oppo.quicksearchbox",
+  activity = "com.oplus.globalsearch.ui.SearchActivity",
+})
+```
+
+The object has exactly `type`, `package`, and `activity`. The middle value is
+the friendly failure label. If Android cannot launch the component, Droid Peek
+shows `Couldn't open OnePlus Global Search.`
+
+The copied template comments three OEM search guesses on Super+Space: OnePlus
+Global Search, Google App Search for Pixel, Motorola, and other Google-certified
+Android devices, and Samsung Finder. Enable at most one. They are optional
+convenience guesses, not compatibility promises. A missing or stale component
+uses the same binding-specific notice, for example `Couldn't open Samsung Finder.`
+
 Supported targets are `android.close_panel`, `android.navigate.home`,
 `android.navigate.back`, `android.recent-apps`, a typed `android.app.launch`
-object with a validated package name, and typed `android.keyevent` objects.
+object with a validated package name, a typed `android.component.launch` object
+with package and activity strings, and typed `android.keyevent` objects.
 Arbitrary ADB or shell commands are not accepted.
 
 Each target dispatch sends one base64url-encoded JSON envelope to
@@ -127,6 +148,7 @@ android.configure({
     "--keep-active",
     "--turn-screen-off",
     "--stay-awake",
+    "--keyboard=uhid",
   },
 })
 
@@ -158,7 +180,10 @@ stopped and Preview failed is shown. Removing the option causes one restart
 that restores normal scrcpy cleanup behavior. Android lock-screen and
 device-policy behavior remain unchanged.
 
-See the template comments before changing `scrcpyArgs`.
+See the template comments before changing `scrcpyArgs`. The copied template
+defaults include `--keyboard=uhid`. Setup copies that template only when
+`~/.config/hypr/droid-peek.lua` is absent; existing user configuration is never rewritten.
+Add `--keyboard=uhid` or a component binding yourself if you already have a lua file.
 
 ## Panel settings
 

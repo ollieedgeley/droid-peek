@@ -550,6 +550,10 @@ fn typed_phone_targets_are_correlated_and_forwarded_with_identity() {
             r#"{"type":"android.app.launch","package":"com.example.notes"}"#,
         ),
         ("volume", r#"{"type":"android.keyevent","key":"volume-up"}"#),
+        (
+            "component",
+            r#"{"type":"android.component.launch","package":"com.oppo.quicksearchbox","activity":"com.oplus.globalsearch.ui.SearchActivity"}"#,
+        ),
     ] {
         assert_eq!(
             wire_lines(engine.handle_line(&format!(
@@ -562,7 +566,7 @@ fn typed_phone_targets_are_correlated_and_forwarded_with_identity() {
     }
 
     let backend = engine.into_backend();
-    assert_eq!(backend.phone_targets.len(), 4);
+    assert_eq!(backend.phone_targets.len(), 5);
     assert_eq!(backend.phone_targets[0].0, PhoneTarget::NavigateHome);
     assert_eq!(backend.phone_targets[1].0, PhoneTarget::RecentApps);
     assert_eq!(
@@ -575,6 +579,13 @@ fn typed_phone_targets_are_correlated_and_forwarded_with_identity() {
         backend.phone_targets[3].0,
         PhoneTarget::KeyEvent {
             key: AndroidKey::VolumeUp
+        }
+    );
+    assert_eq!(
+        backend.phone_targets[4].0,
+        PhoneTarget::ComponentLaunch {
+            package: "com.oppo.quicksearchbox".to_owned(),
+            activity: "com.oplus.globalsearch.ui.SearchActivity".to_owned(),
         }
     );
 }
@@ -593,6 +604,30 @@ fn action_only_failure_is_typed_and_does_not_emit_a_lifecycle_failure() {
             r#"{"version":11,"type":"phone-target","helperEpoch":"73001","sessionGeneration":"0","requestId":"failed-key","expiresAtUnixMs":1750000000001,"target":{"type":"android.keyevent","key":"volume-down"}}"#,
         )),
         [r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"0","requestId":"failed-key","outcome":"failed","notificationCode":"target-failed"}"#]
+    );
+}
+
+#[test]
+fn component_launch_action_only_failure_does_not_emit_a_lifecycle_failure() {
+    let mut engine = engine(FakePairingBackend {
+        phone_target_failure: Some(PhoneTargetFailure::ActionOnly(
+            ActionFailureCode::TargetFailed,
+        )),
+        ..FakePairingBackend::default()
+    });
+
+    assert_eq!(
+        wire_lines(engine.handle_line(
+            r#"{"version":11,"type":"phone-target","helperEpoch":"73001","sessionGeneration":"0","requestId":"failed-component","expiresAtUnixMs":1750000000001,"target":{"type":"android.component.launch","package":"com.oppo.quicksearchbox","activity":"com.oplus.globalsearch.ui.SearchActivity"}}"#,
+        )),
+        [r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"0","requestId":"failed-component","outcome":"failed","notificationCode":"target-failed"}"#]
+    );
+    assert_eq!(
+        engine.into_backend().phone_targets[0].0,
+        PhoneTarget::ComponentLaunch {
+            package: "com.oppo.quicksearchbox".to_owned(),
+            activity: "com.oplus.globalsearch.ui.SearchActivity".to_owned(),
+        }
     );
 }
 
@@ -631,6 +666,11 @@ fn malformed_or_unknown_targets_fail_closed_before_android_work() {
         r#"{"type":"android.keyevent","key":"brightness-up"}"#,
         r#"{"type":"android.keyevent","key":"KEYCODE_HOME"}"#,
         r#"{"type":"android.keyevent","key":"volume-up","command":"id"}"#,
+        r#"{"type":"android.component.launch","package":"com.example.notes"}"#,
+        r#"{"type":"android.component.launch","activity":".Main"}"#,
+        r#"{"type":"android.component.launch","package":"com.example.notes","activity":".Main","command":"id"}"#,
+        r#"{"type":"android.component.launch","package":1,"activity":".Main"}"#,
+        "{\"type\":\"android.component.launch\",\"package\":\"com.example.notes\",\"activity\":\"foo\\u0000bar\"}",
     ] {
         assert_eq!(
             wire_lines(engine.handle_line(&format!(

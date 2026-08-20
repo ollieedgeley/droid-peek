@@ -10,6 +10,7 @@ use std::{
 };
 
 use droid_peek_helper::{
+    actions::{AdbActionAdapter, PhoneTarget},
     process::{
         ActionExecutionFailure, AdbCommandRunner, CancellationToken, CommandFailure,
         CommandRequest, CommandRunner,
@@ -200,6 +201,193 @@ fn adb_runner_classifies_monkey_abort_as_an_action_failure() {
     let mut runner = AdbCommandRunner::new(unauthorized_abort, Duration::from_millis(2));
     assert_eq!(
         runner.run_phone_target(monkey_request(), &CancellationToken::new()),
+        Err(ActionExecutionFailure::Unauthorized)
+    );
+}
+
+fn execute_component(
+    runner: &mut AdbCommandRunner,
+    package: &str,
+    activity: &str,
+) -> Result<bool, ActionExecutionFailure> {
+    let cancellation = CancellationToken::new();
+    AdbActionAdapter::new(runner, &cancellation).execute(
+        "selected-device",
+        &PhoneTarget::ComponentLaunch {
+            package: package.to_owned(),
+            activity: activity.to_owned(),
+        },
+    )
+}
+
+#[test]
+fn adb_runner_keeps_quoted_component_as_one_remote_shell_operand() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let argc = directory.path().join("am-argc");
+    let arg1 = directory.path().join("am-arg1");
+    let arg2 = directory.path().join("am-arg2");
+    let arg3 = directory.path().join("am-arg3");
+    let canary = directory.path().join("pwned");
+    let fake_adb = executable(
+        directory.path(),
+        "adb",
+        &format!(
+            r#"
+remote=""
+seen_shell=0
+for arg in "$@"; do
+  if [ "$seen_shell" -eq 1 ]; then
+    if [ -n "$remote" ]; then
+      remote="$remote $arg"
+    else
+      remote="$arg"
+    fi
+  elif [ "$arg" = "shell" ]; then
+    seen_shell=1
+  fi
+done
+am() {{
+  printf '%s' "$#" > '{argc}'
+  printf '%s' "$1" > '{arg1}'
+  printf '%s' "$2" > '{arg2}'
+  printf '%s' "$3" > '{arg3}'
+}}
+eval "$remote"
+"#,
+            argc = argc.display(),
+            arg1 = arg1.display(),
+            arg2 = arg2.display(),
+            arg3 = arg3.display(),
+        ),
+    );
+    let mut runner = AdbCommandRunner::new(fake_adb, Duration::from_millis(2));
+    let activity = format!("Act ;|&`$(touch {})\\\"'\nend", canary.display());
+
+    assert_eq!(
+        execute_component(&mut runner, "com.example.notes", &activity),
+        Ok(true)
+    );
+    assert_eq!(fs::read_to_string(&argc).expect("am argc"), "3");
+    assert_eq!(fs::read_to_string(&arg1).expect("am arg1"), "start");
+    assert_eq!(fs::read_to_string(&arg2).expect("am arg2"), "-n");
+    assert_eq!(
+        fs::read_to_string(&arg3).expect("am component"),
+        format!("com.example.notes/{activity}")
+    );
+    assert!(
+        !canary.exists(),
+        "quoted component must not run remote-shell substitutions"
+    );
+}
+
+#[test]
+fn adb_runner_classifies_activity_manager_failures_as_action_only() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
+    let directory = tempfile::tempdir().expect("temporary directory");
+
+    for (name, body) in [
+        (
+            "am-missing-zero",
+            "printf 'Starting: Intent { cmp=com.example.missing/.Nope }\\nError type 3\\nError: Activity class {com.example.missing/.Nope} does not exist.\\n'\nexit 0",
+        ),
+        (
+            "am-unresolved-zero",
+            "printf 'Error: Activity not started, unable to resolve Intent\\n'\nexit 0",
+        ),
+        (
+            "am-no-activity-zero",
+            "printf 'Error: Activity not started, intent to handle Intent { cmp=com.example/.Missing }: No activity found\\n'\nexit 0",
+        ),
+        (
+            "am-permission-zero",
+            "printf 'java.lang.SecurityException: Permission Denial: starting Intent\\n'\nexit 0",
+        ),
+        (
+            "am-permission-denied-zero",
+            "printf 'Permission denied\\n'\nexit 0",
+        ),
+        (
+            "am-missing-nonzero",
+            "printf 'Error type 3\\nError: Activity class {com.example.missing/.Nope} does not exist.\\n' >&2\nexit 1",
+        ),
+        (
+            "am-unresolved-nonzero",
+            "printf 'unable to resolve Intent' >&2\nexit 255",
+        ),
+    ] {
+        let fake_adb = executable(directory.path(), name, body);
+        let mut runner = AdbCommandRunner::new(fake_adb, Duration::from_millis(2));
+        let result = execute_component(&mut runner, "com.example.missing", ".Nope");
+        assert_eq!(result, Ok(false), "{name} must be an action-only failure");
+        let rendered = format!("{result:?}");
+        assert!(
+            !rendered.contains("Error type 3")
+                && !rendered.contains("does not exist")
+                && !rendered.contains("unable to resolve")
+                && !rendered.contains("No activity found")
+                && !rendered.contains("Permission Denial")
+                && !rendered.contains("Permission denied"),
+            "{name} must not expose Activity Manager text: {rendered}"
+        );
+    }
+
+    let success_adb = executable(
+        directory.path(),
+        "am-delivered",
+        "printf 'Starting: Intent { cmp=com.example.notes/.Main }\\nWarning: Activity not started, intent has been delivered to currently running top-most instance.\\n'\nexit 0",
+    );
+    let mut runner = AdbCommandRunner::new(success_adb, Duration::from_millis(2));
+    assert_eq!(
+        execute_component(&mut runner, "com.example.notes", ".Main"),
+        Ok(true)
+    );
+}
+
+#[test]
+fn adb_runner_does_not_treat_echoed_component_text_as_transport_failure() {
+    let _process_guard = PROCESS_TEST_LOCK.lock().expect("process test lock");
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let echoed_adb = executable(
+        directory.path(),
+        "am-echoed-connection-text",
+        "printf 'Starting: Intent { cmp=com.unauthorized.example/device offline }\\nWarning: Activity not started, intent has been delivered to currently running top-most instance.\\n'\nexit 0",
+    );
+    let mut runner = AdbCommandRunner::new(echoed_adb, Duration::from_millis(2));
+    assert_eq!(
+        execute_component(&mut runner, "com.unauthorized.example", "device offline"),
+        Ok(true)
+    );
+
+    let missing_with_echo = executable(
+        directory.path(),
+        "am-missing-echoed-unauthorized",
+        "printf 'Starting: Intent { cmp=com.unauthorized.example/.Missing }\\nError type 3\\nError: Activity class {com.unauthorized.example/.Missing} does not exist.\\n'\nexit 0",
+    );
+    let mut runner = AdbCommandRunner::new(missing_with_echo, Duration::from_millis(2));
+    let result = execute_component(&mut runner, "com.unauthorized.example", ".Missing");
+    assert_eq!(result, Ok(false));
+    assert!(!format!("{result:?}").contains("unauthorized"));
+
+    let unauthorized_adb = executable(
+        directory.path(),
+        "am-real-unauthorized",
+        "printf 'error: device unauthorized' >&2\nexit 1",
+    );
+    let mut runner = AdbCommandRunner::new(unauthorized_adb, Duration::from_millis(2));
+    assert_eq!(
+        execute_component(&mut runner, "com.example.notes", ".Main"),
+        Err(ActionExecutionFailure::Unauthorized)
+    );
+
+    let masked_unauthorized = executable(
+        directory.path(),
+        "am-unauthorized-package-name",
+        "printf 'error: device unauthorized' >&2\nexit 1",
+    );
+    let mut runner = AdbCommandRunner::new(masked_unauthorized, Duration::from_millis(2));
+    assert_eq!(
+        execute_component(&mut runner, "unauthorized", ".Main"),
         Err(ActionExecutionFailure::Unauthorized)
     );
 }

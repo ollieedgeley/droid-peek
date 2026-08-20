@@ -66,6 +66,37 @@ fn phone_targets_are_a_small_typed_allowlist() {
         }
     );
 
+    assert_eq!(
+        serde_json::from_str::<PhoneTarget>(
+            r#"{"type":"android.component.launch","package":"com.oppo.quicksearchbox","activity":"com.oplus.globalsearch.ui.SearchActivity"}"#,
+        )
+        .expect("typed component launch"),
+        PhoneTarget::ComponentLaunch {
+            package: "com.oppo.quicksearchbox".to_owned(),
+            activity: "com.oplus.globalsearch.ui.SearchActivity".to_owned(),
+        }
+    );
+    assert_eq!(
+        serde_json::from_str::<PhoneTarget>(
+            r#"{"type":"android.component.launch","package":"com.samsung.android.app.galaxyfinder","activity":".GalaxyFinderActivity"}"#,
+        )
+        .expect("shorthand component launch"),
+        PhoneTarget::ComponentLaunch {
+            package: "com.samsung.android.app.galaxyfinder".to_owned(),
+            activity: ".GalaxyFinderActivity".to_owned(),
+        }
+    );
+    assert_eq!(
+        serde_json::from_str::<PhoneTarget>(
+            r#"{"type":"android.component.launch","package":"bad package","activity":".Main"}"#,
+        )
+        .expect("component launch does not use package-name regex"),
+        PhoneTarget::ComponentLaunch {
+            package: "bad package".to_owned(),
+            activity: ".Main".to_owned(),
+        }
+    );
+
     for (name, key, _) in key_events() {
         assert_eq!(
             serde_json::from_str::<PhoneTarget>(&format!(
@@ -104,6 +135,20 @@ fn phone_targets_reject_unknown_shapes_packages_and_command_source() {
         r#"[{"type":"android.keyevent","key":"volume-up"}]"#,
         r#"42"#,
         r#"null"#,
+        r#"{"type":"android.component.launch"}"#,
+        r#"{"type":"android.component.launch","package":"com.example.notes"}"#,
+        r#"{"type":"android.component.launch","activity":".Main"}"#,
+        r#"{"type":"android.component.launch","package":"com.example.notes","activity":".Main","command":"id"}"#,
+        r#"{"type":"android.component.launch","package":"com.example.notes","activity":".Main","extra":true}"#,
+        r#"{"type":"android.component.launch","package":1,"activity":".Main"}"#,
+        r#"{"type":"android.component.launch","package":"com.example.notes","activity":1}"#,
+        r#"{"type":"android.component.launch","package":null,"activity":".Main"}"#,
+        r#"{"type":"android.component.launch","package":"com.example.notes","activity":null}"#,
+        r#"{"type":"android.component.launch","package":["com.example.notes"],"activity":".Main"}"#,
+        r#"{"type":"android.component.search","package":"com.example.notes","activity":".Main"}"#,
+        r#"{"package":"com.example.notes","activity":".Main"}"#,
+        "{\"type\":\"android.component.launch\",\"package\":\"com.example.notes\",\"activity\":\"foo\\u0000bar\"}",
+        "{\"type\":\"android.component.launch\",\"package\":\"foo\\u0000bar\",\"activity\":\".Main\"}",
     ] {
         assert!(
             serde_json::from_str::<PhoneTarget>(target).is_err(),
@@ -222,6 +267,129 @@ fn package_target_launches_exactly_one_validated_launcher_activity() {
             "1"
         ]
     );
+}
+
+#[test]
+fn component_target_launches_exactly_one_quoted_explicit_component() {
+    let mut runner = FakeActionRunner::default();
+    let cancellation = CancellationToken::new();
+    let mut adapter = AdbActionAdapter::new(&mut runner, &cancellation);
+
+    assert_eq!(
+        adapter.execute(
+            "device.local:38100",
+            &PhoneTarget::ComponentLaunch {
+                package: "com.oppo.quicksearchbox".to_owned(),
+                activity: "com.oplus.globalsearch.ui.SearchActivity".to_owned(),
+            },
+        ),
+        Ok(true)
+    );
+    assert_eq!(
+        adapter.execute(
+            "device.local:38100",
+            &PhoneTarget::ComponentLaunch {
+                package: "com.samsung.android.app.galaxyfinder".to_owned(),
+                activity: ".GalaxyFinderActivity".to_owned(),
+            },
+        ),
+        Ok(true)
+    );
+
+    assert_eq!(runner.requests.len(), 2);
+    assert!(
+        runner
+            .requests
+            .iter()
+            .all(|request| request.program() == "adb")
+    );
+    assert_eq!(
+        runner.requests[0].arguments(),
+        [
+            "-s",
+            "device.local:38100",
+            "shell",
+            "am",
+            "start",
+            "-n",
+            "'com.oppo.quicksearchbox/com.oplus.globalsearch.ui.SearchActivity'",
+        ]
+    );
+    assert_eq!(
+        runner.requests[1].arguments(),
+        [
+            "-s",
+            "device.local:38100",
+            "shell",
+            "am",
+            "start",
+            "-n",
+            "'com.samsung.android.app.galaxyfinder/.GalaxyFinderActivity'",
+        ]
+    );
+}
+
+#[test]
+fn component_target_posix_quotes_the_combined_operand() {
+    let mut runner = FakeActionRunner::default();
+    let cancellation = CancellationToken::new();
+    let mut adapter = AdbActionAdapter::new(&mut runner, &cancellation);
+    let activity = "Act ;|&`$(touch pwned)\\\"'\nend";
+
+    assert_eq!(
+        adapter.execute(
+            "device.local:38100",
+            &PhoneTarget::ComponentLaunch {
+                package: "com.example.notes".to_owned(),
+                activity: activity.to_owned(),
+            },
+        ),
+        Ok(true)
+    );
+
+    let component = format!("com.example.notes/{activity}");
+    let quoted = format!("'{}'", component.replace('\'', "'\\''"));
+    assert_eq!(
+        runner.requests[0].arguments(),
+        [
+            "-s",
+            "device.local:38100",
+            "shell",
+            "am",
+            "start",
+            "-n",
+            quoted.as_str(),
+        ]
+    );
+}
+
+#[test]
+fn component_target_rejects_nul_without_running_adb() {
+    let mut runner = FakeActionRunner::default();
+    let cancellation = CancellationToken::new();
+    let mut adapter = AdbActionAdapter::new(&mut runner, &cancellation);
+
+    assert_eq!(
+        adapter.execute(
+            "device.local:38100",
+            &PhoneTarget::ComponentLaunch {
+                package: "com.example.notes".to_owned(),
+                activity: "foo\0bar".to_owned(),
+            },
+        ),
+        Ok(false)
+    );
+    assert_eq!(
+        adapter.execute(
+            "device.local:38100",
+            &PhoneTarget::ComponentLaunch {
+                package: "foo\0bar".to_owned(),
+                activity: ".Main".to_owned(),
+            },
+        ),
+        Ok(false)
+    );
+    assert!(runner.requests.is_empty());
 }
 
 #[test]

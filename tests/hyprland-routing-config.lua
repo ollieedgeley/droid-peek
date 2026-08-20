@@ -66,7 +66,7 @@ assert(#calls == 15, "the release template must enable only the documented activ
 assert(configuration_committed, "the template must commit its configuration")
 assert(
   table.concat(configured_arguments, "\n")
-    == "--keep-active\n--turn-screen-off\n--stay-awake",
+    == "--keep-active\n--turn-screen-off\n--stay-awake\n--keyboard=uhid",
   "the template must install the approved scrcpy defaults"
 )
 
@@ -184,6 +184,7 @@ for _, call in ipairs(calls) do
   assert(type(call.description) == "string" and call.description ~= "")
   if type(call.target) == "table" then
     assert(call.target.type ~= "android.app.launch")
+    assert(call.target.type ~= "android.component.launch")
   end
 end
 
@@ -225,3 +226,55 @@ for _, package in ipairs({
   end
   assert(found, "optional package " .. package .. " must appear in the template")
 end
+
+assert(
+  template_source:find("Uncomment at most one", 1, true),
+  "the template must warn that Super+Space search examples share a chord"
+)
+
+for _, example in ipairs({
+  {
+    label = "OnePlus Global Search",
+    package = "com.oppo.quicksearchbox",
+    activity = "com.oplus.globalsearch.ui.SearchActivity",
+  },
+  {
+    label = "Google App Search",
+    package = "com.google.android.googlequicksearchbox",
+    activity = "com.google.android.googlequicksearchbox.SearchActivity",
+  },
+  {
+    label = "Samsung Finder",
+    package = "com.samsung.android.app.galaxyfinder",
+    activity = ".GalaxyFinderActivity",
+  },
+}) do
+  for _, needle in ipairs({
+    '"' .. example.label .. '"',
+    'package = "' .. example.package .. '"',
+    'activity = "' .. example.activity .. '"',
+  }) do
+    local found = false
+    local start = 1
+    while true do
+      local index = template_source:find(needle, start, true)
+      if not index then
+        break
+      end
+      found = true
+      local line_start = template_source:sub(1, index):match(".*\n()") or 1
+      local line = template_source:sub(line_start):match("[^\n]*")
+      assert(
+        line:match("^%s*%-%-"),
+        "component example " .. example.label .. " must remain commented"
+      )
+      start = index + 1
+    end
+    assert(found, "component example needle " .. needle .. " must appear in the template")
+  end
+end
+
+assert(
+  template_source:find("android.component.launch", 1, true),
+  "the template must document android.component.launch"
+)

@@ -282,6 +282,31 @@ TestCase {
         compare(keySpy.count, 0)
     }
 
+    function test_shift_letter_is_phone_text_not_a_compositor_chord() {
+        preview.applicationState = "interactive"
+        preview.inputEnabled = true
+        preview.captureRequested = true
+        verify(preview.dispatchKeyEvent(Qt.Key_A, Qt.ShiftModifier, "A"))
+        compare(textSpy.count, 1)
+        compare(textSpy.signalArguments[0][0], "A")
+        compare(textSpy.signalArguments[0][1], "17")
+        compare(textSpy.signalArguments[0][2], "1")
+        compare(keySpy.count, 0)
+
+        verify(!preview.dispatchKeyEvent(Qt.Key_Tab, Qt.ShiftModifier, ""))
+        compare(keySpy.count, 0)
+        compare(textSpy.count, 1)
+    }
+
+    function test_ctrl_and_alt_chords_are_not_swallowed_as_phone_text() {
+        preview.applicationState = "interactive"
+        preview.inputEnabled = true
+        verify(!preview.dispatchKeyEvent(Qt.Key_C, Qt.ControlModifier, "c"))
+        verify(!preview.dispatchKeyEvent(Qt.Key_F, Qt.AltModifier, "f"))
+        compare(textSpy.count, 0)
+        compare(keySpy.count, 0)
+    }
+
     function test_live_frame_ratio_defines_the_viewport() {
         var portrait = PreviewGeometry.scaledAspectSize(
                     1080, 2392, 288, 1000, 1000, 100)

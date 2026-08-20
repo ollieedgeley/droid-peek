@@ -168,11 +168,13 @@ Item {
                 || !validIdentity(sessionGeneration))
             return false;
         var compositorModifiers = Qt.ControlModifier | Qt.AltModifier
-                | Qt.MetaModifier | Qt.ShiftModifier;
+                | Qt.MetaModifier;
         if (modifiers & compositorModifiers)
             return false;
         var androidKey = androidKeyForQtKey(keyCode);
         if (androidKey !== "") {
+            if (modifiers & Qt.ShiftModifier)
+                return false;
             keyRequested(androidKey, helperEpoch, sessionGeneration);
             return true;
         }

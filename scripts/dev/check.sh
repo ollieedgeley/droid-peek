@@ -29,6 +29,7 @@ run_check() {
 run_check "validate plugin manifest" omarchy plugin validate .
 run_check "check release version" scripts/dev/check-release-version
 run_check "test release version lock" tests/check-release-version.sh
+run_check "test release workflow ShellCheck" tests/release-workflow-shellcheck.sh
 run_check "test panel-open docs" tests/docs-panel-open.sh
 run_check "test installed theme alignment" tests/theme-alignment.sh
 run_check "test phone-binding configurator" tests/semantic-action-dispatcher.sh

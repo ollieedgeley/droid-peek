@@ -263,13 +263,11 @@ fn scrcpy_appends_validated_user_arguments_after_owned_arguments() {
         directory.path(),
         &format!("printf '%s\\n' \"$@\" > '{}'", arguments_file.display()),
     );
-    let mut runner: Box<dyn SessionRunner> = Box::new(
-        ScrcpySessionRunner::new_with_test_sink(
-            executable,
-            writable_sink(directory.path()),
-            Duration::from_millis(2),
-        ),
-    );
+    let mut runner: Box<dyn SessionRunner> = Box::new(ScrcpySessionRunner::new_with_test_sink(
+        executable,
+        writable_sink(directory.path()),
+        Duration::from_millis(2),
+    ));
     runner.set_quality(VideoQuality::Low);
     runner.set_scrcpy_arguments(vec![
         "--keep-active".to_owned(),

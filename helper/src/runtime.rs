@@ -739,10 +739,10 @@ where
                 return;
             }
             cancellation.cancel();
-            if let Ok(mut ceremony) = ceremony.lock() {
-                if pairing_generation.load(Ordering::Acquire) == pending_pairing_generation {
-                    ceremony.cancel();
-                }
+            if let Ok(mut ceremony) = ceremony.lock()
+                && pairing_generation.load(Ordering::Acquire) == pending_pairing_generation
+            {
+                ceremony.cancel();
             }
         });
     }

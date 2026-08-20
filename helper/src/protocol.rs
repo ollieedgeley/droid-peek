@@ -1026,7 +1026,7 @@ pub enum ProtocolErrorReason {
 
 #[cfg(test)]
 mod pairing_code_zeroize_tests {
-    use super::{parse_command, take_pairing_code, Command};
+    use super::{Command, parse_command, take_pairing_code};
     use zeroize::Zeroizing;
 
     #[test]

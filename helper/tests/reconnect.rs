@@ -929,7 +929,9 @@ fn stop_session_command_emits_only_session_stopped() {
             .into_iter()
             .map(|event| event.to_line())
             .collect::<Vec<_>>(),
-        [r#"{"version":11,"type":"session-stopped","helperEpoch":"73001","sessionGeneration":"2"}"#]
+        [
+            r#"{"version":11,"type":"session-stopped","helperEpoch":"73001","sessionGeneration":"2"}"#
+        ]
     );
     let backend = engine.into_backend();
     assert_eq!(backend.session_generation(), 2);

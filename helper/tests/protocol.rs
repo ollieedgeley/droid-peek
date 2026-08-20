@@ -273,7 +273,9 @@ fn stale_epoch_submit_manual_code_does_not_echo_code() {
 
     assert_eq!(
         events,
-        [r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"0","outcome":"stale-session"}"#]
+        [
+            r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"0","outcome":"stale-session"}"#
+        ]
     );
     assert!(events.iter().all(|event| !event.contains(code)));
     assert!(engine.into_backend().manual_codes.is_empty());
@@ -289,7 +291,9 @@ fn version_mismatch_submit_manual_code_does_not_echo_code() {
 
     assert_eq!(
         events,
-        [r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"version-mismatch"}"#]
+        [
+            r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"version-mismatch"}"#
+        ]
     );
     assert!(events.iter().all(|event| !event.contains(code)));
     assert!(engine.into_backend().manual_codes.is_empty());

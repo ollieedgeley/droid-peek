@@ -1,14 +1,7 @@
-use std::{
-    env,
-    ffi::OsStr,
-    fs,
-    os::unix::fs::PermissionsExt,
-    path::PathBuf,
-    sync::Mutex,
-};
+use std::{env, ffi::OsStr, fs, os::unix::fs::PermissionsExt, path::PathBuf, sync::Mutex};
 
 use droid_peek_helper::persistence::{
-    default_state_directory, FileTrustedDeviceStore, TrustedDevice,
+    FileTrustedDeviceStore, TrustedDevice, default_state_directory,
 };
 use tempfile::tempdir;
 
@@ -25,7 +18,11 @@ fn set_optional_env(key: &str, value: Option<&OsStr>) {
     }
 }
 
-fn with_state_env<T>(xdg_state_home: Option<&str>, home: Option<&str>, body: impl FnOnce() -> T) -> T {
+fn with_state_env<T>(
+    xdg_state_home: Option<&str>,
+    home: Option<&str>,
+    body: impl FnOnce() -> T,
+) -> T {
     let _lock = STATE_ENV_LOCK.lock().expect("state env lock");
     let previous_state_home = env::var_os("XDG_STATE_HOME");
     let previous_home = env::var_os("HOME");
@@ -127,7 +124,11 @@ fn device_identity_rejects_raw_or_unsafe_values() {
 
 #[test]
 fn empty_xdg_state_home_falls_back_to_home_local_state() {
-    let directory = with_state_env(Some(""), Some("/tmp/omarchy-ar-125-home"), default_state_directory);
+    let directory = with_state_env(
+        Some(""),
+        Some("/tmp/omarchy-ar-125-home"),
+        default_state_directory,
+    );
     assert_eq!(
         directory,
         Some(PathBuf::from(

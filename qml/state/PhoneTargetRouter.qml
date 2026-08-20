@@ -72,7 +72,7 @@ QtObject {
     }
 
     function consumePhoneTargetResult(requestId, outcome, notificationCode) {
-        var label = typeof requestId === "string"
+        var pending = typeof requestId === "string"
                 ? pendingLabels[requestId] : undefined;
         if (typeof requestId === "string")
             delete pendingLabels[requestId];
@@ -95,7 +95,8 @@ QtObject {
         default:
             return false;
         }
-        if (typeof label === "string" && label.length > 0)
+        var label = pending && pending.text;
+        if (typeof label === "string" && label.length > 0 && pending.appLaunch)
             message = "Couldn't open " + label + ".";
         var now = Date.now();
         var previous = failureNotificationTimes[notificationCode];
@@ -129,7 +130,11 @@ QtObject {
                     || !validDescription(request.description)))
             return false;
         if (validDescription(request.description))
-            pendingLabels[request.requestId] = request.description;
+            pendingLabels[request.requestId] = {
+                text: request.description,
+                appLaunch: typeof request.target === "object"
+                        && request.target.type === "android.app.launch"
+            };
         phoneTargetRequested({
             requestId: request.requestId,
             target: request.target,

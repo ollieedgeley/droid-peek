@@ -346,10 +346,7 @@ Item {
         var pipelineEpoch = pendingCapturePipelineEpoch;
         var pipelineHelperEpoch = pendingCapturePipelineHelperEpoch;
         var pipelineSessionGeneration = pendingCapturePipelineSessionGeneration;
-        var creationIsCurrent = pipelineEpoch === captureEpoch
-                && pipelineHelperEpoch === helperEpoch
-                && pipelineSessionGeneration === sessionGeneration
-                && captureRequested;
+        var creationIsCurrent = pipelineEpoch === captureEpoch && pipelineHelperEpoch === helperEpoch && pipelineSessionGeneration === sessionGeneration && captureRequested;
         clearPendingCapturePipelineCreation();
         if (!creationIsCurrent)
             return false;

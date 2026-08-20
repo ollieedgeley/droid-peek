@@ -37,11 +37,15 @@ done <<<"$workflow"
 read -r -a command_parts <<<"$shellcheck_command"
 follow_sources=false
 script_source_path=false
+check_sourced=false
 separator_index=-1
 for ((index = 1; index < ${#command_parts[@]}; index++)); do
   case "${command_parts[index]}" in
     -x)
       follow_sources=true
+      ;;
+    -a)
+      check_sourced=true
       ;;
     -P)
       if ((index + 1 < ${#command_parts[@]})) &&
@@ -58,6 +62,8 @@ done
 
 $follow_sources && $script_source_path ||
   fail "release workflow public-script ShellCheck command must include -x and -P SCRIPTDIR to follow sources relative to each script"
+$check_sourced ||
+  fail "release workflow public-script ShellCheck command must include -a/--check-sourced so diagnostics from common, release-helper, v4l2, and hyprland are preserved in their public-entrypoint context"
 
 ((separator_index >= 0)) ||
   fail "release workflow public-script ShellCheck command must separate options from script paths with --"
@@ -65,8 +71,11 @@ $follow_sources && $script_source_path ||
 expected_scripts=(
   scripts/setup-droid-peek
   scripts/cleanup-droid-peek
-  'scripts/lib/*.sh'
 )
 actual_scripts=("${command_parts[@]:separator_index + 1}")
+for script in "${actual_scripts[@]}"; do
+  [[ "$script" != scripts/lib/* ]] ||
+    fail "release workflow must not pass sourced libraries as standalone ShellCheck inputs: shared variables are defined and consumed across source boundaries, so declared source directives must cover libraries transitively from the public entry points"
+done
 [[ "${actual_scripts[*]}" == "${expected_scripts[*]}" ]] ||
   fail "release workflow ShellCheck must cover exactly: ${expected_scripts[*]}"

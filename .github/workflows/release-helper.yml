@@ -70,7 +70,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck -x -P SCRIPTDIR -- scripts/setup-droid-peek scripts/cleanup-droid-peek scripts/lib/*.sh
+          shellcheck -a -x -P SCRIPTDIR -- scripts/setup-droid-peek scripts/cleanup-droid-peek
 
       # Host-only (do not run in this workflow): scripts/dev/check.sh,
       # scripts/dev/check-architecture.sh, and scripts/dev/check-supply-chain.sh.

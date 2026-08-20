@@ -137,7 +137,51 @@ fn installer_and_template_share_the_exact_user_config_contract() {
         "the configurator and managed loader block drifted"
     );
     assert!(
-        template.contains("/.config/omarchy/plugins/ollieedgeley.droidpeek/integrations/phone-bindings.lua"),
+        template.contains(
+            "/.config/omarchy/plugins/ollieedgeley.droidpeek/integrations/phone-bindings.lua"
+        ),
         "the user template must load the plugin-owned API"
+    );
+}
+
+#[test]
+fn public_docs_state_the_live_scrcpy_control_rule() {
+    let architecture = source("docs/ARCHITECTURE.md");
+    let public_docs = [
+        ("README.md", source("README.md")),
+        ("docs/ARCHITECTURE.md", architecture.clone()),
+        ("docs/CONFIGURATION.md", source("docs/CONFIGURATION.md")),
+        ("docs/INSTALL.md", source("docs/INSTALL.md")),
+        ("docs/TROUBLESHOOTING.md", source("docs/TROUBLESHOOTING.md")),
+        ("docs/VERIFICATION.md", source("docs/VERIFICATION.md")),
+    ];
+
+    for (path, text) in &public_docs {
+        assert!(
+            !text.contains("with control disabled")
+                && !text.contains("control is always off")
+                && !text.contains("runs scrcpy with control disabled"),
+            "{path} must not claim scrcpy control is always off"
+        );
+    }
+
+    let template = source("integrations/droid-peek.lua.example");
+    assert!(
+        template.contains("--keep-active")
+            && template.contains("--turn-screen-off")
+            && template.contains("--stay-awake"),
+        "the shipped template must keep the device-awake flags that require control"
+    );
+    assert!(
+        architecture.contains("`scrcpyArgs`")
+            && architecture.contains("--keep-active")
+            && architecture.contains("--stay-awake")
+            && architecture.contains("--turn-screen-off")
+            && architecture.contains("default session has control"),
+        "ARCHITECTURE.md must state the live control rule and that the default session has control"
+    );
+    assert!(
+        architecture.contains("QML-originated input uses a separate validated ADB adapter"),
+        "ARCHITECTURE.md must keep the true QML ADB-adapter sentence"
     );
 }

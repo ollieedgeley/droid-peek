@@ -60,3 +60,18 @@ lua_version="$(
 )"
 [[ "$lua_version" == "$manifest_version" ]] ||
   fail "Lua release_version disagrees with the manifest"
+
+[[ -x scripts/generate-build-info ]] || fail "scripts/generate-build-info is missing"
+generated="$(mktemp -d "${TMPDIR:-/tmp}/droid-peek-generate-build-info.XXXXXX")"
+cleanup_generated() {
+  rm -rf "$generated"
+}
+trap cleanup_generated EXIT
+mkdir -p "$generated/scripts" "$generated/qml" "$generated/integrations"
+cp manifest.json "$generated/"
+cp scripts/generate-build-info "$generated/scripts/"
+"$generated/scripts/generate-build-info"
+cmp -s "$generated/qml/BuildInfo.qml" qml/BuildInfo.qml ||
+  fail "qml/BuildInfo.qml is out of sync with scripts/generate-build-info"
+cmp -s "$generated/integrations/build-info.lua" integrations/build-info.lua ||
+  fail "integrations/build-info.lua is out of sync with scripts/generate-build-info"

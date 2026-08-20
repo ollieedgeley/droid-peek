@@ -115,7 +115,9 @@ TestCase {
     function test_capture_is_off_until_requested() {
         compare(preview.active, false)
         compare(preview.firstValidFrameReceived, false)
-        compare(preview.interactionReady, false)
+        compare(preview.captureAvailable, false)
+        compare(preview.displayWidth, 0)
+        compare(preview.displayHeight, 0)
     }
 
     function test_generation_change_recreates_capture_pipeline_and_clears_facts() {
@@ -137,7 +139,10 @@ TestCase {
         compare(preview.capturePipeline.epoch, preview.captureEpoch)
         compare(preview.capturePipeline.helperEpochSnapshot, "17")
         compare(preview.capturePipeline.sessionGenerationSnapshot, "2")
-        compare(preview.interactionReady, false)
+        compare(preview.captureAvailable, false)
+        compare(preview.active, false)
+        compare(preview.displayWidth, 0)
+        compare(preview.displayHeight, 0)
     }
 
     function test_old_capture_callbacks_cannot_adopt_the_new_identity() {
@@ -187,7 +192,10 @@ TestCase {
                    preview.deviceId, preview.deviceDescription))
 
         compare(preview.firstValidFrameReceived, false)
-        compare(preview.interactionReady, false)
+        compare(preview.captureAvailable, false)
+        compare(preview.active, false)
+        compare(preview.displayWidth, 0)
+        compare(preview.displayHeight, 0)
         verify(preview.acceptRenderedFrame(
                    currentCaptureEpoch, "17", "1", 1080, 2392))
         compare(preview.firstValidFrameReceived, true)
@@ -219,7 +227,10 @@ TestCase {
         preview.captureRequested = false
 
         compare(preview.firstValidFrameReceived, false)
-        compare(preview.interactionReady, false)
+        compare(preview.captureAvailable, false)
+        compare(preview.active, false)
+        compare(preview.displayWidth, 0)
+        compare(preview.displayHeight, 0)
     }
 
     function test_pointer_mapping_excludes_letterbox_and_normalizes_content() {
@@ -278,6 +289,31 @@ TestCase {
         preview.applicationState = "interactive"
         preview.inputEnabled = true
         verify(!preview.dispatchKeyEvent(Qt.Key_W, Qt.MetaModifier, "w"))
+        compare(textSpy.count, 0)
+        compare(keySpy.count, 0)
+    }
+
+    function test_shift_letter_is_phone_text_not_a_compositor_chord() {
+        preview.applicationState = "interactive"
+        preview.inputEnabled = true
+        preview.captureRequested = true
+        verify(preview.dispatchKeyEvent(Qt.Key_A, Qt.ShiftModifier, "A"))
+        compare(textSpy.count, 1)
+        compare(textSpy.signalArguments[0][0], "A")
+        compare(textSpy.signalArguments[0][1], "17")
+        compare(textSpy.signalArguments[0][2], "1")
+        compare(keySpy.count, 0)
+
+        verify(!preview.dispatchKeyEvent(Qt.Key_Tab, Qt.ShiftModifier, ""))
+        compare(keySpy.count, 0)
+        compare(textSpy.count, 1)
+    }
+
+    function test_ctrl_and_alt_chords_are_not_swallowed_as_phone_text() {
+        preview.applicationState = "interactive"
+        preview.inputEnabled = true
+        verify(!preview.dispatchKeyEvent(Qt.Key_C, Qt.ControlModifier, "c"))
+        verify(!preview.dispatchKeyEvent(Qt.Key_F, Qt.AltModifier, "f"))
         compare(textSpy.count, 0)
         compare(keySpy.count, 0)
     }

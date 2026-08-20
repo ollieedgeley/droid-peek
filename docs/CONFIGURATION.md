@@ -28,16 +28,17 @@ hyprctl configerrors
 
 ## Open and close the panel
 
-The bar icon opens or closes the panel on that icon's monitor. The desktop
-hotkey is Super+Alt+A and must run:
+The bar icon opens or closes the panel on that icon's monitor. Super+Alt+A
+closes the panel only while phone mode is active.
+
+Do not use `omarchy-shell ollieedgeley.droidpeek toggle`; that reaches
+whichever bar instance registered the raw IPC target first. Prefer:
 
 ```bash
 omarchy-shell shell toggle ollieedgeley.droidpeek
 ```
 
-so Omarchy picks the focused monitor's copy. Do not use
-`omarchy-shell ollieedgeley.droidpeek toggle`; that reaches whichever bar
-instance registered the raw IPC target first.
+so Omarchy picks the focused monitor's copy.
 
 A ready panel focuses the phone preview automatically, including after
 reconnection. The preview supports taps, swipes, named Android keys, and

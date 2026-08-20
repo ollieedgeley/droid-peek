@@ -11,8 +11,7 @@ QtObject {
     property var pendingLabels: ({})
 
     signal phoneTargetRequested(var request)
-    signal phoneTargetFailureNotificationRequested(string message,
-                                                   string coalesceKey)
+    signal phoneTargetFailureNotificationRequested(string message)
 
     function validIdentity(value) {
         return typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value);
@@ -72,7 +71,7 @@ QtObject {
     }
 
     function consumePhoneTargetResult(requestId, outcome, notificationCode) {
-        var label = typeof requestId === "string"
+        var pending = typeof requestId === "string"
                 ? pendingLabels[requestId] : undefined;
         if (typeof requestId === "string")
             delete pendingLabels[requestId];
@@ -95,7 +94,8 @@ QtObject {
         default:
             return false;
         }
-        if (typeof label === "string" && label.length > 0)
+        var label = pending && pending.text;
+        if (typeof label === "string" && label.length > 0 && pending.appLaunch)
             message = "Couldn't open " + label + ".";
         var now = Date.now();
         var previous = failureNotificationTimes[notificationCode];
@@ -103,9 +103,7 @@ QtObject {
                 && now - previous < failureCoalesceWindowMs)
             return true;
         failureNotificationTimes[notificationCode] = now;
-        phoneTargetFailureNotificationRequested(
-                    message,
-                    "droid-peek-phone-target-" + notificationCode);
+        phoneTargetFailureNotificationRequested(message);
         return true;
     }
 
@@ -129,7 +127,11 @@ QtObject {
                     || !validDescription(request.description)))
             return false;
         if (validDescription(request.description))
-            pendingLabels[request.requestId] = request.description;
+            pendingLabels[request.requestId] = {
+                text: request.description,
+                appLaunch: typeof request.target === "object"
+                        && request.target.type === "android.app.launch"
+            };
         phoneTargetRequested({
             requestId: request.requestId,
             target: request.target,

@@ -102,16 +102,28 @@ fn private_snapshot_round_trips_and_empty_configuration_removes_it() {
 }
 
 #[test]
-fn rejects_a_tampered_snapshot() {
+fn corrupt_or_invalid_snapshot_is_removed_and_loads_empty() {
     let directory = tempdir().expect("temporary state directory");
-    fs::write(
-        directory.path().join("scrcpy-args.json"),
-        r#"{"arguments":["--serial=device"],"revision":"forged"}"#,
-    )
-    .expect("write tampered snapshot");
     let store = FileScrcpyConfigStore::new(directory.path());
+    let path = directory.path().join("scrcpy-args.json");
 
-    assert!(store.load().is_err());
+    for contents in [
+        r#"{"arguments":["--serial=device"],"revision":"forged"}"#,
+        r#"{"arguments":["--keep-active"],"revision":"forged"}"#,
+        r#"{not json"#,
+        r#"{"arguments":["--keep-active"]}"#,
+    ] {
+        fs::write(&path, contents).expect("write corrupt snapshot");
+
+        assert_eq!(
+            store.load().expect("load recovers from corrupt snapshot"),
+            ScrcpyConfiguration::empty()
+        );
+        assert!(
+            !path.exists(),
+            "corrupt scrcpy snapshot must be removed like other stores"
+        );
+    }
 }
 
 #[test]

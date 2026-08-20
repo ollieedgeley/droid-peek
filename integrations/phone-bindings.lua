@@ -295,7 +295,7 @@ function api.bind(keys, description, target)
   end
 
   local dispatcher
-  if target == close_panel then
+  if target == close_panel or target == "android.close_panel" then
     dispatcher = close_panel
   else
     dispatcher = function()

@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell.Io
 import qs.Ui
 import "qml/session/SessionRegistry.js" as SessionRegistry
 
@@ -12,16 +11,13 @@ BarWidget {
                                    && panel.hostWidget === root
 
     function bindSharedPanel() {
-        SessionRegistry.ensurePanel(Qt.resolvedUrl("Panel.qml"),
-                                    root.bar || root, function (created) {
+        SessionRegistry.ensurePanel(Qt.resolvedUrl("Panel.qml"), function (created) {
             root.panel = created
-            injectPanel()
         })
     }
 
     function open() {
-        SessionRegistry.ensurePanel(Qt.resolvedUrl("Panel.qml"),
-                                    root.bar || root, function (created) {
+        SessionRegistry.ensurePanel(Qt.resolvedUrl("Panel.qml"), function (created) {
             root.panel = created
             if (!root.panel)
                 return
@@ -49,15 +45,6 @@ BarWidget {
             close();
         else
             open();
-    }
-
-    function routedWidget() {
-        if (root.bar && typeof root.bar.findPanelWidget === "function") {
-            var chosen = root.bar.findPanelWidget(root.moduleName);
-            if (chosen)
-                return chosen;
-        }
-        return root;
     }
 
 
@@ -99,34 +86,10 @@ BarWidget {
             bindSharedPanel();
         var scrcpyArguments = decodeEnvelope(encodedConfiguration, 24000);
         if (typeof revision !== "string" || !/^[0-9a-f]{16}$/.test(revision)
-                || !validScrcpyArguments(scrcpyArguments) || !root.panel
+                || scrcpyArguments === null || !root.panel
                 || !("setScrcpyConfiguration" in root.panel))
             return false;
         return root.panel.setScrcpyConfiguration(revision, scrcpyArguments);
-    }
-
-    function validScrcpyArguments(scrcpyArguments) {
-        if (!Array.isArray(scrcpyArguments) || scrcpyArguments.length > 32)
-            return false;
-        var reserved = [
-            "--serial", "--select-usb", "--select-tcpip", "--tcpip",
-            "--video-source", "--new-display", "--display", "--v4l2-sink",
-            "--no-video", "--no-window", "--window", "--control",
-            "--no-control", "--no-cleanup", "--no-power-on", "--max-size",
-            "--video-bit-rate", "--max-fps"
-        ];
-        for (var index = 0; index < scrcpyArguments.length; ++index) {
-            var argument = scrcpyArguments[index];
-            if (typeof argument !== "string"
-                    || unescape(encodeURIComponent(argument)).length > 512
-                    || !/^--[^\r\n\u0000]+$/.test(argument))
-                return false;
-            var separator = argument.indexOf("=");
-            var name = separator < 0 ? argument : argument.slice(0, separator);
-            if (reserved.indexOf(name) >= 0 || /^--audio/.test(name))
-                return false;
-        }
-        return true;
     }
 
     function injectPanel() {
@@ -139,25 +102,12 @@ BarWidget {
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
 
-    Component.onCompleted: bindSharedPanel()
-    onBarChanged: bindSharedPanel()
-
-    IpcHandler {
-        target: "ollieedgeley.droidpeek"
-
-        function phoneTarget(encodedEnvelope: string): bool {
-            var item = root.routedWidget()
-            return item && typeof item.phoneTarget === "function"
-                    ? item.phoneTarget(encodedEnvelope) : false
-        }
-        function configureScrcpy(revision: string,
-                                 encodedConfiguration: string): bool {
-            var item = root.routedWidget()
-            return item && typeof item.configureScrcpy === "function"
-                    ? item.configureScrcpy(revision, encodedConfiguration)
-                    : false
-        }
+    Component.onCompleted: {
+        SessionRegistry.registerHost()
+        bindSharedPanel()
     }
+    Component.onDestruction: SessionRegistry.unregisterHost()
+    onBarChanged: bindSharedPanel()
 
     WidgetButton {
         id: button

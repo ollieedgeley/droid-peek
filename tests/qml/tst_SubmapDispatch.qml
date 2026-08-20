@@ -229,10 +229,51 @@ TestCase {
         compare(state.statusDescription, shortcutsUnavailableDescription)
         compare(state.helperReady, true)
         compare(state.hasTrustedDevice, true)
+        compare(state.sessionStarted, true)
+        compare(state.sessionGeneration, "1")
+        compare(panelLoader.item.helperCloseAction(), "retain")
 
         var tag = objectNamed("setupHeadingTag")
         verify(tag !== null)
         tryCompare(tag, "text", "Shortcuts")
+    }
+
+    function test_helper_version_failure_is_not_shortcut_failure() {
+        var state = objectNamed("pairingState")
+        var versionProcess = null
+        var seen = []
+        var pending = [testCase]
+        while (pending.length > 0) {
+            var object = pending.pop()
+            if (!object || seen.indexOf(object) !== -1)
+                continue
+            seen.push(object)
+            if (object.command && object.command.indexOf("--version") >= 0) {
+                versionProcess = object
+                break
+            }
+            var data = object.data
+            if (data !== undefined) {
+                for (var dataIndex = 0; dataIndex < data.length; ++dataIndex)
+                    pending.push(data[dataIndex])
+            }
+            var children = object.children
+            if (children !== undefined) {
+                for (var childIndex = 0; childIndex < children.length;
+                     ++childIndex)
+                    pending.push(children[childIndex])
+            }
+        }
+        verify(versionProcess !== null)
+
+        versionProcess.observedVersion = "0.0.0"
+        versionProcess.exited(0)
+
+        compare(state.pairingStage, "protocol-error")
+        compare(state.statusTitle, "Android helper unavailable")
+        verify(state.statusTitle !== shortcutsUnavailableTitle)
+        compare(state.pairingStage !== "local-integration-failed", true)
+        compare(state.localIntegrationAvailable, true)
     }
 
     function test_close_always_dispatches_reset() {

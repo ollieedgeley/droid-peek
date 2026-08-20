@@ -24,6 +24,9 @@ impl WirelessDiscovery for FakeDiscovery {
         requested_service: &str,
         cancellation: &CancellationToken,
     ) -> Result<PairingEndpoint, DiscoveryFailure> {
+        if cancellation.is_cancelled() {
+            return Err(DiscoveryFailure::Cancelled);
+        }
         self.requested_services.push(requested_service.to_owned());
         if self.cancel_after_pairing_discovery {
             cancellation.cancel();
@@ -35,6 +38,9 @@ impl WirelessDiscovery for FakeDiscovery {
         &mut self,
         cancellation: &CancellationToken,
     ) -> Result<PairingEndpoint, DiscoveryFailure> {
+        if cancellation.is_cancelled() {
+            return Err(DiscoveryFailure::Cancelled);
+        }
         if self.cancel_after_pairing_discovery {
             cancellation.cancel();
         }
@@ -44,8 +50,11 @@ impl WirelessDiscovery for FakeDiscovery {
     fn find_connection_endpoint(
         &mut self,
         pairing_endpoint: &PairingEndpoint,
-        _cancellation: &CancellationToken,
+        cancellation: &CancellationToken,
     ) -> Result<PairingEndpoint, DiscoveryFailure> {
+        if cancellation.is_cancelled() {
+            return Err(DiscoveryFailure::Cancelled);
+        }
         self.connection_sources.push(pairing_endpoint.clone());
         self.connection.clone()
     }
@@ -64,8 +73,11 @@ impl CommandRunner for FakeRunner {
     fn run(
         &mut self,
         request: CommandRequest,
-        _cancellation: &CancellationToken,
+        cancellation: &CancellationToken,
     ) -> Result<CommandOutput, CommandFailure> {
+        if cancellation.is_cancelled() {
+            return Err(CommandFailure::Cancelled);
+        }
         self.requests.push(request);
         self.outputs.pop_front().expect("fake command output")
     }
@@ -285,5 +297,73 @@ fn failed_tls_connection_is_a_disconnected_state() {
         [Event::Failure {
             reason: FailureReason::Disconnected
         }]
+    ));
+}
+
+#[test]
+fn cancelled_command_runner_does_not_report_queued_success() {
+    let mut runner = FakeRunner {
+        outputs: VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+        requests: Vec::new(),
+    };
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    assert_eq!(
+        runner.run(
+            CommandRequest::new("adb", vec!["connect".to_owned()]),
+            &cancellation,
+        ),
+        Err(CommandFailure::Cancelled)
+    );
+    assert!(runner.requests.is_empty());
+}
+
+#[test]
+fn cancelled_connection_discovery_does_not_return_a_queued_endpoint() {
+    let mut discovery = FakeDiscovery {
+        pairing: PairingEndpoint::new("pairing.local", 37_000)
+            .map_err(|_| DiscoveryFailure::DependencyUnavailable),
+        connection: PairingEndpoint::new("connect.local", 38_000)
+            .map_err(|_| DiscoveryFailure::DependencyUnavailable),
+        requested_services: Vec::new(),
+        connection_sources: Vec::new(),
+        cancel_after_pairing_discovery: false,
+        paired_device: None,
+    };
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let pairing = PairingEndpoint::new("pairing.local", 37_000).expect("pairing endpoint");
+
+    assert!(matches!(
+        discovery.find_connection_endpoint(&pairing, &cancellation),
+        Err(DiscoveryFailure::Cancelled)
+    ));
+    assert!(discovery.connection_sources.is_empty());
+}
+
+#[test]
+fn cancelled_pairing_discovery_does_not_return_a_queued_endpoint() {
+    let mut discovery = FakeDiscovery {
+        pairing: PairingEndpoint::new("pairing.local", 37_000)
+            .map_err(|_| DiscoveryFailure::DependencyUnavailable),
+        connection: PairingEndpoint::new("connect.local", 38_000)
+            .map_err(|_| DiscoveryFailure::DependencyUnavailable),
+        requested_services: Vec::new(),
+        connection_sources: Vec::new(),
+        cancel_after_pairing_discovery: false,
+        paired_device: None,
+    };
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    assert!(matches!(
+        discovery.find_pairing_endpoint("service", &cancellation),
+        Err(DiscoveryFailure::Cancelled)
+    ));
+    assert!(discovery.requested_services.is_empty());
+    assert!(matches!(
+        discovery.find_manual_pairing_endpoint(&cancellation),
+        Err(DiscoveryFailure::Cancelled)
     ));
 }

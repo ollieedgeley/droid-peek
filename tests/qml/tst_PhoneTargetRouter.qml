@@ -253,8 +253,7 @@ TestCase {
 
         compare(failureNotificationSpy.count, 1)
         compare(failureNotificationSpy.signalArguments[0][0], data.message)
-        compare(failureNotificationSpy.signalArguments[0][1],
-                "droid-peek-phone-target-" + data.code)
+        compare(failureNotificationSpy.signalArguments[0].length, 1)
         verify(failureNotificationSpy.signalArguments[0][0]
                .indexOf("android.") < 0)
         verify(failureNotificationSpy.signalArguments[0][0]
@@ -268,8 +267,9 @@ TestCase {
                                                "target-failed"))
 
         compare(failureNotificationSpy.count, 1)
-        compare(failureNotificationSpy.signalArguments[0][1],
-                "droid-peek-phone-target-target-failed")
+        compare(failureNotificationSpy.signalArguments[0].length, 1)
+        compare(failureNotificationSpy.signalArguments[0][0],
+                "Android shortcut failed.")
     }
 
     function test_distinct_failures_are_not_coalesced() {
@@ -336,6 +336,46 @@ TestCase {
                .indexOf("com.termux") < 0)
         verify(failureNotificationSpy.signalArguments[0][0]
                .indexOf("android.") < 0)
+    }
+
+    function test_labeled_non_app_failures_keep_typed_sentence_data() {
+        return [
+            {
+                tag: "home timed out",
+                requestId: "request-home",
+                target: "android.navigate.home",
+                description: "Home",
+                code: "target-timed-out",
+                message: "Android shortcut timed out."
+            },
+            {
+                tag: "copy failed",
+                requestId: "request-copy",
+                target: {
+                    type: "android.keyevent",
+                    key: "copy"
+                },
+                description: "Copy",
+                code: "target-failed",
+                message: "Android shortcut failed."
+            }
+        ]
+    }
+
+    function test_labeled_non_app_failures_keep_typed_sentence(data) {
+        var request = envelope(data.requestId, data.target, undefined,
+                               data.description)
+
+        verify(router.acceptPhoneTarget(request))
+        verify(router.consumePhoneTargetResult(request.requestId, "failed",
+                                               data.code))
+
+        compare(failureNotificationSpy.count, 1)
+        compare(failureNotificationSpy.signalArguments[0][0], data.message)
+        verify(failureNotificationSpy.signalArguments[0][0]
+               .indexOf("Couldn't open") < 0)
+        verify(failureNotificationSpy.signalArguments[0][0]
+               .indexOf(data.description) < 0)
     }
 
     function test_old_semantic_and_passthrough_routing_surface_is_removed() {

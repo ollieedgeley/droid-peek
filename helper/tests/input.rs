@@ -15,8 +15,11 @@ impl CommandRunner for FakeRunner {
     fn run(
         &mut self,
         request: CommandRequest,
-        _cancellation: &CancellationToken,
+        cancellation: &CancellationToken,
     ) -> Result<CommandOutput, CommandFailure> {
+        if cancellation.is_cancelled() {
+            return Err(CommandFailure::Cancelled);
+        }
         self.requests.push(request);
         self.outputs
             .pop_front()
@@ -216,4 +219,23 @@ fn adb_adapter_reports_unsuccessful_and_cancelled_commands() {
             .is_err()
     );
     assert!(adapter.key("device.local:38100", AndroidKey::Home).is_err());
+}
+
+#[test]
+fn cancelled_command_runner_does_not_report_queued_success() {
+    let mut runner = FakeRunner {
+        requests: Vec::new(),
+        outputs: VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+    };
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    assert_eq!(
+        runner.run(
+            CommandRequest::new("adb", vec!["version".to_owned()]),
+            &cancellation,
+        ),
+        Err(CommandFailure::Cancelled)
+    );
+    assert!(runner.requests.is_empty());
 }

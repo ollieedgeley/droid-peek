@@ -42,8 +42,8 @@ that first pairing, opening the panel reconnects to the remembered phone.
 
 ## Use and configure
 
-The bar icon opens or closes the panel. Super+Alt+A does the same from the
-keyboard. While the panel is interactive, pointer input, ordinary typing, and
+The bar icon opens or closes the panel. Super+Alt+A closes it only while
+phone mode is active. While the panel is interactive, pointer input, ordinary typing, and
 the toolbar quick actions control the phone.
 
 Setup creates `~/.config/hypr/droid-peek.lua` once. Edit that file to add

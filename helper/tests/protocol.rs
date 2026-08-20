@@ -256,11 +256,47 @@ fn manual_code_is_consumed_without_appearing_in_events() {
     assert_eq!(
         events,
         [format!(
-            r#"{{"version":11,"type":"pairing","helperEpoch":"{HELPER_EPOCH}","method":"manual-code"}}"#
+            r#"{{"version":11,"type":"pairing","helperEpoch":"{HELPER_EPOCH}"}}"#
         )]
     );
     assert!(events.iter().all(|event| !event.contains(code)));
     assert_eq!(engine.into_backend().manual_codes, [code]);
+}
+
+#[test]
+fn stale_epoch_submit_manual_code_does_not_echo_code() {
+    let mut engine = engine(FakePairingBackend::default());
+    let code = "482913";
+    let events = wire_lines(engine.handle_line(&format!(
+        r#"{{"version":11,"type":"submit-manual-code","helperEpoch":"stale","code":"{code}"}}"#
+    )));
+
+    assert_eq!(
+        events,
+        [
+            r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"0","outcome":"stale-session"}"#
+        ]
+    );
+    assert!(events.iter().all(|event| !event.contains(code)));
+    assert!(engine.into_backend().manual_codes.is_empty());
+}
+
+#[test]
+fn version_mismatch_submit_manual_code_does_not_echo_code() {
+    let mut engine = engine(FakePairingBackend::default());
+    let code = "482913";
+    let events = wire_lines(engine.handle_line(&format!(
+        r#"{{"version":10,"type":"submit-manual-code","helperEpoch":"{HELPER_EPOCH}","code":"{code}"}}"#
+    )));
+
+    assert_eq!(
+        events,
+        [
+            r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"version-mismatch"}"#
+        ]
+    );
+    assert!(events.iter().all(|event| !event.contains(code)));
+    assert!(engine.into_backend().manual_codes.is_empty());
 }
 
 #[test]
@@ -306,7 +342,7 @@ fn preferences_are_schema_one_and_quality_restart_advances_generation() {
         wire_lines(engine.handle_line(
             r#"{"version":11,"type":"set-preferences","helperEpoch":"73001","keepConnected":true,"androidModeShortcuts":false,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"]}"#,
         )),
-        [r#"{"version":11,"type":"preferences-updated","helperEpoch":"73001","sessionGeneration":"1","keepConnected":true,"androidModeShortcuts":false,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"],"sessionRestarted":true}"#]
+        [r#"{"version":11,"type":"preferences-updated","helperEpoch":"73001","sessionGeneration":"1","preferences":{"keepConnected":true,"androidModeShortcuts":false,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"]},"sessionRestarted":true}"#]
     );
 
     let backend = engine.into_backend();
@@ -636,17 +672,15 @@ fn malformed_unknown_and_v10_commands_fail_without_echoing_input() {
 }
 
 #[test]
-fn session_started_reports_two_part_identity_and_bounded_dimensions() {
+fn session_started_reports_two_part_identity() {
     assert_eq!(
         Event::SessionStarted {
             helper_epoch: HELPER_EPOCH.to_owned(),
             session_generation: "9".to_owned(),
-            physical_width_mm: Some(70),
-            physical_height_mm: Some(157),
             screen_off_enabled: false,
         }
         .to_line(),
-        r#"{"version":11,"type":"session-started","helperEpoch":"73001","sessionGeneration":"9","physicalWidthMm":70,"physicalHeightMm":157,"screenOffEnabled":false}"#
+        r#"{"version":11,"type":"session-started","helperEpoch":"73001","sessionGeneration":"9","screenOffEnabled":false}"#
     );
 }
 

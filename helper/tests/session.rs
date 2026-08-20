@@ -10,27 +10,11 @@ use std::{
 use droid_peek_helper::{
     preferences::VideoQuality,
     process::CancellationToken,
-    session::{
-        PhysicalDisplayProbe, PhysicalDisplaySize, ScrcpySessionRunner, SessionExit,
-        SessionFailure, SessionRunner,
-    },
+    session::{ScrcpySessionRunner, SessionExit, SessionFailure, SessionRunner},
 };
 use tempfile::tempdir;
 
 static PROCESS_TEST_LOCK: Mutex<()> = Mutex::new(());
-
-#[derive(Clone, Copy)]
-struct NoDisplayProbe;
-
-impl PhysicalDisplayProbe for NoDisplayProbe {
-    fn probe(
-        &mut self,
-        _target: &str,
-        _cancellation: &CancellationToken,
-    ) -> Option<PhysicalDisplaySize> {
-        None
-    }
-}
 
 fn fake_executable(directory: &Path, body: &str) -> PathBuf {
     let path = directory.join("fake-scrcpy");
@@ -57,9 +41,8 @@ fn scrcpy_uses_a_private_headless_v4l2_command() {
     );
     let sink = writable_sink(directory.path());
     let mut runner =
-        ScrcpySessionRunner::new_with_test_sink(executable, &sink, Duration::from_millis(2))
-            .with_display_probe(NoDisplayProbe);
-    let mut started = |_| {};
+        ScrcpySessionRunner::new_with_test_sink(executable, &sink, Duration::from_millis(2));
+    let mut started = || {};
 
     assert_eq!(
         runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut started,),
@@ -96,11 +79,10 @@ fn scrcpy_starts_after_the_validation_handle_is_closed() {
         ),
     );
     let mut runner =
-        ScrcpySessionRunner::new_with_test_sink(executable, &sink, Duration::from_millis(2))
-            .with_display_probe(NoDisplayProbe);
+        ScrcpySessionRunner::new_with_test_sink(executable, &sink, Duration::from_millis(2));
 
     assert_eq!(
-        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {}),
+        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut || {}),
         Ok(SessionExit::Ended)
     );
 }
@@ -134,12 +116,11 @@ fn scrcpy_applies_the_selected_video_quality_profile() {
             executable,
             writable_sink(directory.path()),
             Duration::from_millis(2),
-        )
-        .with_display_probe(NoDisplayProbe);
+        );
         runner.set_quality(quality);
 
         assert_eq!(
-            runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {}),
+            runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut || {}),
             Ok(SessionExit::Ended)
         );
         let arguments = fs::read_to_string(arguments_file).expect("captured arguments");
@@ -162,8 +143,7 @@ fn scrcpy_reports_start_then_stops_its_child_on_cancellation() {
             writable_sink(directory.path()),
             Duration::from_millis(2),
         )
-        .with_readiness_path(&readiness_file)
-        .with_display_probe(NoDisplayProbe),
+        .with_readiness_path(&readiness_file),
     ));
     let cancellation = CancellationToken::new();
     let worker_runner = Arc::clone(&runner);
@@ -174,7 +154,7 @@ fn scrcpy_reports_start_then_stops_its_child_on_cancellation() {
         worker_runner.lock().expect("runner lock").run(
             "192.0.2.20:38100",
             &worker_cancellation,
-            &mut |_| started_tx.send(()).expect("signal session start"),
+            &mut || started_tx.send(()).expect("signal session start"),
         )
     });
     if let Err(error) = started_rx.recv_timeout(Duration::from_secs(1)) {
@@ -203,8 +183,7 @@ fn scrcpy_reports_started_only_after_the_sink_is_capture_ready() {
             writable_sink(directory.path()),
             Duration::from_millis(2),
         )
-        .with_readiness_path(&readiness_file)
-        .with_display_probe(NoDisplayProbe),
+        .with_readiness_path(&readiness_file),
     ));
     let cancellation = CancellationToken::new();
     let worker_runner = Arc::clone(&runner);
@@ -215,7 +194,7 @@ fn scrcpy_reports_started_only_after_the_sink_is_capture_ready() {
         worker_runner.lock().expect("runner lock").run(
             "192.0.2.20:38100",
             &worker_cancellation,
-            &mut |_| started_tx.send(()).expect("signal session start"),
+            &mut || started_tx.send(()).expect("signal session start"),
         )
     });
     assert!(started_rx.recv_timeout(Duration::from_millis(20)).is_err());
@@ -242,11 +221,10 @@ fn scrcpy_rejects_an_unwritable_sink_before_spawning() {
         executable,
         directory.path(),
         Duration::from_millis(2),
-    )
-    .with_display_probe(NoDisplayProbe);
+    );
 
     assert_eq!(
-        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {}),
+        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut || {}),
         Err(SessionFailure::DependencyUnavailable)
     );
     assert!(!spawned.exists());
@@ -259,11 +237,10 @@ fn scrcpy_failures_are_fixed_categories() {
     let executable = fake_executable(directory.path(), "exit 1");
     let sink = writable_sink(directory.path());
     let mut runner =
-        ScrcpySessionRunner::new_with_test_sink(executable, &sink, Duration::from_millis(2))
-            .with_display_probe(NoDisplayProbe);
+        ScrcpySessionRunner::new_with_test_sink(executable, &sink, Duration::from_millis(2));
 
     assert_eq!(
-        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {},),
+        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut || {},),
         Err(SessionFailure::Disconnected)
     );
     let mut missing = ScrcpySessionRunner::new_with_test_sink(
@@ -271,9 +248,8 @@ fn scrcpy_failures_are_fixed_categories() {
         sink,
         Duration::from_millis(2),
     );
-    missing = missing.with_display_probe(NoDisplayProbe);
     assert_eq!(
-        missing.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {},),
+        missing.run("192.0.2.20:38100", &CancellationToken::new(), &mut || {},),
         Err(SessionFailure::DependencyUnavailable)
     );
 }
@@ -292,8 +268,7 @@ fn scrcpy_appends_validated_user_arguments_after_owned_arguments() {
             executable,
             writable_sink(directory.path()),
             Duration::from_millis(2),
-        )
-        .with_display_probe(NoDisplayProbe),
+        ),
     );
     runner.set_quality(VideoQuality::Low);
     runner.set_scrcpy_arguments(vec![
@@ -303,7 +278,7 @@ fn scrcpy_appends_validated_user_arguments_after_owned_arguments() {
     ]);
 
     assert_eq!(
-        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut |_| {}),
+        runner.run("192.0.2.20:38100", &CancellationToken::new(), &mut || {}),
         Ok(SessionExit::Ended)
     );
     let arguments = fs::read_to_string(arguments_file).expect("captured arguments");

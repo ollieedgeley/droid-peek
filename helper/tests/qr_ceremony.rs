@@ -267,7 +267,7 @@ fn runtime_backend_expires_the_artifact_and_emits_timeout() {
     assert!(!presentation.artifact.exists());
     assert_eq!(
         *sink.lines.lock().expect("memory sink lock"),
-        [Event::QrTimedOut {
+        [Event::PairingCancelled {
             helper_epoch: HELPER_EPOCH.to_owned(),
         }
         .to_line()]
@@ -452,7 +452,6 @@ fn replacement_uses_active_qr_material_and_suppresses_stale_worker_events() {
         [
             Event::Pairing {
                 helper_epoch: HELPER_EPOCH.to_owned(),
-                method: droid_peek_helper::protocol::PairingMethod::Qr,
             }
             .to_line(),
             Event::Paired {
@@ -556,7 +555,6 @@ fn manual_worker_starts_after_the_synchronous_pairing_event() {
         [
             Event::Pairing {
                 helper_epoch: HELPER_EPOCH.to_owned(),
-                method: droid_peek_helper::protocol::PairingMethod::ManualCode,
             }
             .to_line(),
             Event::Paired {
@@ -565,5 +563,167 @@ fn manual_worker_starts_after_the_synchronous_pairing_event() {
             }
             .to_line(),
         ]
+    );
+}
+
+struct ImmediateQrDiscovery;
+
+impl WirelessDiscovery for ImmediateQrDiscovery {
+    fn find_pairing_endpoint(
+        &mut self,
+        _requested_service: &str,
+        _cancellation: &CancellationToken,
+    ) -> Result<PairingEndpoint, DiscoveryFailure> {
+        PairingEndpoint::new("pairing.local", 37_000)
+            .map_err(|_| DiscoveryFailure::DependencyUnavailable)
+    }
+
+    fn find_connection_endpoint(
+        &mut self,
+        _pairing_endpoint: &PairingEndpoint,
+        _cancellation: &CancellationToken,
+    ) -> Result<PairingEndpoint, DiscoveryFailure> {
+        PairingEndpoint::new("connect.local", 38_000)
+            .map_err(|_| DiscoveryFailure::DependencyUnavailable)
+    }
+}
+
+struct DelayedConnectRunner {
+    delay: Duration,
+    requests: Arc<Mutex<Vec<CommandRequest>>>,
+}
+
+impl CommandRunner for DelayedConnectRunner {
+    fn run(
+        &mut self,
+        request: CommandRequest,
+        _cancellation: &CancellationToken,
+    ) -> Result<CommandOutput, CommandFailure> {
+        let delays_connect = request.arguments().first().map(String::as_str) == Some("connect");
+        self.requests.lock().expect("request lock").push(request);
+        if delays_connect {
+            thread::sleep(self.delay);
+        }
+        Ok(CommandOutput { succeeded: true })
+    }
+}
+
+fn wait_for_sink_event(sink: &MemorySink, predicate: impl Fn(&[String]) -> bool) {
+    for _ in 0..80 {
+        if predicate(&sink.lines.lock().expect("memory sink lock")) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn qr_lifetime_thread_does_not_report_timeout_after_connect_succeeds() {
+    let directory = tempfile::tempdir().expect("temporary runtime directory");
+    let sink = MemorySink::default();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = RuntimePairingBackend::with_dependencies(
+        directory.path(),
+        directory.path().join("state"),
+        Duration::from_millis(20),
+        HELPER_EPOCH,
+        sink.clone(),
+        RuntimeDependencies::new(
+            ImmediateQrDiscovery,
+            DelayedConnectRunner {
+                delay: Duration::from_millis(80),
+                requests: Arc::clone(&requests),
+            },
+            None,
+        ),
+    )
+    .expect("runtime pairing backend");
+
+    let presentation = backend.start_qr_pairing().expect("start QR pairing");
+    backend.response_emitted();
+
+    let timed_out = Event::QrTimedOut {
+        helper_epoch: HELPER_EPOCH.to_owned(),
+    }
+    .to_line();
+    let paired = Event::Paired {
+        helper_epoch: HELPER_EPOCH.to_owned(),
+        session_generation: "1".to_owned(),
+    }
+    .to_line();
+    let cancelled = Event::PairingCancelled {
+        helper_epoch: HELPER_EPOCH.to_owned(),
+    }
+    .to_line();
+
+    wait_for_sink_event(&sink, |lines| {
+        lines
+            .iter()
+            .any(|line| *line == paired || *line == cancelled)
+    });
+
+    let lines = sink.lines.lock().expect("memory sink lock").clone();
+    assert!(
+        !lines.iter().any(|line| *line == timed_out),
+        "lifetime thread must not emit QR timeout after adb connect succeeded: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| *line == paired || *line == cancelled),
+        "worker must emit the terminal pairing event: {lines:?}"
+    );
+    assert!(!presentation.artifact.exists());
+
+    let recorded: Vec<Vec<String>> = requests
+        .lock()
+        .expect("request lock")
+        .iter()
+        .map(|request| request.arguments().to_vec())
+        .collect();
+    assert!(
+        recorded
+            .iter()
+            .any(|arguments| arguments.as_slice() == ["connect", "connect.local:38000"]),
+        "expected a successful wireless connect: {recorded:?}"
+    );
+}
+
+#[test]
+fn submit_manual_code_drops_the_active_qr_artifact() {
+    let directory = tempfile::tempdir().expect("temporary runtime directory");
+    let started = Arc::new(AtomicBool::new(false));
+    let finished = Arc::new(AtomicBool::new(false));
+    let mut backend = RuntimePairingBackend::with_dependencies(
+        directory.path(),
+        directory.path().join("state"),
+        Duration::from_secs(5),
+        HELPER_EPOCH,
+        MemorySink::default(),
+        RuntimeDependencies::new(
+            CancellationObservedDiscovery {
+                started: Arc::clone(&started),
+                finished: Arc::clone(&finished),
+            },
+            SuccessfulRunner,
+            None,
+        ),
+    )
+    .expect("runtime pairing backend");
+
+    let presentation = backend.start_qr_pairing().expect("QR session");
+    backend.response_emitted();
+    while !started.load(Ordering::Acquire) {
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(presentation.artifact.exists());
+
+    backend
+        .submit_manual_code("482913")
+        .expect("submit manual code");
+
+    assert!(
+        !presentation.artifact.exists(),
+        "submit-manual-code must drop the QR ceremony before adb pair returns"
     );
 }

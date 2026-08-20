@@ -15,7 +15,7 @@ use droid_peek_helper::{
     process::{CancellationToken, CommandFailure, CommandOutput, CommandRequest, CommandRunner},
     protocol::{ActionFailureCode, Event, PairingBackend, PhoneTargetFailure},
     runtime::{ProtocolSink, RuntimeDependencies, RuntimePairingBackend},
-    session::{PhysicalDisplaySize, SessionExit, SessionFailure, SessionRunner},
+    session::{SessionExit, SessionFailure, SessionRunner},
     wireless::{DiscoveryFailure, PairingEndpoint, WirelessDiscovery},
 };
 
@@ -190,9 +190,9 @@ impl SessionRunner for BlockingSession {
         &mut self,
         _target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
-        on_started(None);
+        on_started();
         while !cancellation.is_cancelled() {
             thread::sleep(Duration::from_millis(2));
         }

@@ -9,6 +9,7 @@ use std::{
     path::Path,
     time::Duration,
 };
+use zeroize::Zeroize;
 
 use droid_peek_helper::{
     persistence::default_state_directory,
@@ -74,9 +75,11 @@ fn main() -> io::Result<()> {
     })?;
     let result = (|| {
         for line in stdin.lock().lines() {
-            for event in engine.handle_line(&line?) {
+            let mut line = line?;
+            for event in engine.handle_line(&line) {
                 sink.emit_event(&event)?;
             }
+            line.zeroize();
             engine.response_emitted();
         }
         Ok(())

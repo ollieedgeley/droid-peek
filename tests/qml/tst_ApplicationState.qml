@@ -10,8 +10,22 @@ TestCase {
     }
 
     function init() {
-        state.reset()
+        state.panelOpen = false
+        state.managementOpen = false
+        state.helperReady = false
+        state.hasTrustedDevice = false
         state.helperEpoch = "17"
+        state.sessionGeneration = ""
+        state.sessionStarted = false
+        state.connectionPresentationActive = false
+        state.captureAvailable = false
+        state.captureActive = false
+        state.firstValidFrameReceived = false
+        state.displayWidth = 0
+        state.displayHeight = 0
+        state.previewInputEnabled = false
+        state.helperActivity = ""
+        state.helperReason = ""
     }
 
     function makeInteractive() {
@@ -112,6 +126,13 @@ TestCase {
         compare(state.applicationState, "interactive")
 
         state.sessionGeneration = "2"
+        state.sessionStarted = false
+        state.captureAvailable = false
+        state.captureActive = false
+        state.firstValidFrameReceived = false
+        state.displayWidth = 0
+        state.displayHeight = 0
+        state.previewInputEnabled = false
 
         compare(state.applicationState, "recovering")
         compare(state.sessionStarted, false)
@@ -127,6 +148,18 @@ TestCase {
         makeInteractive()
 
         state.helperEpoch = "18"
+        state.helperReady = false
+        state.sessionGeneration = "0"
+        state.sessionStarted = false
+        state.connectionPresentationActive = false
+        state.helperActivity = ""
+        state.helperReason = ""
+        state.captureAvailable = false
+        state.captureActive = false
+        state.firstValidFrameReceived = false
+        state.displayWidth = 0
+        state.displayHeight = 0
+        state.previewInputEnabled = false
 
         compare(state.hasTrustedDevice, true)
         compare(state.applicationState, "recovering")

@@ -58,7 +58,7 @@ fn preferences_round_trip_in_private_schema_one_state_without_passthrough() {
         0o600
     );
     assert_eq!(
-        fs::metadata(store.directory())
+        fs::metadata(directory.path().join("droid-peek"))
             .expect("preference directory metadata")
             .permissions()
             .mode()
@@ -71,7 +71,7 @@ fn preferences_round_trip_in_private_schema_one_state_without_passthrough() {
 fn non_schema_one_or_noncanonical_preferences_are_removed_without_migration() {
     let directory = tempdir().expect("temporary state directory");
     let store = FilePreferenceStore::new(directory.path().join("droid-peek"));
-    fs::create_dir_all(store.directory()).expect("create state directory");
+    fs::create_dir_all(directory.path().join("droid-peek")).expect("create state directory");
 
     for contents in [
         r#"{"version":1,"keepConnected":false,"androidModeShortcuts":true,"previewScale":151,"videoQuality":"high","quickActions":["back","home","recent-apps"]}"#,

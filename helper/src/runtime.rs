@@ -134,14 +134,14 @@ type RuntimeCeremony = QrCeremony<SystemEntropy, SystemClock, RuntimeQrRenderer>
 type RuntimeFlow = PairingFlow<Box<dyn WirelessDiscovery + Send>, Box<dyn CommandRunner + Send>>;
 
 struct PendingPairing {
-    generation: u64,
+    pairing_generation: u64,
     method: PairingMethod,
     requested_service: Option<Zeroizing<String>>,
     secret: Zeroizing<String>,
 }
 
 struct PendingReconnect {
-    generation: u64,
+    pairing_generation: u64,
     device: TrustedDevice,
 }
 
@@ -242,25 +242,17 @@ impl SessionControl {
                             });
                         }
                         loop {
-                            let result = session.run(
-                                &connected_target,
-                                &cancellation,
-                                &mut |physical_display| {
-                                    if !cancellation.is_cancelled()
-                                        && generation.load(Ordering::Acquire) == current_generation
-                                    {
-                                        let _ = sink.emit_event(&Event::SessionStarted {
-                                            helper_epoch: helper_epoch.clone(),
-                                            session_generation: session_generation.clone(),
-                                            physical_width_mm: physical_display
-                                                .map(|size| size.width_mm()),
-                                            physical_height_mm: physical_display
-                                                .map(|size| size.height_mm()),
-                                            screen_off_enabled,
-                                        });
-                                    }
-                                },
-                            );
+                            let result = session.run(&connected_target, &cancellation, &mut || {
+                                if !cancellation.is_cancelled()
+                                    && generation.load(Ordering::Acquire) == current_generation
+                                {
+                                    let _ = sink.emit_event(&Event::SessionStarted {
+                                        helper_epoch: helper_epoch.clone(),
+                                        session_generation: session_generation.clone(),
+                                        screen_off_enabled,
+                                    });
+                                }
+                            });
                             if !retried
                                 && matches!(
                                     &result,
@@ -454,7 +446,7 @@ pub struct RuntimePairingBackend<S> {
     lifetime: Duration,
     sink: S,
     helper_epoch: String,
-    generation: Arc<AtomicU64>,
+    pairing_generation: Arc<AtomicU64>,
     cancellation: CancellationToken,
     pending: Option<PendingPairing>,
     store: FileTrustedDeviceStore,
@@ -543,7 +535,7 @@ where
             lifetime,
             sink,
             helper_epoch,
-            generation: Arc::new(AtomicU64::new(0)),
+            pairing_generation: Arc::new(AtomicU64::new(0)),
             cancellation: CancellationToken::new(),
             pending: None,
             store,
@@ -627,13 +619,13 @@ where
         let Some(pending) = self.pending.take() else {
             return;
         };
-        let pending_generation = pending.generation;
-        let pending_method = pending.method;
-        let public_generation = Arc::clone(&self.session.generation);
+        let pending_pairing_generation = pending.pairing_generation;
+
+        let session_generation = Arc::clone(&self.session.generation);
         let helper_epoch = self.helper_epoch.clone();
         let flow = Arc::clone(&self.flow);
         let ceremony = Arc::clone(&self.ceremony);
-        let generation = Arc::clone(&self.generation);
+        let pairing_generation = Arc::clone(&self.pairing_generation);
         let cancellation = self.cancellation.clone();
         let sink = self.sink.clone();
         let store = self.store.clone();
@@ -651,11 +643,12 @@ where
             match flow.lock() {
                 Ok(mut flow) => {
                     let mut capture = |event| match event {
-                        PairingEvent::Pairing { method } => {
-                            if generation.load(Ordering::Acquire) == pending_generation {
+                        PairingEvent::Pairing { .. } => {
+                            if pairing_generation.load(Ordering::Acquire)
+                                == pending_pairing_generation
+                            {
                                 let _ = progress_sink.emit_event(&Event::Pairing {
                                     helper_epoch: progress_epoch.clone(),
-                                    method,
                                 });
                             }
                         }
@@ -686,10 +679,10 @@ where
                 }
             }
 
-            if generation
+            if pairing_generation
                 .compare_exchange(
-                    pending_generation,
-                    pending_generation + 1,
+                    pending_pairing_generation,
+                    pending_pairing_generation + 1,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
@@ -715,9 +708,9 @@ where
                 let paired = matches!(terminal_event, Some(PairingEvent::Paired));
                 let starts_session = paired && connected_target.is_some();
                 let event_generation = if paired {
-                    public_generation.fetch_add(1, Ordering::AcqRel) + 1
+                    session_generation.fetch_add(1, Ordering::AcqRel) + 1
                 } else {
-                    public_generation.load(Ordering::Acquire)
+                    session_generation.load(Ordering::Acquire)
                 };
                 if let Some(event) = terminal_event {
                     let _ = sink.emit_event(&pairing_event(&helper_epoch, event_generation, event));
@@ -725,38 +718,31 @@ where
                 if starts_session && let Some(connected_target) = connected_target {
                     start_session(connected_target, event_generation);
                 }
+            } else if let Some(target) = connected_target {
+                let disconnect = CancellationToken::new()
+                    .child_with_timeout(Duration::from_millis(MAX_LOCAL_COMMAND_MS));
+                if let Ok(mut flow) = flow.lock() {
+                    let _ = flow.runner_mut().run(
+                        CommandRequest::new("adb", vec!["disconnect".to_owned(), target]),
+                        &disconnect,
+                    );
+                }
             }
         });
 
         let ceremony = Arc::clone(&self.ceremony);
-        let generation = Arc::clone(&self.generation);
-        let sink = self.sink.clone();
-        let helper_epoch = self.helper_epoch.clone();
+        let pairing_generation = Arc::clone(&self.pairing_generation);
         let lifetime = self.lifetime;
         thread::spawn(move || {
             thread::sleep(lifetime);
-            if generation
-                .compare_exchange(
-                    pending_generation,
-                    pending_generation + 1,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
-            {
-                cancellation.cancel();
-                if let Ok(mut ceremony) = ceremony.lock() {
+            if pairing_generation.load(Ordering::Acquire) != pending_pairing_generation {
+                return;
+            }
+            cancellation.cancel();
+            if let Ok(mut ceremony) = ceremony.lock() {
+                if pairing_generation.load(Ordering::Acquire) == pending_pairing_generation {
                     ceremony.cancel();
                 }
-                let event = if pending_method == PairingMethod::Qr {
-                    Event::QrTimedOut { helper_epoch }
-                } else {
-                    Event::Failure {
-                        helper_epoch,
-                        reason: FailureReason::NetworkUnavailable,
-                    }
-                };
-                let _ = sink.emit_event(&event);
             }
         });
     }
@@ -776,7 +762,7 @@ where
             return;
         };
         let flow = Arc::clone(&self.flow);
-        let generation = Arc::clone(&self.generation);
+        let pairing_generation = Arc::clone(&self.pairing_generation);
         let session_generation = Arc::clone(&self.session.generation);
         let expected_session_generation = self.session.generation();
         let cancellation = self.cancellation.clone();
@@ -802,10 +788,10 @@ where
                     });
                 }
             }
-            if generation
+            if pairing_generation
                 .compare_exchange(
-                    pending.generation,
-                    pending.generation + 1,
+                    pending.pairing_generation,
+                    pending.pairing_generation + 1,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
@@ -861,7 +847,7 @@ where
 impl<S> Drop for RuntimePairingBackend<S> {
     fn drop(&mut self) {
         self.cancellation.cancel();
-        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.pairing_generation.fetch_add(1, Ordering::AcqRel);
         if let Ok(flow) = self.flow.lock() {
             drop(flow);
         }
@@ -874,9 +860,8 @@ impl<S> Drop for RuntimePairingBackend<S> {
 
 fn pairing_event(helper_epoch: &str, session_generation: u64, event: PairingEvent) -> Event {
     match event {
-        PairingEvent::Pairing { method } => Event::Pairing {
+        PairingEvent::Pairing { .. } => Event::Pairing {
             helper_epoch: helper_epoch.to_owned(),
-            method,
         },
         PairingEvent::PairingCancelled => Event::PairingCancelled {
             helper_epoch: helper_epoch.to_owned(),
@@ -908,7 +893,7 @@ where
         self.cancellation.cancel();
         self.pending = None;
         self.pending_reconnect = None;
-        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let pairing_generation = self.pairing_generation.fetch_add(1, Ordering::AcqRel) + 1;
         self.cancellation = CancellationToken::new();
 
         let (presentation, requested_service, secret) = {
@@ -931,7 +916,7 @@ where
             (presentation, requested_service, secret)
         };
         self.pending = Some(PendingPairing {
-            generation,
+            pairing_generation,
             method: PairingMethod::Qr,
             requested_service: Some(requested_service),
             secret,
@@ -947,7 +932,7 @@ where
         self.pending = None;
         self.pending_reconnect = None;
         self.cancellation.cancel();
-        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.pairing_generation.fetch_add(1, Ordering::AcqRel);
         // Pairing workers hold the flow lock until every child process has
         // observed cancellation and exited. Crossing this barrier makes the
         // synchronous cancellation response a reliable cleanup acknowledgement.
@@ -964,14 +949,17 @@ where
         self.cancellation.cancel();
         self.pending = None;
         self.pending_reconnect = None;
-        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let pairing_generation = self.pairing_generation.fetch_add(1, Ordering::AcqRel) + 1;
         self.cancellation = CancellationToken::new();
         self.pending = Some(PendingPairing {
-            generation,
+            pairing_generation,
             method: PairingMethod::ManualCode,
             requested_service: None,
             secret: Zeroizing::new(code.to_owned()),
         });
+        if let Ok(mut ceremony) = self.ceremony.lock() {
+            ceremony.cancel();
+        }
         Ok(())
     }
 
@@ -1006,9 +994,12 @@ where
         self.session.invalidate_and_wait();
         self.cancellation.cancel();
         self.pending = None;
-        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let pairing_generation = self.pairing_generation.fetch_add(1, Ordering::AcqRel) + 1;
         self.cancellation = CancellationToken::new();
-        self.pending_reconnect = Some(PendingReconnect { generation, device });
+        self.pending_reconnect = Some(PendingReconnect {
+            pairing_generation,
+            device,
+        });
         Ok(())
     }
 
@@ -1016,17 +1007,10 @@ where
         self.cancellation.cancel();
         self.pending_reconnect = None;
         self.pending = None;
-        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.pairing_generation.fetch_add(1, Ordering::AcqRel);
         if let Ok(_flow) = self.flow.lock() {}
 
-        let had_active_session = self.session.target().ok().flatten().is_some();
-        let generation = self.session.invalidate_and_wait();
-        if had_active_session {
-            let _ = self.sink.emit_event(&Event::SessionEnded {
-                helper_epoch: self.helper_epoch.clone(),
-                session_generation: generation.to_string(),
-            });
-        }
+        self.session.invalidate_and_wait();
     }
 
     fn start_over(&mut self) -> Result<(), FailureReason> {
@@ -1050,7 +1034,7 @@ where
         self.session.invalidate_and_wait();
         self.pending = None;
         self.pending_reconnect = None;
-        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.pairing_generation.fetch_add(1, Ordering::AcqRel);
 
         if let Some(target) = active_target {
             let cancellation = CancellationToken::new()

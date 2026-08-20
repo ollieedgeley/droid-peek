@@ -1,7 +1,41 @@
-use std::{fs, os::unix::fs::PermissionsExt};
+use std::{env, ffi::OsStr, fs, os::unix::fs::PermissionsExt, path::PathBuf, sync::Mutex};
 
-use droid_peek_helper::persistence::{FileTrustedDeviceStore, TrustedDevice};
+use droid_peek_helper::persistence::{
+    FileTrustedDeviceStore, TrustedDevice, default_state_directory,
+};
 use tempfile::tempdir;
+
+static STATE_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn set_optional_env(key: &str, value: Option<&OsStr>) {
+    // SAFETY: callers hold STATE_ENV_LOCK for the whole mutation window
+    // and restore the previous values before releasing it.
+    unsafe {
+        match value {
+            Some(value) => env::set_var(key, value),
+            None => env::remove_var(key),
+        }
+    }
+}
+
+fn with_state_env<T>(
+    xdg_state_home: Option<&str>,
+    home: Option<&str>,
+    body: impl FnOnce() -> T,
+) -> T {
+    let _lock = STATE_ENV_LOCK.lock().expect("state env lock");
+    let previous_state_home = env::var_os("XDG_STATE_HOME");
+    let previous_home = env::var_os("HOME");
+    set_optional_env("XDG_STATE_HOME", xdg_state_home.map(OsStr::new));
+    set_optional_env("HOME", home.map(OsStr::new));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+    set_optional_env("XDG_STATE_HOME", previous_state_home.as_deref());
+    set_optional_env("HOME", previous_home.as_deref());
+    match result {
+        Ok(value) => value,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
 
 #[test]
 fn saves_only_the_service_identity_in_private_state() {
@@ -52,7 +86,7 @@ fn missing_or_malformed_state_is_safely_unpaired() {
     let store = FileTrustedDeviceStore::new(directory.path().join("droid-peek"));
     assert!(store.load().expect("load missing state").is_none());
 
-    fs::create_dir_all(store.directory()).expect("create state directory");
+    fs::create_dir_all(directory.path().join("droid-peek")).expect("create state directory");
     fs::write(
         store.path(),
         b"{\"version\":1,\"serviceName\":\"10.0.0.2:37123\"}\n",
@@ -86,4 +120,25 @@ fn device_identity_rejects_raw_or_unsafe_values() {
     ] {
         assert!(TrustedDevice::new(value).is_err(), "accepted {value:?}");
     }
+}
+
+#[test]
+fn empty_xdg_state_home_falls_back_to_home_local_state() {
+    let directory = with_state_env(
+        Some(""),
+        Some("/tmp/omarchy-ar-125-home"),
+        default_state_directory,
+    );
+    assert_eq!(
+        directory,
+        Some(PathBuf::from(
+            "/tmp/omarchy-ar-125-home/.local/state/droid-peek"
+        ))
+    );
+}
+
+#[test]
+fn empty_xdg_state_home_and_home_yield_no_state_directory() {
+    let directory = with_state_env(Some(""), Some(""), default_state_directory);
+    assert_eq!(directory, None);
 }

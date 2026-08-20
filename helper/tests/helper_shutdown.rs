@@ -4,6 +4,7 @@ use std::{
     fs,
     io::Write,
     os::unix::fs::PermissionsExt,
+    path::Path,
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -94,19 +95,32 @@ fn stdin_eof_stops_pairing_child_and_removes_qr_artifact() {
     );
 }
 
-#[test]
-fn guardian_parent_process() {
-    let Some(directory) = std::env::var_os("DROID_PEEK_GUARDIAN_TEST_DIR") else {
-        return;
-    };
-    let directory = std::path::PathBuf::from(directory);
+fn guardian_parent_process(directory: &Path) {
     let executables = directory.join("bin");
+    let pid_path = directory.join("scrcpy.pid");
     let inherited_path = std::env::var("PATH").expect("PATH");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_droid-peek-helper"))
+    let helper = env!("CARGO_BIN_EXE_droid-peek-helper");
+    let status = Command::new("sh")
         .args([
-            "--scrcpy-guardian",
-            &std::process::id().to_string(),
-            "--test-marker",
+            "-c",
+            concat!(
+                "helper=$1; pid_path=$2; ",
+                "\"$helper\" --scrcpy-guardian $$ --test-marker & ",
+                "guardian=$!; ",
+                "i=0; ",
+                "while [ ! -f \"$pid_path\" ] && [ \"$i\" -lt 200 ]; do ",
+                "if ! kill -0 \"$guardian\" 2>/dev/null; then ",
+                "echo scrcpy guardian exited before launching scrcpy >&2; ",
+                "exit 1; ",
+                "fi; ",
+                "i=$((i + 1)); ",
+                "sleep 0.01; ",
+                "done; ",
+                "test -f \"$pid_path\"",
+            ),
+            "guardian-parent",
+            helper,
+            pid_path.to_str().expect("utf-8 pid path"),
         ])
         .env(
             "PATH",
@@ -115,18 +129,9 @@ fn guardian_parent_process() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
-        .expect("start scrcpy guardian");
-    let pid_path = directory.join("scrcpy.pid");
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !pid_path.exists() && Instant::now() < deadline {
-        if child.try_wait().expect("query scrcpy guardian").is_some() {
-            panic!("scrcpy guardian exited before launching scrcpy");
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert!(pid_path.exists(), "fake scrcpy did not start");
-    std::mem::forget(child);
+        .status()
+        .expect("run guardian parent process");
+    assert!(status.success(), "guardian parent process failed");
 }
 
 #[test]
@@ -150,14 +155,7 @@ fn parent_death_guardian_stops_scrcpy_after_abrupt_helper_exit() {
     permissions.set_mode(0o700);
     fs::set_permissions(&scrcpy, permissions).expect("make fake scrcpy executable private");
 
-    let status = Command::new(std::env::current_exe().expect("current test executable"))
-        .args(["--exact", "guardian_parent_process"])
-        .env("DROID_PEEK_GUARDIAN_TEST_DIR", directory.path())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("run guardian parent process");
-    assert!(status.success(), "guardian parent process failed");
+    guardian_parent_process(directory.path());
 
     let scrcpy_pid = fs::read_to_string(&pid_path)
         .expect("fake scrcpy pid")
@@ -176,4 +174,20 @@ fn parent_death_guardian_stops_scrcpy_after_abrupt_helper_exit() {
         );
         panic!("scrcpy survived abrupt helper-parent exit");
     }
+}
+
+#[test]
+fn guardian_parent_process_is_not_a_registered_test() {
+    let output = Command::new(std::env::current_exe().expect("current test executable"))
+        .args(["--list"])
+        .output()
+        .expect("list tests");
+    assert!(output.status.success(), "test harness --list failed");
+    let listed = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !listed
+            .lines()
+            .any(|line| line.trim() == "guardian_parent_process: test"),
+        "guardian_parent_process must not be registered as a #[test]"
+    );
 }

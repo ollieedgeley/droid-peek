@@ -49,11 +49,6 @@ Item {
                                              : (capturePipeline !== null
                                                 ? Math.round(capturePipeline.sourceRect.height)
                                                 : 0)
-    readonly property bool interactionReady: captureAvailable && active
-                                                && firstValidFrameReceived
-                                                && displayWidth > 0
-                                                && displayHeight > 0
-                                                && previewInputEnabled
 
     signal tapRequested(real x, real y, int displayWidth, int displayHeight,
                         string helperEpoch, string sessionGeneration)
@@ -168,11 +163,13 @@ Item {
                 || !validIdentity(sessionGeneration))
             return false;
         var compositorModifiers = Qt.ControlModifier | Qt.AltModifier
-                | Qt.MetaModifier | Qt.ShiftModifier;
+                | Qt.MetaModifier;
         if (modifiers & compositorModifiers)
             return false;
         var androidKey = androidKeyForQtKey(keyCode);
         if (androidKey !== "") {
+            if (modifiers & Qt.ShiftModifier)
+                return false;
             keyRequested(androidKey, helperEpoch, sessionGeneration);
             return true;
         }

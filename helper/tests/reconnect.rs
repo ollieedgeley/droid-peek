@@ -59,8 +59,11 @@ impl WirelessDiscovery for FakeDiscovery {
     fn find_trusted_connection(
         &mut self,
         device: &TrustedDevice,
-        _cancellation: &CancellationToken,
+        cancellation: &CancellationToken,
     ) -> Result<PairingEndpoint, DiscoveryFailure> {
+        if cancellation.is_cancelled() {
+            return Err(DiscoveryFailure::Cancelled);
+        }
         self.requested_devices
             .push(device.service_name().to_owned());
         self.trusted_result.clone()
@@ -69,8 +72,6 @@ impl WirelessDiscovery for FakeDiscovery {
 
 struct BlockingReconnectDiscovery {
     started: Arc<AtomicBool>,
-    release: Arc<AtomicBool>,
-    endpoint: PairingEndpoint,
 }
 
 impl WirelessDiscovery for BlockingReconnectDiscovery {
@@ -93,13 +94,15 @@ impl WirelessDiscovery for BlockingReconnectDiscovery {
     fn find_trusted_connection(
         &mut self,
         _device: &TrustedDevice,
-        _cancellation: &CancellationToken,
+        cancellation: &CancellationToken,
     ) -> Result<PairingEndpoint, DiscoveryFailure> {
         self.started.store(true, Ordering::Release);
-        while !self.release.load(Ordering::Acquire) {
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(DiscoveryFailure::Cancelled);
+            }
             thread::sleep(Duration::from_millis(2));
         }
-        Ok(self.endpoint.clone())
     }
 }
 
@@ -112,8 +115,11 @@ impl CommandRunner for FakeRunner {
     fn run(
         &mut self,
         request: CommandRequest,
-        _cancellation: &CancellationToken,
+        cancellation: &CancellationToken,
     ) -> Result<CommandOutput, CommandFailure> {
+        if cancellation.is_cancelled() {
+            return Err(CommandFailure::Cancelled);
+        }
         self.requests.push(request);
         self.outputs.pop_front().expect("fake command output")
     }
@@ -129,8 +135,11 @@ impl CommandRunner for SharedRunner {
     fn run(
         &mut self,
         request: CommandRequest,
-        _cancellation: &CancellationToken,
+        cancellation: &CancellationToken,
     ) -> Result<CommandOutput, CommandFailure> {
+        if cancellation.is_cancelled() {
+            return Err(CommandFailure::Cancelled);
+        }
         self.requests.lock().expect("request lock").push(request);
         self.outputs
             .lock()
@@ -150,8 +159,11 @@ impl CommandRunner for PhoneTargetRunner {
     fn run(
         &mut self,
         request: CommandRequest,
-        _cancellation: &CancellationToken,
+        cancellation: &CancellationToken,
     ) -> Result<CommandOutput, CommandFailure> {
+        if cancellation.is_cancelled() {
+            return Err(CommandFailure::Cancelled);
+        }
         self.requests.lock().expect("request lock").push(request);
         Ok(CommandOutput { succeeded: true })
     }
@@ -159,8 +171,11 @@ impl CommandRunner for PhoneTargetRunner {
     fn run_phone_target(
         &mut self,
         request: CommandRequest,
-        _cancellation: &CancellationToken,
+        cancellation: &CancellationToken,
     ) -> Result<CommandOutput, ActionExecutionFailure> {
+        if cancellation.is_cancelled() {
+            return Err(ActionExecutionFailure::Cancelled);
+        }
         self.requests.lock().expect("request lock").push(request);
         self.result
     }
@@ -226,6 +241,110 @@ fn stale_remembered_service_reports_a_fixed_disconnected_failure() {
     assert_eq!(events.len(), 1);
     let (_, runner) = flow.into_parts();
     assert!(runner.requests.is_empty());
+}
+
+#[test]
+fn cancelled_command_runner_does_not_report_queued_success() {
+    let mut runner = FakeRunner {
+        outputs: VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+        requests: Vec::new(),
+    };
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    assert_eq!(
+        runner.run(
+            CommandRequest::new("adb", vec!["connect".to_owned()]),
+            &cancellation,
+        ),
+        Err(CommandFailure::Cancelled)
+    );
+    assert!(runner.requests.is_empty());
+}
+
+#[test]
+fn cancelled_shared_runner_does_not_report_queued_success() {
+    let mut runner = SharedRunner {
+        outputs: Arc::new(Mutex::new(VecDeque::from([Ok(CommandOutput {
+            succeeded: true,
+        })]))),
+        requests: Arc::new(Mutex::new(Vec::new())),
+    };
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    assert_eq!(
+        runner.run(
+            CommandRequest::new("adb", vec!["connect".to_owned()]),
+            &cancellation,
+        ),
+        Err(CommandFailure::Cancelled)
+    );
+    assert!(runner.requests.lock().expect("request lock").is_empty());
+}
+
+#[test]
+fn cancelled_phone_target_runner_does_not_report_success() {
+    let mut runner = PhoneTargetRunner {
+        result: Ok(CommandOutput { succeeded: true }),
+        requests: Arc::new(Mutex::new(Vec::new())),
+    };
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    assert_eq!(
+        runner.run(
+            CommandRequest::new("adb", vec!["connect".to_owned()]),
+            &cancellation,
+        ),
+        Err(CommandFailure::Cancelled)
+    );
+    assert_eq!(
+        runner.run_phone_target(
+            CommandRequest::new("adb", vec!["shell".to_owned()]),
+            &cancellation,
+        ),
+        Err(ActionExecutionFailure::Cancelled)
+    );
+    assert!(runner.requests.lock().expect("request lock").is_empty());
+}
+
+#[test]
+fn cancelled_blocking_reconnect_discovery_returns_without_release() {
+    let mut discovery = BlockingReconnectDiscovery {
+        started: Arc::new(AtomicBool::new(false)),
+    };
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let device = TrustedDevice::new("adb-14141FD6F00081-TnSdi9").expect("trusted device");
+
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = discovery.find_trusted_connection(&device, &cancellation);
+        let _ = tx.send(result);
+    });
+    let result = rx
+        .recv_timeout(Duration::from_millis(200))
+        .expect("cancelled discovery should not block");
+    assert!(matches!(result, Err(DiscoveryFailure::Cancelled)));
+}
+
+#[test]
+fn cancelled_trusted_connection_does_not_return_a_queued_endpoint() {
+    let endpoint = PairingEndpoint::new("192.168.50.4", 37_123).expect("connection endpoint");
+    let mut discovery = FakeDiscovery {
+        trusted_result: Ok(endpoint),
+        requested_devices: Vec::new(),
+    };
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let device = TrustedDevice::new("adb-14141FD6F00081-TnSdi9").expect("trusted device");
+
+    assert!(matches!(
+        discovery.find_trusted_connection(&device, &cancellation),
+        Err(DiscoveryFailure::Cancelled)
+    ));
+    assert!(discovery.requested_devices.is_empty());
 }
 
 #[derive(Clone, Default)]
@@ -332,14 +451,14 @@ impl SessionRunner for BlockingSession {
         &mut self,
         target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
         self.qualities
             .lock()
             .expect("session qualities lock")
             .push(self.quality);
         *self.target.lock().expect("session target lock") = Some(target.to_owned());
-        on_started(None);
+        on_started();
         while !cancellation.is_cancelled() {
             thread::sleep(Duration::from_millis(2));
         }
@@ -362,13 +481,13 @@ impl SessionRunner for RecordingConfigSession {
         &mut self,
         _target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
         self.runs
             .lock()
             .expect("session argument runs lock")
             .push(self.current_arguments.clone());
-        on_started(None);
+        on_started();
         while !cancellation.is_cancelled() {
             thread::sleep(Duration::from_millis(2));
         }
@@ -391,10 +510,10 @@ impl SessionRunner for BlockingQualitySession {
         &mut self,
         _target: &str,
         _cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
         self.run_called.store(true, Ordering::Release);
-        on_started(None);
+        on_started();
         Ok(SessionExit::Ended)
     }
 
@@ -416,10 +535,10 @@ impl SessionRunner for EndingSession {
         &mut self,
         _target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
         *self.cancellation.lock().expect("session cancellation lock") = Some(cancellation.clone());
-        on_started(None);
+        on_started();
         self.release
             .recv_timeout(Duration::from_secs(1))
             .expect("release ending session");
@@ -438,10 +557,10 @@ impl SessionRunner for ControlledSession {
         &mut self,
         _target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
         self.runs.fetch_add(1, Ordering::AcqRel);
-        on_started(None);
+        on_started();
         loop {
             match self.releases.recv_timeout(Duration::from_millis(10)) {
                 Ok(()) => {
@@ -788,6 +907,47 @@ fn every_input_backend_failure_reaps_the_session_before_emitting_the_new_generat
 }
 
 #[test]
+fn stop_session_command_emits_only_session_stopped() {
+    let stopped = Arc::new(AtomicBool::new(false));
+    let live = live_runtime(
+        Box::new(BlockingSession {
+            target: Arc::new(Mutex::new(None)),
+            stopped: Arc::clone(&stopped),
+            quality: VideoQuality::default(),
+            qualities: Arc::new(Mutex::new(Vec::new())),
+        }),
+        VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+    );
+    let mut engine = ProtocolEngine::new(live.backend, HELPER_EPOCH);
+
+    let events = engine.handle_line(
+        r#"{"version":11,"type":"stop-session","helperEpoch":"73001","sessionGeneration":"1"}"#,
+    );
+
+    assert_eq!(
+        events
+            .into_iter()
+            .map(|event| event.to_line())
+            .collect::<Vec<_>>(),
+        [
+            r#"{"version":11,"type":"session-stopped","helperEpoch":"73001","sessionGeneration":"2"}"#
+        ]
+    );
+    let backend = engine.into_backend();
+    assert_eq!(backend.session_generation(), 2);
+    assert!(stopped.load(Ordering::Acquire));
+    assert_eq!(live.sink.event_count("session-ended", "2"), 0);
+    assert!(
+        live.sink
+            .session_event_identities()
+            .into_iter()
+            .all(|(event_type, _)| event_type != "session-ended"),
+        "user stop must not emit session-ended: {:?}",
+        live.sink.session_event_identities()
+    );
+}
+
+#[test]
 fn phone_target_transport_failures_invalidate_and_wait_for_the_active_session() {
     for (failure, reason) in [
         (
@@ -1052,7 +1212,6 @@ fn claimed_retry_is_announced_before_stop_emits_the_next_terminal_generation() {
         stop.join().expect("stop thread");
     });
 
-    live.sink.events.wait_for_event("session-ended", Some("3"));
     let generation_transitions = live
         .sink
         .events
@@ -1066,9 +1225,10 @@ fn claimed_retry_is_announced_before_stop_emits_the_next_terminal_generation() {
         [
             ("session-starting".to_owned(), "1".to_owned()),
             ("session-starting".to_owned(), "2".to_owned()),
-            ("session-ended".to_owned(), "3".to_owned()),
         ]
     );
+    assert_eq!(live.sink.events.event_count("session-ended", "3"), 0);
+    assert_eq!(live.backend.session_generation(), 3);
 }
 
 #[test]
@@ -1408,9 +1568,9 @@ fn runtime_starts_scrcpy_after_reconnect_and_stops_it_before_confirmation() {
     drop(requests_before_stop);
 
     backend.stop_session();
-    sink.wait_for_event("session-ended", Some("2"));
 
     assert!(stopped.load(Ordering::Acquire));
+    assert_eq!(sink.event_count("session-ended", "2"), 0);
 }
 
 #[test]
@@ -1421,7 +1581,6 @@ fn stop_session_waits_out_and_invalidates_an_in_flight_reconnect() {
         .save(&TrustedDevice::new("adb-14141FD6F00081-TnSdi9").expect("trusted device"))
         .expect("seed trusted-device state");
     let started = Arc::new(AtomicBool::new(false));
-    let release = Arc::new(AtomicBool::new(false));
     let target = Arc::new(Mutex::new(None));
     let stopped = Arc::new(AtomicBool::new(false));
     let sink = MemorySink::default();
@@ -1434,9 +1593,6 @@ fn stop_session_waits_out_and_invalidates_an_in_flight_reconnect() {
         RuntimeDependencies::new(
             BlockingReconnectDiscovery {
                 started: Arc::clone(&started),
-                release: Arc::clone(&release),
-                endpoint: PairingEndpoint::new("192.168.50.4", 37_123)
-                    .expect("connection endpoint"),
             },
             FakeRunner {
                 outputs: VecDeque::from([Ok(CommandOutput { succeeded: true })]),
@@ -1465,14 +1621,7 @@ fn stop_session_waits_out_and_invalidates_an_in_flight_reconnect() {
         thread::sleep(Duration::from_millis(2));
     }
 
-    let release_for_thread = Arc::clone(&release);
-    let releaser = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(50));
-        release_for_thread.store(true, Ordering::Release);
-    });
     backend.stop_session();
-    releaser.join().expect("release reconnect discovery");
-    thread::sleep(Duration::from_millis(25));
 
     assert_eq!(sink.event_count("connected", "1"), 0);
     assert_eq!(sink.event_count("session-started", "1"), 0);

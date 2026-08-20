@@ -54,12 +54,10 @@ done
 
 lua_action=""
 loader_action=""
-avahi_action=""
 
 inspect_avahi() {
   require_cmd systemctl
   if systemctl is-active --quiet avahi-daemon.service; then
-    avahi_action="already"
     return
   fi
   fail "avahi-daemon.service is not active. Start Avahi before running setup. Droid Peek does not enable system services. No changes were made."
@@ -167,6 +165,7 @@ print_enable_command() {
 
 droid_peek_set_stage parse
 droid_peek_refresh_paths
+asset_dir="${DROID_PEEK_HELPER_ASSET_DIR:-}"
 require_cmd uname
 require_cmd jq
 require_cmd sha256sum
@@ -182,7 +181,16 @@ check_dkms_v4l2loopback
 inspect_helper
 inspect_avahi
 inspect_v4l2
-inspect_user_config
+if [[ -e "$user_module" ]]; then
+  lua_action="preserve"
+else
+  lua_action="copy"
+fi
+if has_loader; then
+  loader_action="present"
+else
+  loader_action="append"
+fi
 
 droid_peek_set_stage plan
 print_plan

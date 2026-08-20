@@ -32,11 +32,17 @@ Item {
     property int presentationSerial: 0
     property bool retainedImageReleasePending: false
     property int retainedImageReleaseSerial: -1
+    property bool firstFrameRecoveryArmed: false
     property bool liveFormatRefreshArmed: false
     property bool liveFormatRefreshScheduled: false
     property int scheduledLiveFormatRefreshEpoch: -1
     property string scheduledLiveFormatRefreshHelperEpoch: ""
     property string scheduledLiveFormatRefreshSessionGeneration: ""
+    property int capturePipelineReleaseDelayMs: 100
+    property bool capturePipelineCreationPending: false
+    property int pendingCapturePipelineEpoch: -1
+    property string pendingCapturePipelineHelperEpoch: ""
+    property string pendingCapturePipelineSessionGeneration: ""
     readonly property bool retainedImageAvailable: retainedImageResult !== null
     readonly property var capturePipeline: captureLoader.item
     readonly property int deviceIndex: findDeviceIndex(videoInputs, deviceId, deviceDescription)
@@ -284,11 +290,12 @@ Item {
         clearScheduledLiveFormatRefresh();
         if (!refreshIsCurrent)
             return false;
-        recreateCapturePipelineInternal();
+        releaseCapturePipeline();
         return true;
     }
 
     function scheduleLiveFormatRefresh(epoch, eventHelperEpoch, eventSessionGeneration) {
+        firstFrameRecoveryArmed = false;
         liveFormatRefreshArmed = false;
         liveFormatRefreshScheduled = true;
         scheduledLiveFormatRefreshEpoch = epoch;
@@ -299,23 +306,93 @@ Item {
         });
     }
 
-    function recreateCapturePipelineInternal() {
-        clearScheduledLiveFormatRefresh();
+    function clearPendingCapturePipelineCreation() {
+        capturePipelineReleaseTimer.stop();
+        capturePipelineCreationPending = false;
+        pendingCapturePipelineEpoch = -1;
+        pendingCapturePipelineHelperEpoch = "";
+        pendingCapturePipelineSessionGeneration = "";
+    }
+
+    function cancelPendingCapturePipelineCreation() {
+        clearPendingCapturePipelineCreation();
+    }
+
+    function createCapturePipeline(pipelineEpoch, pipelineHelperEpoch, pipelineSessionGeneration) {
+        if (pipelineEpoch !== captureEpoch || pipelineHelperEpoch !== helperEpoch || pipelineSessionGeneration !== sessionGeneration)
+            return false;
+        captureLoader.sourceComponent = capturePipelineComponent;
+        if (captureLoader.item === null)
+            return false;
+        captureLoader.item.epoch = pipelineEpoch;
+        captureLoader.item.helperEpochSnapshot = pipelineHelperEpoch;
+        captureLoader.item.sessionGenerationSnapshot = pipelineSessionGeneration;
+        captureLoader.item.initialized = true;
+        return true;
+    }
+
+    function scheduleCapturePipelineCreation(pipelineEpoch, pipelineHelperEpoch, pipelineSessionGeneration) {
+        capturePipelineReleaseTimer.stop();
+        pendingCapturePipelineEpoch = pipelineEpoch;
+        pendingCapturePipelineHelperEpoch = pipelineHelperEpoch;
+        pendingCapturePipelineSessionGeneration = pipelineSessionGeneration;
+        capturePipelineCreationPending = true;
+        capturePipelineReleaseTimer.restart();
+    }
+
+    function completeCapturePipelineCreation() {
+        if (!capturePipelineCreationPending)
+            return false;
+        var pipelineEpoch = pendingCapturePipelineEpoch;
+        var pipelineHelperEpoch = pendingCapturePipelineHelperEpoch;
+        var pipelineSessionGeneration = pendingCapturePipelineSessionGeneration;
+        var creationIsCurrent = pipelineEpoch === captureEpoch && pipelineHelperEpoch === helperEpoch && pipelineSessionGeneration === sessionGeneration && captureRequested;
+        clearPendingCapturePipelineCreation();
+        if (!creationIsCurrent)
+            return false;
+        return createCapturePipeline(pipelineEpoch, pipelineHelperEpoch, pipelineSessionGeneration);
+    }
+
+    function releaseCapturePipeline() {
         var pipelineEpoch = ++captureEpoch;
         resetCurrentCaptureReadiness();
         captureLoader.sourceComponent = null;
-        captureLoader.sourceComponent = capturePipelineComponent;
-        if (captureLoader.item !== null) {
-            captureLoader.item.epoch = pipelineEpoch;
-            captureLoader.item.helperEpochSnapshot = helperEpoch;
-            captureLoader.item.sessionGenerationSnapshot = sessionGeneration;
-            captureLoader.item.initialized = true;
+        scheduleCapturePipelineCreation(pipelineEpoch, helperEpoch, sessionGeneration);
+    }
+
+    function recreateCapturePipelineInternal() {
+        clearScheduledLiveFormatRefresh();
+        if (captureRequested) {
+            releaseCapturePipeline();
+            return;
         }
+        var pipelineEpoch = ++captureEpoch;
+        resetCurrentCaptureReadiness();
+        captureLoader.sourceComponent = null;
+        cancelPendingCapturePipelineCreation();
+        createCapturePipeline(pipelineEpoch, helperEpoch, sessionGeneration);
+    }
+
+    function consumeFirstFrameRecovery() {
+        if (!firstFrameRecoveryArmed || !captureRequested || firstValidFrameReceived || capturePipelineCreationPending)
+            return false;
+        firstFrameRecoveryArmed = false;
+        recreateCapturePipelineInternal();
+        return true;
     }
 
     function recreateCapturePipeline() {
+        firstFrameRecoveryArmed = captureRequested;
         armLiveFormatRefresh();
-        recreateCapturePipelineInternal();
+        if (capturePipelineCreationPending || (captureRequested && captureLoader.item === null)) {
+            recreateCapturePipelineInternal();
+            return;
+        }
+        var pipelineEpoch = ++captureEpoch;
+        resetCurrentCaptureReadiness();
+        captureLoader.sourceComponent = null;
+        cancelPendingCapturePipelineCreation();
+        createCapturePipeline(pipelineEpoch, helperEpoch, sessionGeneration);
     }
 
     function acceptCaptureSource(epoch, eventHelperEpoch, eventSessionGeneration, id, description) {
@@ -327,6 +404,7 @@ Item {
     function acceptRenderedFrame(epoch, eventHelperEpoch, eventSessionGeneration, width, height, newVideoFrame) {
         if (newVideoFrame !== true || epoch !== captureEpoch || eventHelperEpoch !== helperEpoch || eventSessionGeneration !== sessionGeneration || !captureRequested || !captureSourceAcknowledged || width <= 0 || height <= 0)
             return false;
+        firstFrameRecoveryArmed = false;
         if (liveFormatRefreshScheduled)
             return false;
         if (liveFormatRefreshArmed) {
@@ -363,8 +441,10 @@ Item {
     }
     onCaptureRequestedChanged: {
         if (!captureRequested) {
+            firstFrameRecoveryArmed = false;
             clearScheduledLiveFormatRefresh();
             liveFormatRefreshArmed = false;
+            cancelPendingCapturePipelineCreation();
             resetCurrentCaptureReadiness();
         } else {
             recreateCapturePipeline();
@@ -373,10 +453,20 @@ Item {
     onDeviceIndexChanged: recreateCapturePipeline()
     onHelperEpochChanged: recreateCapturePipeline()
     onSessionGenerationChanged: recreateCapturePipeline()
-    Component.onCompleted: recreateCapturePipeline()
+    Component.onCompleted: {
+        if (capturePipeline === null && !capturePipelineCreationPending)
+            recreateCapturePipeline();
+    }
 
     MediaDevices {
         id: mediaDevices
+    }
+
+    Timer {
+        id: capturePipelineReleaseTimer
+        interval: root.capturePipelineReleaseDelayMs
+        repeat: false
+        onTriggered: root.completeCapturePipelineCreation()
     }
 
     // The shell may cache the loopback's pre-producer format. Reopen the
@@ -384,8 +474,8 @@ Item {
     Timer {
         interval: 750
         repeat: false
-        running: root.captureRequested && root.deviceAvailable && !root.firstValidFrameReceived
-        onTriggered: root.recreateCapturePipelineInternal()
+        running: root.firstFrameRecoveryArmed && root.captureRequested && root.deviceAvailable && !root.firstValidFrameReceived && !root.capturePipelineCreationPending
+        onTriggered: root.consumeFirstFrameRecovery()
     }
 
     Component {

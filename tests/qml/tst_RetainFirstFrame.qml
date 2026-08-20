@@ -226,11 +226,21 @@ TestCase {
         compare(state.sessionStarted, false)
     }
 
+    function waitForCapturePipeline(preview, expectedCaptureEpoch) {
+        tryVerify(function () {
+            return !preview.capturePipelineCreationPending
+                    && preview.capturePipeline
+                    && preview.capturePipeline.epoch === expectedCaptureEpoch
+        }, 500)
+    }
+
     function establishCaptureReadiness(root, state, generation) {
+        state.firstFrameTimeoutMs = 500
         tryVerify(function () {
             return root.phonePreview !== null
         })
         var preview = root.phonePreview
+        preview.capturePipelineReleaseDelayMs = 1
         preview.videoInputs = [{
             id: preview.deviceId,
             description: preview.deviceDescription
@@ -249,6 +259,7 @@ TestCase {
 
         var readyCaptureEpoch = preview.captureEpoch
         compare(readyCaptureEpoch, preRefreshEpoch + 1)
+        waitForCapturePipeline(preview, readyCaptureEpoch)
         verify(preview.acceptCaptureSource(
                    readyCaptureEpoch, root.acceptedHelperEpoch, generation,
                    preview.deviceId, preview.deviceDescription))
@@ -439,6 +450,7 @@ TestCase {
             preview.helperEpoch = String(Number(preview.helperEpoch) + 1)
         else
             preview.sessionGeneration = String(Number(preview.sessionGeneration) + 1)
+        waitForCapturePipeline(preview, preview.captureEpoch)
 
         compare(root.retainedClosePending, false)
         compare(root.opened, true)

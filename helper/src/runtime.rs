@@ -628,7 +628,7 @@ where
             return;
         };
         let pending_generation = pending.generation;
-        let pending_method = pending.method;
+
         let public_generation = Arc::clone(&self.session.generation);
         let helper_epoch = self.helper_epoch.clone();
         let flow = Arc::clone(&self.flow);
@@ -725,38 +725,31 @@ where
                 if starts_session && let Some(connected_target) = connected_target {
                     start_session(connected_target, event_generation);
                 }
+            } else if let Some(target) = connected_target {
+                let disconnect = CancellationToken::new()
+                    .child_with_timeout(Duration::from_millis(MAX_LOCAL_COMMAND_MS));
+                if let Ok(mut flow) = flow.lock() {
+                    let _ = flow.runner_mut().run(
+                        CommandRequest::new("adb", vec!["disconnect".to_owned(), target]),
+                        &disconnect,
+                    );
+                }
             }
         });
 
         let ceremony = Arc::clone(&self.ceremony);
         let generation = Arc::clone(&self.generation);
-        let sink = self.sink.clone();
-        let helper_epoch = self.helper_epoch.clone();
         let lifetime = self.lifetime;
         thread::spawn(move || {
             thread::sleep(lifetime);
-            if generation
-                .compare_exchange(
-                    pending_generation,
-                    pending_generation + 1,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
-            {
-                cancellation.cancel();
-                if let Ok(mut ceremony) = ceremony.lock() {
+            if generation.load(Ordering::Acquire) != pending_generation {
+                return;
+            }
+            cancellation.cancel();
+            if let Ok(mut ceremony) = ceremony.lock() {
+                if generation.load(Ordering::Acquire) == pending_generation {
                     ceremony.cancel();
                 }
-                let event = if pending_method == PairingMethod::Qr {
-                    Event::QrTimedOut { helper_epoch }
-                } else {
-                    Event::Failure {
-                        helper_epoch,
-                        reason: FailureReason::NetworkUnavailable,
-                    }
-                };
-                let _ = sink.emit_event(&event);
             }
         });
     }
@@ -972,6 +965,9 @@ where
             requested_service: None,
             secret: Zeroizing::new(code.to_owned()),
         });
+        if let Ok(mut ceremony) = self.ceremony.lock() {
+            ceremony.cancel();
+        }
         Ok(())
     }
 

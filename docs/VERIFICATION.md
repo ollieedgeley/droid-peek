@@ -10,24 +10,24 @@ phone.
 From the repository root:
 
 ```bash
-scripts/check.sh
-scripts/check-supply-chain.sh
-scripts/check-release-version
+scripts/dev/check.sh
+scripts/dev/check-supply-chain.sh
+scripts/dev/check-release-version
 ```
 
-`scripts/check.sh` validates the manifest, exercises the phone-binding
+`scripts/dev/check.sh` validates the manifest, exercises the phone-binding
 configurator and Lua API, checks cross-language target and protocol
 contracts, runs the tested ast-grep ownership rules, lints QML through a
 temporary Omarchy import map, runs Qt Quick Tests, and runs Rust format,
 Clippy-with-warnings-denied, nextest, and documentation checks. It requires
 the Omarchy Qt 6 environment, Lua, `ast-grep`, and `cargo-nextest`.
 
-`scripts/check-supply-chain.sh` requires `cargo-deny` and `cargo-audit`. It
+`scripts/dev/check-supply-chain.sh` requires `cargo-deny` and `cargo-audit`. It
 denies known advisories, yanked crates, wildcard dependencies, unapproved
 licenses, and unknown registries or Git sources. These network-backed checks
 are intentionally separate from the deterministic local gate.
 
-`scripts/check-release-version` rejects an absent, malformed, or mismatched
+`scripts/dev/check-release-version` rejects an absent, malformed, or mismatched
 value among `manifest.json`, `helper/Cargo.toml`, `qml/BuildInfo.qml`, and
 `integrations/build-info.lua`.
 
@@ -35,7 +35,7 @@ Run the slower focused coverage gate separately when measuring helper
 contracts:
 
 ```bash
-scripts/check-coverage.sh
+scripts/dev/check-coverage.sh
 ```
 
 Coverage requires `cargo-llvm-cov`, `llvm-cov`, `llvm-profdata`, and `jq`. It

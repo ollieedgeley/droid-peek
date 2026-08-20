@@ -664,7 +664,7 @@ fn qr_lifetime_thread_does_not_report_timeout_after_connect_succeeds() {
 
     let lines = sink.lines.lock().expect("memory sink lock").clone();
     assert!(
-        !lines.iter().any(|line| *line == timed_out),
+        !lines.contains(&timed_out),
         "lifetime thread must not emit QR timeout after adb connect succeeded: {lines:?}"
     );
     assert!(

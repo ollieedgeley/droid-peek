@@ -1,0 +1,28 @@
+{
+  "servers": {
+    "rust-analyzer": {
+      "rootMarkers": ["helper/Cargo.toml"],
+      "settings": {
+        "rust-analyzer": {
+          "linkedProjects": ["helper/Cargo.toml"]
+        }
+      },
+      "capabilities": {
+        "flycheck": true
+      }
+    },
+    "qmlls": {
+      "command": "/usr/lib/qt6/bin/qmlls",
+      "args": [
+        "--no-cmake-calls",
+        "--ignore-settings",
+        "-I",
+        "tests/qml/imports"
+      ],
+      "fileTypes": [".qml"],
+      "languageId": "qml",
+      "rootMarkers": ["manifest.json"],
+      "warmupTimeoutMs": 30000
+    }
+  }
+}

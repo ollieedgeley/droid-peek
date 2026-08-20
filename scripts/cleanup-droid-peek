@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-PLUGIN_ID='ollieedgeley.droidpeek'
-VIDEO_NR=42
-HELPER_INSTALL_NAME='droid-peek-helper'
+set -Eeuo pipefail
 
 usage() {
   cat <<EOF
-usage: ${0##*/} [--dry-run] [--remove-helper] [--remove-v4l2] [--remove-user-config] [--remove-state]
+usage: ${0##*/} [--dry-run] [--remove-helper] [--remove-v4l2] [--remove-user-config] [--remove-state] [--yes]
 
 Remove Droid Peek host files after the plugin is disabled and idle.
 Always removes the managed Hyprland loader block. Optional removals are
@@ -17,16 +13,22 @@ unchecked by default and never include shared packages or Avahi.
   --remove-v4l2          remove Droid Peek V4L2 config files only
   --remove-user-config   remove ~/.config/hypr/droid-peek.lua
   --remove-state         remove trusted-device and preferences state
+  --yes                  non-interactive; loader only unless --remove-* is set
+  --dry-run              print the plan and make no changes
 EOF
   exit "${1:-0}"
 }
 
-fail() {
-  printf '%s\n' "$*" >&2
-  exit 1
-}
+_this_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=lib/common.sh
+source "$_this_dir/lib/common.sh"
+# shellcheck source=lib/v4l2.sh
+source "$_this_dir/lib/v4l2.sh"
+# shellcheck source=lib/hyprland.sh
+source "$_this_dir/lib/hyprland.sh"
 
-dry_run=0
+droid_peek_install_entry_traps
+
 flag_helper=0
 flag_v4l2=0
 flag_user_config=0
@@ -37,6 +39,9 @@ while (($#)); do
   case "$1" in
     --dry-run)
       dry_run=1
+      ;;
+    --yes)
+      yes=1
       ;;
     --remove-helper)
       flag_helper=1
@@ -64,95 +69,25 @@ while (($#)); do
   shift
 done
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-host_root="${DROID_PEEK_HOST_ROOT:-}"
-config_home="${XDG_CONFIG_HOME:-${HOME:?HOME is required}/.config}"
-hypr_dir="$config_home/hypr"
-user_module="$hypr_dir/droid-peek.lua"
-bindings_file="$hypr_dir/bindings.lua"
-helper_path="$HOME/.local/bin/$HELPER_INSTALL_NAME"
-state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/droid-peek"
-modules_load_file=""
-modprobe_file=""
-video_dev=""
-
-host_path() {
-  printf '%s%s' "$host_root" "$1"
-}
-
-run_privileged() {
-  if [[ -n "$host_root" ]] || [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
-  else
-    sudo "$@"
-  fi
-}
-
-remove_root_file() {
-  local path="$1"
-  [[ -e "$path" ]] || return 0
-  if [[ -n "$host_root" ]]; then
-    rm -f -- "$path"
-    return
-  fi
-  run_privileged rm -f -- "$path"
-}
-
-require_cmd() {
-  command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
-}
-
-plugin_list_json() {
-  require_cmd omarchy
-  omarchy plugin list --json
-}
-
-plugin_is_enabled() {
-  local plugins
-  plugins="$(plugin_list_json)" || fail "could not query plugin state; is the Omarchy shell running?"
-  jq -e --arg id "$PLUGIN_ID" 'any(.[]; .id == $id and .enabled == true)' >/dev/null <<<"$plugins"
-}
-
-video_in_use() {
-  [[ -e "$video_dev" ]] || return 1
-  if command -v fuser >/dev/null 2>&1; then
-    fuser -s "$video_dev" 2>/dev/null
-    return
-  fi
-  return 1
-}
-
-droid_peek_processes_running() {
-  pgrep -x droid-peek-helper >/dev/null 2>&1 && return 0
-  pgrep -x scrcpy >/dev/null 2>&1 && return 0
-  return 1
-}
-
-confirm_yes() {
-  local prompt="$1"
-  local answer=""
-  printf '%s' "$prompt"
-  if ! IFS= read -r answer; then
-    answer=""
-  fi
-  [[ "$answer" == [yY] || "$answer" == [yY][eE][sS] ]]
-}
-
 ask_optional() {
   local prompt="$1"
-  confirm_yes "$prompt [y/N] "
+  if gum confirm -- "$prompt"; then
+    return 0
+  fi
+  return 1
 }
 
 require_idle() {
   if plugin_is_enabled; then
     fail "plugin $PLUGIN_ID is enabled. Disable it and close the panel before cleanup. No changes were made."
   fi
-  if droid_peek_processes_running; then
-    fail "a Droid Peek helper, scrcpy, or guardian process is still running. Close the panel and stop those processes before cleanup. No changes were made."
+  if helper_is_running; then
+    fail "a Droid Peek helper process is still running. Close the panel and stop those processes before cleanup. No changes were made."
   fi
-  if video_in_use; then
-    fail "/dev/video$VIDEO_NR still has users. Close the panel before cleanup. No changes were made."
+  if scrcpy_is_helper_descendant; then
+    fail "a scrcpy process started by the Droid Peek helper is still running. Close the panel before cleanup. No changes were made."
   fi
+  require_video_idle
 }
 
 print_plan() {
@@ -188,33 +123,16 @@ print_plan() {
   printf '\n'
 }
 
-perform_cleanup() {
-  "$script_dir/configure-droid-peek" uninstall
-  if ((flag_helper)); then
-    rm -f -- "$helper_path"
+ask_optional_removals() {
+  if ((flags_set)) || ((yes)) || ((dry_run)); then
+    return 0
   fi
-  if ((flag_v4l2)); then
-    remove_root_file "$modules_load_file"
-    remove_root_file "$modprobe_file"
+  if [[ ! -t 0 ]]; then
+    fail "standard input is not a terminal; re-run with --yes. No changes were made."
   fi
-  if ((flag_user_config)); then
-    rm -f -- "$user_module"
+  if ! command -v gum >/dev/null 2>&1; then
+    fail "install gum. No changes were made."
   fi
-  if ((flag_state)) && [[ -e "$state_dir" ]]; then
-    rm -rf -- "$state_dir"
-  fi
-}
-
-require_cmd jq
-require_cmd pgrep
-
-modules_load_file="$(host_path /etc/modules-load.d/droid-peek.conf)"
-modprobe_file="$(host_path /etc/modprobe.d/droid-peek.conf)"
-video_dev="$(host_path /dev/video$VIDEO_NR)"
-
-require_idle
-
-if ((!flags_set)) && ((!dry_run)); then
   printf '%s\n' "Cleanup always removes the managed Hyprland loader block."
   printf '%s\n' "Optional removals are unchecked. Shared packages and Avahi stay installed."
   if ask_optional "Remove installed helper $helper_path?"; then
@@ -229,8 +147,54 @@ if ((!flags_set)) && ((!dry_run)); then
   if ask_optional "Remove trusted-device and preferences state in $state_dir?"; then
     flag_state=1
   fi
-fi
+}
 
+perform_cleanup() {
+  remove_managed_loader
+  if ((flag_helper)); then
+    rm -f -- "$helper_path"
+  fi
+  if ((flag_v4l2)); then
+    remove_droid_peek_v4l2
+  fi
+  if ((flag_user_config)); then
+    rm -f -- "$user_module"
+  fi
+  if ((flag_state)) && [[ -e "$state_dir" ]]; then
+    rm -rf -- "$state_dir"
+  fi
+}
+
+report_remaining() {
+  printf '%s\n' "Cleanup finished."
+  if has_loader; then
+    fail "managed loader is still present in $bindings_file."
+  fi
+  printf '%s\n' "Managed loader removed."
+  if [[ -e "$helper_path" ]]; then
+    printf '%s\n' "Helper remains at $helper_path."
+  fi
+  if [[ -e "$modules_load_file" || -e "$modprobe_file" ]]; then
+    printf '%s\n' "V4L2 configuration remains."
+  fi
+  if [[ -e "$user_module" ]]; then
+    printf '%s\n' "User module remains at $user_module."
+  fi
+  if [[ -e "$state_dir" ]]; then
+    printf '%s\n' "State remains in $state_dir."
+  fi
+}
+
+droid_peek_set_stage parse
+droid_peek_refresh_paths
+require_cmd jq
+require_cmd pgrep
+
+droid_peek_set_stage preflight
+require_idle
+ask_optional_removals
+
+droid_peek_set_stage plan
 print_plan
 
 if ((dry_run)); then
@@ -238,8 +202,11 @@ if ((dry_run)); then
   exit 0
 fi
 
-confirm_yes "Proceed with this cleanup? [y/N] " ||
-  fail "cleanup cancelled. No changes were made."
+droid_peek_set_stage confirm
+droid_peek_confirm "Proceed with this cleanup?"
 
+droid_peek_set_stage apply
 perform_cleanup
-printf '%s\n' "Cleanup finished."
+
+droid_peek_set_stage verify
+report_remaining

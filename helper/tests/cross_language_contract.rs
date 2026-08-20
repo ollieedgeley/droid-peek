@@ -119,7 +119,10 @@ fn phone_binding_assets_are_a_clean_cutover_from_action_routing() {
 
 #[test]
 fn installer_and_template_share_the_exact_user_config_contract() {
-    let configurator = source("scripts/configure-droid-peek");
+    assert_absent("scripts/configure-droid-peek");
+
+    let hyprland = source("scripts/lib/hyprland.sh");
+    let common = source("scripts/lib/common.sh");
     let template = source("integrations/droid-peek.lua.example");
     let loader_block = concat!(
         "-- Droid Peek plugin loader (managed)\n",
@@ -127,14 +130,14 @@ fn installer_and_template_share_the_exact_user_config_contract() {
     );
 
     assert!(
-        configurator.contains("install") && configurator.contains("uninstall"),
-        "the configurator must expose install and uninstall"
+        hyprland.contains("install_user_config") && hyprland.contains("remove_managed_loader"),
+        "setup/cleanup must absorb managed-loader install and uninstall"
     );
     assert!(
-        configurator.contains("XDG_CONFIG_HOME")
-            && configurator.contains("droid-peek.lua")
-            && configurator.contains(loader_block),
-        "the configurator and managed loader block drifted"
+        common.contains("XDG_CONFIG_HOME")
+            && common.contains("droid-peek.lua")
+            && common.contains(loader_block),
+        "the Hyprland helper and managed loader block drifted"
     );
     assert!(
         template.contains(

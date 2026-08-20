@@ -135,10 +135,9 @@ Paired devices screen.
   API, and `integrations/droid-peek.lua.example` is copied once as user-owned
   configuration.
 - `scripts/setup-droid-peek` and `scripts/cleanup-droid-peek` are the public
-  host setup and cleanup entry points.
-- `scripts/configure-droid-peek` installs or removes only the managed
-  Hyprland loader block.
-- `scripts/check.sh` is the non-interactive developer verification entry
+  host setup and cleanup entry points. They own the managed Hyprland loader
+  block; `scripts/lib/` is internal.
+- `scripts/dev/check.sh` is the non-interactive developer verification entry
   point.
 - `tests/` and `helper/tests/` cover QML, Lua, shell, and Rust behavior
   without a real phone.

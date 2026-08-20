@@ -437,9 +437,9 @@ TestCase {
         }]
         tryCompare(preview, "captureRequested", true)
         tryCompare(preview, "deviceAvailable", true)
-        var captureEpoch = preview.captureEpoch
+        var preRefreshEpoch = preview.captureEpoch
         verify(preview.acceptCaptureSource(
-                   captureEpoch, root.acceptedHelperEpoch, "2",
+                   preRefreshEpoch, root.acceptedHelperEpoch, "2",
                    preview.deviceId, preview.deviceDescription))
         tryCompare(preview, "captureAvailable", true)
         compare(preview.firstValidFrameReceived, false)
@@ -451,10 +451,21 @@ TestCase {
 
         panelCommandSpy.target = state
         panelCommandSpy.clear()
+        verify(!preview.acceptRenderedFrame(
+                   preRefreshEpoch, root.acceptedHelperEpoch, "2",
+                   1080, 2400, true))
+        compare(preview.captureEpoch, preRefreshEpoch)
+        compare(panelCommandSpy.count, 0)
+        wait(0)
+
+        var captureEpoch = preview.captureEpoch
+        compare(captureEpoch, preRefreshEpoch + 1)
+        verify(preview.acceptCaptureSource(
+                   captureEpoch, root.acceptedHelperEpoch, "2",
+                   preview.deviceId, preview.deviceDescription))
         verify(preview.acceptRenderedFrame(
                    captureEpoch, root.acceptedHelperEpoch, "2",
-                   1080, 2400))
-
+                   1080, 2400, true))
         tryCompare(preview, "firstValidFrameReceived", true)
         tryCompare(panelCommandSpy, "count", 1)
         compare(JSON.parse(panelCommandSpy.signalArguments[0][0]), {
@@ -465,7 +476,7 @@ TestCase {
         })
         verify(preview.acceptRenderedFrame(
                    captureEpoch, root.acceptedHelperEpoch, "2",
-                   1080, 2400))
+                   1080, 2400, true))
         compare(panelCommandSpy.count, 1)
         tryCompare(model, "previewUsable", true)
         tryCompare(root, "applicationState", "interactive")

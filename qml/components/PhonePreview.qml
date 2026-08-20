@@ -32,6 +32,11 @@ Item {
     property int presentationSerial: 0
     property bool retainedImageReleasePending: false
     property int retainedImageReleaseSerial: -1
+    property bool liveFormatRefreshArmed: false
+    property bool liveFormatRefreshScheduled: false
+    property int scheduledLiveFormatRefreshEpoch: -1
+    property string scheduledLiveFormatRefreshHelperEpoch: ""
+    property string scheduledLiveFormatRefreshSessionGeneration: ""
     readonly property bool retainedImageAvailable: retainedImageResult !== null
     readonly property var capturePipeline: captureLoader.item
     readonly property int deviceIndex: findDeviceIndex(videoInputs, deviceId, deviceDescription)
@@ -260,7 +265,42 @@ Item {
             resetCurrentCaptureReadiness();
     }
 
-    function recreateCapturePipeline() {
+    function clearScheduledLiveFormatRefresh() {
+        liveFormatRefreshScheduled = false;
+        scheduledLiveFormatRefreshEpoch = -1;
+        scheduledLiveFormatRefreshHelperEpoch = "";
+        scheduledLiveFormatRefreshSessionGeneration = "";
+    }
+
+    function armLiveFormatRefresh() {
+        clearScheduledLiveFormatRefresh();
+        liveFormatRefreshArmed = true;
+    }
+
+    function completeLiveFormatRefresh(epoch, eventHelperEpoch, eventSessionGeneration) {
+        if (!liveFormatRefreshScheduled || scheduledLiveFormatRefreshEpoch !== epoch || scheduledLiveFormatRefreshHelperEpoch !== eventHelperEpoch || scheduledLiveFormatRefreshSessionGeneration !== eventSessionGeneration)
+            return false;
+        var refreshIsCurrent = epoch === captureEpoch && eventHelperEpoch === helperEpoch && eventSessionGeneration === sessionGeneration && captureRequested;
+        clearScheduledLiveFormatRefresh();
+        if (!refreshIsCurrent)
+            return false;
+        recreateCapturePipelineInternal();
+        return true;
+    }
+
+    function scheduleLiveFormatRefresh(epoch, eventHelperEpoch, eventSessionGeneration) {
+        liveFormatRefreshArmed = false;
+        liveFormatRefreshScheduled = true;
+        scheduledLiveFormatRefreshEpoch = epoch;
+        scheduledLiveFormatRefreshHelperEpoch = eventHelperEpoch;
+        scheduledLiveFormatRefreshSessionGeneration = eventSessionGeneration;
+        Qt.callLater(function () {
+            root.completeLiveFormatRefresh(epoch, eventHelperEpoch, eventSessionGeneration);
+        });
+    }
+
+    function recreateCapturePipelineInternal() {
+        clearScheduledLiveFormatRefresh();
         var pipelineEpoch = ++captureEpoch;
         resetCurrentCaptureReadiness();
         captureLoader.sourceComponent = null;
@@ -273,6 +313,11 @@ Item {
         }
     }
 
+    function recreateCapturePipeline() {
+        armLiveFormatRefresh();
+        recreateCapturePipelineInternal();
+    }
+
     function acceptCaptureSource(epoch, eventHelperEpoch, eventSessionGeneration, id, description) {
         if (epoch !== captureEpoch || eventHelperEpoch !== helperEpoch || eventSessionGeneration !== sessionGeneration || !captureRequested || id !== deviceId || description !== deviceDescription)
             return false;
@@ -280,12 +325,18 @@ Item {
         return true;
     }
     function acceptRenderedFrame(epoch, eventHelperEpoch, eventSessionGeneration, width, height, newVideoFrame) {
-        if (epoch !== captureEpoch || eventHelperEpoch !== helperEpoch || eventSessionGeneration !== sessionGeneration || !captureRequested || !captureSourceAcknowledged || width <= 0 || height <= 0)
+        if (newVideoFrame !== true || epoch !== captureEpoch || eventHelperEpoch !== helperEpoch || eventSessionGeneration !== sessionGeneration || !captureRequested || !captureSourceAcknowledged || width <= 0 || height <= 0)
             return false;
+        if (liveFormatRefreshScheduled)
+            return false;
+        if (liveFormatRefreshArmed) {
+            scheduleLiveFormatRefresh(epoch, eventHelperEpoch, eventSessionGeneration);
+            return false;
+        }
         framedWidth = width;
         framedHeight = height;
         firstValidFrameReceived = true;
-        if (newVideoFrame === true && inputEnabled && retainedImageAvailable) {
+        if (inputEnabled && retainedImageAvailable) {
             retainedImageReleasePending = true;
             retainedImageReleaseSerial = presentationSerial;
         }
@@ -312,9 +363,11 @@ Item {
     }
     onCaptureRequestedChanged: {
         if (!captureRequested) {
+            clearScheduledLiveFormatRefresh();
+            liveFormatRefreshArmed = false;
             resetCurrentCaptureReadiness();
-        } else if (capturePipeline !== null) {
-            acceptCaptureSource(capturePipeline.epoch, capturePipeline.helperEpochSnapshot, capturePipeline.sessionGenerationSnapshot, capturePipeline.sourceDeviceId, capturePipeline.sourceDeviceDescription);
+        } else {
+            recreateCapturePipeline();
         }
     }
     onDeviceIndexChanged: recreateCapturePipeline()
@@ -332,7 +385,7 @@ Item {
         interval: 750
         repeat: false
         running: root.captureRequested && root.deviceAvailable && !root.firstValidFrameReceived
-        onTriggered: root.recreateCapturePipeline()
+        onTriggered: root.recreateCapturePipelineInternal()
     }
 
     Component {

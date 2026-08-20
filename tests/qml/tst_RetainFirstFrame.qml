@@ -226,7 +226,7 @@ TestCase {
         compare(state.sessionStarted, false)
     }
 
-    function acknowledgeFirstFrame(root, state, generation) {
+    function establishCaptureReadiness(root, state, generation) {
         tryVerify(function () {
             return root.phonePreview !== null
         })
@@ -237,16 +237,30 @@ TestCase {
         }]
         tryCompare(preview, "captureRequested", true)
         tryCompare(preview, "deviceAvailable", true)
-        var captureEpoch = preview.captureEpoch
+        var preRefreshEpoch = preview.captureEpoch
         verify(preview.acceptCaptureSource(
-                   captureEpoch, root.acceptedHelperEpoch, generation,
+                   preRefreshEpoch, root.acceptedHelperEpoch, generation,
+                   preview.deviceId, preview.deviceDescription))
+        verify(!preview.acceptRenderedFrame(
+                   preRefreshEpoch, root.acceptedHelperEpoch, generation,
+                   1080, 2400, true))
+        compare(preview.captureEpoch, preRefreshEpoch)
+        wait(0)
+
+        var readyCaptureEpoch = preview.captureEpoch
+        compare(readyCaptureEpoch, preRefreshEpoch + 1)
+        verify(preview.acceptCaptureSource(
+                   readyCaptureEpoch, root.acceptedHelperEpoch, generation,
                    preview.deviceId, preview.deviceDescription))
         verify(preview.acceptRenderedFrame(
-                   captureEpoch, root.acceptedHelperEpoch, generation,
-                   1080, 2400))
+                   readyCaptureEpoch, root.acceptedHelperEpoch, generation,
+                   1080, 2400, true))
         tryCompare(preview, "firstValidFrameReceived", true)
         tryCompare(state, "previewReadyGeneration", generation)
-        return preview
+        return {
+            preview: preview,
+            captureEpoch: readyCaptureEpoch
+        }
     }
     function installGrabber(preview, starts) {
         pendingGrabCallback = null
@@ -273,10 +287,11 @@ TestCase {
     function test_retain_close_waits_for_one_grab_and_reopens_same_framed_session() {
         var root = panelLoader.item
         var state = beginStartedSession(true)
-        var preview = acknowledgeFirstFrame(root, state, "1")
+        var readiness = establishCaptureReadiness(root, state, "1")
+        var preview = readiness.preview
         var helperEpoch = root.acceptedHelperEpoch
         var sessionGeneration = state.sessionGeneration
-        var captureEpoch = preview.captureEpoch
+        var captureEpoch = readiness.captureEpoch
         var fallback = objectNamed("fallbackStartOverButton")
         var model = objectNamed("applicationStateModel")
         var loading = objectNamed("previewLoadingTreatment")
@@ -379,8 +394,9 @@ TestCase {
     function test_capture_error_clears_successful_retained_image() {
         var root = panelLoader.item
         var state = beginStartedSession(true)
-        var preview = acknowledgeFirstFrame(root, state, "1")
-        var captureEpoch = preview.captureEpoch
+        var readiness = establishCaptureReadiness(root, state, "1")
+        var preview = readiness.preview
+        var captureEpoch = readiness.captureEpoch
         installGrabber(preview, true)
 
         verify(preview.captureRetainedImage())
@@ -406,7 +422,8 @@ TestCase {
     function test_stale_capture_completion_cannot_close_current_identity(data) {
         var root = panelLoader.item
         var state = beginStartedSession(true)
-        var preview = acknowledgeFirstFrame(root, state, "1")
+        var readiness = establishCaptureReadiness(root, state, "1")
+        var preview = readiness.preview
         commandSpy.clear()
         installGrabber(preview, true)
 
@@ -435,7 +452,8 @@ TestCase {
     function test_pending_capture_cannot_close_reclaimed_host() {
         var root = panelLoader.item
         var state = beginStartedSession(true)
-        var preview = acknowledgeFirstFrame(root, state, "1")
+        var readiness = establishCaptureReadiness(root, state, "1")
+        var preview = readiness.preview
         var originalHost = { name: "original" }
         var replacementHost = { name: "replacement" }
         root.claimHost(originalHost, anchorItem, topBar)
@@ -487,7 +505,8 @@ TestCase {
     function test_synchronous_grab_rejection_closes_immediately() {
         var root = panelLoader.item
         var state = beginStartedSession(true)
-        var preview = acknowledgeFirstFrame(root, state, "1")
+        var readiness = establishCaptureReadiness(root, state, "1")
+        var preview = readiness.preview
         installGrabber(preview, false)
         commandSpy.clear()
 

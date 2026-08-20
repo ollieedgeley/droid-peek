@@ -32,6 +32,7 @@ Item {
     property int presentationSerial: 0
     property bool retainedImageReleasePending: false
     property int retainedImageReleaseSerial: -1
+    property bool firstFrameRecoveryArmed: false
     property bool liveFormatRefreshArmed: false
     property bool liveFormatRefreshScheduled: false
     property int scheduledLiveFormatRefreshEpoch: -1
@@ -294,6 +295,7 @@ Item {
     }
 
     function scheduleLiveFormatRefresh(epoch, eventHelperEpoch, eventSessionGeneration) {
+        firstFrameRecoveryArmed = false;
         liveFormatRefreshArmed = false;
         liveFormatRefreshScheduled = true;
         scheduledLiveFormatRefreshEpoch = epoch;
@@ -374,7 +376,16 @@ Item {
         createCapturePipeline(pipelineEpoch, helperEpoch, sessionGeneration);
     }
 
+    function consumeFirstFrameRecovery() {
+        if (!firstFrameRecoveryArmed || !captureRequested || firstValidFrameReceived || capturePipelineCreationPending)
+            return false;
+        firstFrameRecoveryArmed = false;
+        recreateCapturePipelineInternal();
+        return true;
+    }
+
     function recreateCapturePipeline() {
+        firstFrameRecoveryArmed = captureRequested;
         armLiveFormatRefresh();
         if (capturePipelineCreationPending || (captureRequested && captureLoader.item === null)) {
             recreateCapturePipelineInternal();
@@ -396,6 +407,7 @@ Item {
     function acceptRenderedFrame(epoch, eventHelperEpoch, eventSessionGeneration, width, height, newVideoFrame) {
         if (newVideoFrame !== true || epoch !== captureEpoch || eventHelperEpoch !== helperEpoch || eventSessionGeneration !== sessionGeneration || !captureRequested || !captureSourceAcknowledged || width <= 0 || height <= 0)
             return false;
+        firstFrameRecoveryArmed = false;
         if (liveFormatRefreshScheduled)
             return false;
         if (liveFormatRefreshArmed) {
@@ -432,6 +444,7 @@ Item {
     }
     onCaptureRequestedChanged: {
         if (!captureRequested) {
+            firstFrameRecoveryArmed = false;
             clearScheduledLiveFormatRefresh();
             liveFormatRefreshArmed = false;
             cancelPendingCapturePipelineCreation();
@@ -464,8 +477,8 @@ Item {
     Timer {
         interval: 750
         repeat: false
-        running: root.captureRequested && root.deviceAvailable && !root.firstValidFrameReceived && !root.capturePipelineCreationPending
-        onTriggered: root.recreateCapturePipelineInternal()
+        running: root.firstFrameRecoveryArmed && root.captureRequested && root.deviceAvailable && !root.firstValidFrameReceived && !root.capturePipelineCreationPending
+        onTriggered: root.consumeFirstFrameRecovery()
     }
 
     Component {

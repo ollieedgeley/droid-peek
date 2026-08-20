@@ -182,6 +182,7 @@ TestCase {
                    preview.deviceId, preview.deviceDescription))
         verify(!preview.acceptRenderedFrame(
                    preRefreshEpoch, "17", "1", 1080, 2392, true))
+        compare(preview.firstFrameRecoveryArmed, false)
         compare(preview.captureEpoch, preRefreshEpoch)
         compare(preview.firstValidFrameReceived, false)
         wait(0)
@@ -245,6 +246,42 @@ TestCase {
         compare(preview.firstValidFrameReceived, true)
         wait(0)
         compare(preview.captureEpoch, readyCaptureEpoch)
+    }
+
+    function test_first_frame_recovery_is_consumed_before_recreation() {
+        preview.captureRequested = true
+        waitForCapturePipeline()
+        var armedCaptureEpoch = preview.captureEpoch
+        compare(preview.firstFrameRecoveryArmed, true)
+
+        verify(preview.consumeFirstFrameRecovery())
+        compare(preview.firstFrameRecoveryArmed, false)
+        compare(preview.captureEpoch, armedCaptureEpoch + 1)
+        compare(preview.capturePipelineCreationPending, true)
+        compare(preview.capturePipeline, null)
+
+        verify(preview.completeCapturePipelineCreation())
+        compare(preview.capturePipelineCreationPending, false)
+        var recoveredCaptureEpoch = preview.captureEpoch
+        verify(!preview.consumeFirstFrameRecovery())
+        compare(preview.captureEpoch, recoveredCaptureEpoch)
+        compare(preview.capturePipeline.epoch, recoveredCaptureEpoch)
+    }
+
+    function test_new_session_identity_rearms_first_frame_recovery() {
+        preview.captureRequested = true
+        waitForCapturePipeline()
+        verify(preview.consumeFirstFrameRecovery())
+        verify(preview.completeCapturePipelineCreation())
+        compare(preview.firstFrameRecoveryArmed, false)
+
+        preview.sessionGeneration = "2"
+
+        compare(preview.firstFrameRecoveryArmed, true)
+        var newIdentityCaptureEpoch = preview.captureEpoch
+        verify(preview.consumeFirstFrameRecovery())
+        compare(preview.firstFrameRecoveryArmed, false)
+        compare(preview.captureEpoch, newIdentityCaptureEpoch + 1)
     }
 
     function test_capture_and_session_transitions_rearm_format_refresh() {
@@ -396,6 +433,7 @@ TestCase {
         establishCaptureReadiness("1")
 
         preview.captureRequested = false
+        compare(preview.firstFrameRecoveryArmed, false)
 
         compare(preview.firstValidFrameReceived, false)
         compare(preview.captureAvailable, false)

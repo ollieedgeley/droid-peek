@@ -199,6 +199,36 @@ TestCase {
         compare(preview.displayHeight, 1600)
     }
 
+    function test_internal_recreation_preserves_armed_format_refresh() {
+        preview.captureRequested = true
+        var armedCaptureEpoch = preview.captureEpoch
+
+        preview.recreateCapturePipelineInternal()
+        var preRefreshEpoch = preview.captureEpoch
+        compare(preRefreshEpoch, armedCaptureEpoch + 1)
+        compare(preview.firstValidFrameReceived, false)
+        verify(preview.acceptCaptureSource(
+                   preRefreshEpoch, "17", "1",
+                   preview.deviceId, preview.deviceDescription))
+
+        verify(!preview.acceptRenderedFrame(
+                   preRefreshEpoch, "17", "1", 1080, 2392, true))
+        compare(preview.captureEpoch, preRefreshEpoch)
+        compare(preview.firstValidFrameReceived, false)
+        wait(0)
+
+        var readyCaptureEpoch = preview.captureEpoch
+        compare(readyCaptureEpoch, preRefreshEpoch + 1)
+        verify(preview.acceptCaptureSource(
+                   readyCaptureEpoch, "17", "1",
+                   preview.deviceId, preview.deviceDescription))
+        verify(preview.acceptRenderedFrame(
+                   readyCaptureEpoch, "17", "1", 1080, 2392, true))
+        compare(preview.firstValidFrameReceived, true)
+        wait(0)
+        compare(preview.captureEpoch, readyCaptureEpoch)
+    }
+
     function test_capture_and_session_transitions_rearm_format_refresh() {
         preview.captureRequested = true
         establishCaptureReadiness("1")

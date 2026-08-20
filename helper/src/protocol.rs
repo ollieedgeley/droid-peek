@@ -256,7 +256,6 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                 match self.backend.submit_manual_code(code.as_str()) {
                     Ok(()) => vec![Event::Pairing {
                         helper_epoch: self.helper_epoch.clone(),
-                        method: PairingMethod::ManualCode,
                     }],
                     Err(PairingRequestFailure::InvalidState) => {
                         vec![self.protocol_error(ProtocolErrorReason::InvalidCommand)]
@@ -264,7 +263,6 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                     Err(PairingRequestFailure::Backend(reason)) => vec![
                         Event::Pairing {
                             helper_epoch: self.helper_epoch.clone(),
-                            method: PairingMethod::ManualCode,
                         },
                         self.failure(reason),
                     ],
@@ -860,7 +858,6 @@ pub enum Event {
     Pairing {
         #[serde(rename = "helperEpoch")]
         helper_epoch: String,
-        method: PairingMethod,
     },
     PairingCancelled {
         #[serde(rename = "helperEpoch")]
@@ -903,10 +900,6 @@ pub enum Event {
         helper_epoch: String,
         #[serde(rename = "sessionGeneration")]
         session_generation: String,
-        #[serde(rename = "physicalWidthMm", skip_serializing_if = "Option::is_none")]
-        physical_width_mm: Option<u16>,
-        #[serde(rename = "physicalHeightMm", skip_serializing_if = "Option::is_none")]
-        physical_height_mm: Option<u16>,
         #[serde(rename = "screenOffEnabled")]
         screen_off_enabled: bool,
     },
@@ -1010,8 +1003,7 @@ pub enum PairingEvent {
     Failure { reason: FailureReason },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PairingMethod {
     Qr,
     ManualCode,

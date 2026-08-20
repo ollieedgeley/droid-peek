@@ -101,9 +101,7 @@ TestCase {
         state.receiveLine(event("connected", { sessionGeneration: "1" }))
         state.receiveLine(event("session-starting", { sessionGeneration: "1" }))
         state.receiveLine(event("session-started", {
-            sessionGeneration: "1",
-            physicalWidthMm: 70,
-            physicalHeightMm: 157
+            sessionGeneration: "1"
         }))
     }
 

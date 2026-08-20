@@ -451,14 +451,14 @@ impl SessionRunner for BlockingSession {
         &mut self,
         target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
         self.qualities
             .lock()
             .expect("session qualities lock")
             .push(self.quality);
         *self.target.lock().expect("session target lock") = Some(target.to_owned());
-        on_started(None);
+        on_started();
         while !cancellation.is_cancelled() {
             thread::sleep(Duration::from_millis(2));
         }
@@ -481,13 +481,13 @@ impl SessionRunner for RecordingConfigSession {
         &mut self,
         _target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
         self.runs
             .lock()
             .expect("session argument runs lock")
             .push(self.current_arguments.clone());
-        on_started(None);
+        on_started();
         while !cancellation.is_cancelled() {
             thread::sleep(Duration::from_millis(2));
         }
@@ -510,10 +510,10 @@ impl SessionRunner for BlockingQualitySession {
         &mut self,
         _target: &str,
         _cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
         self.run_called.store(true, Ordering::Release);
-        on_started(None);
+        on_started();
         Ok(SessionExit::Ended)
     }
 
@@ -535,10 +535,10 @@ impl SessionRunner for EndingSession {
         &mut self,
         _target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
         *self.cancellation.lock().expect("session cancellation lock") = Some(cancellation.clone());
-        on_started(None);
+        on_started();
         self.release
             .recv_timeout(Duration::from_secs(1))
             .expect("release ending session");
@@ -557,10 +557,10 @@ impl SessionRunner for ControlledSession {
         &mut self,
         _target: &str,
         cancellation: &CancellationToken,
-        on_started: &mut dyn FnMut(Option<droid_peek_helper::session::PhysicalDisplaySize>),
+        on_started: &mut dyn FnMut(),
     ) -> Result<SessionExit, SessionFailure> {
         self.runs.fetch_add(1, Ordering::AcqRel);
-        on_started(None);
+        on_started();
         loop {
             match self.releases.recv_timeout(Duration::from_millis(10)) {
                 Ok(()) => {

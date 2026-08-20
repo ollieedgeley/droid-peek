@@ -245,17 +245,13 @@ impl SessionControl {
                             let result = session.run(
                                 &connected_target,
                                 &cancellation,
-                                &mut |physical_display| {
+                                &mut || {
                                     if !cancellation.is_cancelled()
                                         && generation.load(Ordering::Acquire) == current_generation
                                     {
                                         let _ = sink.emit_event(&Event::SessionStarted {
                                             helper_epoch: helper_epoch.clone(),
                                             session_generation: session_generation.clone(),
-                                            physical_width_mm: physical_display
-                                                .map(|size| size.width_mm()),
-                                            physical_height_mm: physical_display
-                                                .map(|size| size.height_mm()),
                                             screen_off_enabled,
                                         });
                                     }
@@ -651,11 +647,10 @@ where
             match flow.lock() {
                 Ok(mut flow) => {
                     let mut capture = |event| match event {
-                        PairingEvent::Pairing { method } => {
+                        PairingEvent::Pairing { .. } => {
                             if generation.load(Ordering::Acquire) == pending_generation {
                                 let _ = progress_sink.emit_event(&Event::Pairing {
                                     helper_epoch: progress_epoch.clone(),
-                                    method,
                                 });
                             }
                         }
@@ -867,9 +862,8 @@ impl<S> Drop for RuntimePairingBackend<S> {
 
 fn pairing_event(helper_epoch: &str, session_generation: u64, event: PairingEvent) -> Event {
     match event {
-        PairingEvent::Pairing { method } => Event::Pairing {
+        PairingEvent::Pairing { .. } => Event::Pairing {
             helper_epoch: helper_epoch.to_owned(),
-            method,
         },
         PairingEvent::PairingCancelled => Event::PairingCancelled {
             helper_epoch: helper_epoch.to_owned(),

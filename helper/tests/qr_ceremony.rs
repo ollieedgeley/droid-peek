@@ -452,7 +452,6 @@ fn replacement_uses_active_qr_material_and_suppresses_stale_worker_events() {
         [
             Event::Pairing {
                 helper_epoch: HELPER_EPOCH.to_owned(),
-                method: droid_peek_helper::protocol::PairingMethod::Qr,
             }
             .to_line(),
             Event::Paired {
@@ -556,7 +555,6 @@ fn manual_worker_starts_after_the_synchronous_pairing_event() {
         [
             Event::Pairing {
                 helper_epoch: HELPER_EPOCH.to_owned(),
-                method: droid_peek_helper::protocol::PairingMethod::ManualCode,
             }
             .to_line(),
             Event::Paired {

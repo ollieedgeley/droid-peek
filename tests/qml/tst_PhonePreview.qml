@@ -22,6 +22,7 @@ TestCase {
         sessionGeneration: "1"
         applicationState: "closed"
         videoInputs: []
+        capturePipelineReleaseDelayMs: 20
     }
 
     SignalSpy {
@@ -61,6 +62,13 @@ TestCase {
         fallbackFocus.forceActiveFocus()
         wait(0)
     }
+    function waitForCapturePipeline() {
+        tryVerify(function () {
+            return !preview.capturePipelineCreationPending
+                    && preview.capturePipeline !== null
+        }, 500)
+    }
+
 
     function test_default_surface_uses_live_popup_roles() {
         compare(Color.popups.text, "#123456")
@@ -131,8 +139,12 @@ TestCase {
         compare(preview.captureEpoch, preRefreshEpoch)
         wait(0)
         compare(preview.captureEpoch, preRefreshEpoch + 1)
+        compare(preview.capturePipelineCreationPending, true)
+        compare(preview.capturePipeline, null)
+        waitForCapturePipeline()
 
         var currentCaptureEpoch = preview.captureEpoch
+        compare(currentCaptureEpoch, preRefreshEpoch + 1)
         verify(preview.acceptCaptureSource(
                    currentCaptureEpoch, preview.helperEpoch,
                    eventSessionGeneration,
@@ -168,7 +180,6 @@ TestCase {
         verify(preview.acceptCaptureSource(
                    preRefreshEpoch, "17", "1",
                    preview.deviceId, preview.deviceDescription))
-
         verify(!preview.acceptRenderedFrame(
                    preRefreshEpoch, "17", "1", 1080, 2392, true))
         compare(preview.captureEpoch, preRefreshEpoch)
@@ -176,12 +187,18 @@ TestCase {
         wait(0)
 
         compare(preview.captureEpoch, preRefreshEpoch + 1)
+        compare(preview.capturePipelineCreationPending, true)
+        compare(preview.capturePipeline, null)
         var currentCaptureEpoch = preview.captureEpoch
         verify(!preview.acceptCaptureSource(
                    preRefreshEpoch, "17", "1",
                    preview.deviceId, preview.deviceDescription))
         verify(!preview.acceptRenderedFrame(
                    preRefreshEpoch, "17", "1", 1080, 2392, true))
+
+        waitForCapturePipeline()
+        compare(preview.captureEpoch, currentCaptureEpoch)
+        compare(preview.capturePipeline.epoch, currentCaptureEpoch)
         verify(preview.acceptCaptureSource(
                    currentCaptureEpoch, "17", "1",
                    preview.deviceId, preview.deviceDescription))
@@ -195,6 +212,7 @@ TestCase {
                    currentCaptureEpoch, "17", "1", 720, 1600, true))
         wait(0)
         compare(preview.captureEpoch, currentCaptureEpoch)
+        compare(preview.capturePipelineCreationPending, false)
         compare(preview.displayWidth, 720)
         compare(preview.displayHeight, 1600)
     }
@@ -385,6 +403,58 @@ TestCase {
         compare(preview.displayWidth, 0)
         compare(preview.displayHeight, 0)
     }
+    function test_stopping_capture_during_release_cancels_pending_replacement() {
+        preview.captureRequested = true
+        var preRefreshEpoch = preview.captureEpoch
+        verify(preview.acceptCaptureSource(
+                   preRefreshEpoch, "17", "1",
+                   preview.deviceId, preview.deviceDescription))
+        verify(!preview.acceptRenderedFrame(
+                   preRefreshEpoch, "17", "1", 1080, 2392, true))
+        wait(0)
+
+        var releaseEpoch = preview.captureEpoch
+        compare(releaseEpoch, preRefreshEpoch + 1)
+        compare(preview.capturePipelineCreationPending, true)
+        compare(preview.capturePipeline, null)
+        preview.captureRequested = false
+        compare(preview.capturePipelineCreationPending, false)
+        wait(preview.capturePipelineReleaseDelayMs * 2)
+        compare(preview.captureEpoch, releaseEpoch)
+        compare(preview.capturePipelineCreationPending, false)
+        compare(preview.capturePipeline, null)
+    }
+
+    function test_generation_change_during_release_cancels_old_replacement() {
+        preview.captureRequested = true
+        var oldPreRefreshEpoch = preview.captureEpoch
+        verify(preview.acceptCaptureSource(
+                   oldPreRefreshEpoch, "17", "1",
+                   preview.deviceId, preview.deviceDescription))
+        verify(!preview.acceptRenderedFrame(
+                   oldPreRefreshEpoch, "17", "1", 1080, 2392, true))
+        wait(0)
+
+        var oldReleaseEpoch = preview.captureEpoch
+        compare(oldReleaseEpoch, oldPreRefreshEpoch + 1)
+        compare(preview.capturePipelineCreationPending, true)
+        compare(preview.capturePipeline, null)
+        preview.sessionGeneration = "2"
+        var newIdentityEpoch = preview.captureEpoch
+        verify(newIdentityEpoch > oldReleaseEpoch)
+        compare(preview.capturePipelineCreationPending, true)
+        compare(preview.capturePipeline, null)
+
+        waitForCapturePipeline()
+        compare(preview.captureEpoch, newIdentityEpoch)
+        compare(preview.capturePipeline.epoch, newIdentityEpoch)
+        compare(preview.capturePipeline.helperEpochSnapshot, "17")
+        compare(preview.capturePipeline.sessionGenerationSnapshot, "2")
+        verify(!preview.acceptCaptureSource(
+                   oldReleaseEpoch, "17", "1",
+                   preview.deviceId, preview.deviceDescription))
+    }
+
 
     function test_pointer_mapping_excludes_letterbox_and_normalizes_content() {
         var topLeft = preview.normalizedPoint(20, 40, Qt.rect(20, 40, 200, 400))

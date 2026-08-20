@@ -250,7 +250,6 @@ impl<B: PairingBackend> ProtocolEngine<B> {
                 }]
             }
             Command::SubmitManualCode { code, .. } => {
-                let code = Zeroizing::new(code);
                 if code.len() != 6 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
                     return vec![self.protocol_error(ProtocolErrorReason::InvalidCommand)];
                 }
@@ -590,7 +589,8 @@ enum Command {
     SubmitManualCode {
         #[serde(rename = "helperEpoch", default)]
         helper_epoch: Option<String>,
-        code: String,
+        #[serde(deserialize_with = "deserialize_zeroizing_string")]
+        code: Zeroizing<String>,
     },
     ReconnectTrustedDevice {
         #[serde(rename = "helperEpoch", default)]
@@ -787,14 +787,37 @@ where
     Ok(serde_json::from_value(value).ok())
 }
 
+fn deserialize_zeroizing_string<'de, D>(deserializer: D) -> Result<Zeroizing<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Zeroizing::new)
+}
+
+fn take_pairing_code(value: &mut serde_json::Value) -> Option<Zeroizing<String>> {
+    let object = value.as_object_mut()?;
+    match object.remove("code") {
+        Some(serde_json::Value::String(code)) => Some(Zeroizing::new(code)),
+        Some(other) => {
+            object.insert("code".to_owned(), other);
+            None
+        }
+        None => None,
+    }
+}
+
 fn parse_command(line: &str) -> Result<Command, ProtocolErrorReason> {
     let mut value: serde_json::Value =
         serde_json::from_str(line).map_err(|_| ProtocolErrorReason::InvalidCommand)?;
-    let version = value
-        .get("version")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or(ProtocolErrorReason::InvalidCommand)?;
+    let version = match value.get("version").and_then(serde_json::Value::as_u64) {
+        Some(version) => version,
+        None => {
+            drop(take_pairing_code(&mut value));
+            return Err(ProtocolErrorReason::InvalidCommand);
+        }
+    };
     if version != u64::from(PROTOCOL_VERSION) {
+        drop(take_pairing_code(&mut value));
         return Err(ProtocolErrorReason::VersionMismatch);
     }
     value
@@ -910,7 +933,6 @@ pub enum Event {
         helper_epoch: String,
         #[serde(rename = "sessionGeneration")]
         session_generation: String,
-        #[serde(flatten)]
         preferences: Preferences,
         #[serde(rename = "sessionRestarted")]
         session_restarted: bool,
@@ -1000,4 +1022,39 @@ pub enum PairingMethod {
 pub enum ProtocolErrorReason {
     InvalidCommand,
     VersionMismatch,
+}
+
+#[cfg(test)]
+mod pairing_code_zeroize_tests {
+    use super::{parse_command, take_pairing_code, Command};
+    use zeroize::Zeroizing;
+
+    #[test]
+    fn parse_command_wraps_manual_code_before_epoch_admission() {
+        let command = parse_command(
+            r#"{"version":11,"type":"submit-manual-code","helperEpoch":"stale-epoch","code":"482913"}"#,
+        )
+        .expect("stale helper epoch still deserializes");
+        match command {
+            Command::SubmitManualCode { code, helper_epoch } => {
+                let code: &Zeroizing<String> = &code;
+                assert_eq!(code.as_str(), "482913");
+                assert_eq!(helper_epoch.as_deref(), Some("stale-epoch"));
+            }
+            _ => panic!("expected submit-manual-code"),
+        }
+    }
+
+    #[test]
+    fn version_mismatch_takes_pairing_code_out_of_json_value() {
+        let mut value = serde_json::json!({
+            "version": 10,
+            "type": "submit-manual-code",
+            "helperEpoch": "73001",
+            "code": "482913"
+        });
+        let code = take_pairing_code(&mut value).expect("code present");
+        assert_eq!(code.as_str(), "482913");
+        assert!(value.get("code").is_none());
+    }
 }

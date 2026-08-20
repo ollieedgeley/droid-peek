@@ -264,6 +264,38 @@ fn manual_code_is_consumed_without_appearing_in_events() {
 }
 
 #[test]
+fn stale_epoch_submit_manual_code_does_not_echo_code() {
+    let mut engine = engine(FakePairingBackend::default());
+    let code = "482913";
+    let events = wire_lines(engine.handle_line(&format!(
+        r#"{{"version":11,"type":"submit-manual-code","helperEpoch":"stale","code":"{code}"}}"#
+    )));
+
+    assert_eq!(
+        events,
+        [r#"{"version":11,"type":"action-result","helperEpoch":"73001","sessionGeneration":"0","outcome":"stale-session"}"#]
+    );
+    assert!(events.iter().all(|event| !event.contains(code)));
+    assert!(engine.into_backend().manual_codes.is_empty());
+}
+
+#[test]
+fn version_mismatch_submit_manual_code_does_not_echo_code() {
+    let mut engine = engine(FakePairingBackend::default());
+    let code = "482913";
+    let events = wire_lines(engine.handle_line(&format!(
+        r#"{{"version":10,"type":"submit-manual-code","helperEpoch":"{HELPER_EPOCH}","code":"{code}"}}"#
+    )));
+
+    assert_eq!(
+        events,
+        [r#"{"version":11,"type":"protocol-error","helperEpoch":"73001","reason":"version-mismatch"}"#]
+    );
+    assert!(events.iter().all(|event| !event.contains(code)));
+    assert!(engine.into_backend().manual_codes.is_empty());
+}
+
+#[test]
 fn reconnect_stop_and_start_over_advance_generation_before_their_events() {
     let mut engine = engine(FakePairingBackend::default());
 
@@ -306,7 +338,7 @@ fn preferences_are_schema_one_and_quality_restart_advances_generation() {
         wire_lines(engine.handle_line(
             r#"{"version":11,"type":"set-preferences","helperEpoch":"73001","keepConnected":true,"androidModeShortcuts":false,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"]}"#,
         )),
-        [r#"{"version":11,"type":"preferences-updated","helperEpoch":"73001","sessionGeneration":"1","keepConnected":true,"androidModeShortcuts":false,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"],"sessionRestarted":true}"#]
+        [r#"{"version":11,"type":"preferences-updated","helperEpoch":"73001","sessionGeneration":"1","preferences":{"keepConnected":true,"androidModeShortcuts":false,"previewScale":150,"videoQuality":"low","quickActions":["home","recent-apps","back"]},"sessionRestarted":true}"#]
     );
 
     let backend = engine.into_backend();

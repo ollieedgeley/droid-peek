@@ -45,8 +45,11 @@ panel. `qml/` owns panel components and local UI state. Plugin QML executes
 unsandboxed inside the long-running `omarchy-shell` process.
 
 The helper in `helper/` owns the protocol, persistence, ADB, Avahi, and
-scrcpy boundaries. It passes ADB arguments as separated process arguments,
-discards subprocess output, and runs scrcpy with control disabled.
+scrcpy boundaries. It passes ADB arguments as separated process arguments
+and discards subprocess output. scrcpy control is off unless the admitted
+`scrcpyArgs` list contains `--keep-active`, `--stay-awake`, or
+`--turn-screen-off`; the shipped template includes those flags, so the
+default session has control.
 QML-originated input uses a separate validated ADB adapter.
 
 `integrations/phone-bindings.lua` defines the plugin-owned phone-submap API.

@@ -1019,14 +1019,7 @@ where
         self.generation.fetch_add(1, Ordering::AcqRel);
         if let Ok(_flow) = self.flow.lock() {}
 
-        let had_active_session = self.session.target().ok().flatten().is_some();
-        let generation = self.session.invalidate_and_wait();
-        if had_active_session {
-            let _ = self.sink.emit_event(&Event::SessionEnded {
-                helper_epoch: self.helper_epoch.clone(),
-                session_generation: generation.to_string(),
-            });
-        }
+        self.session.invalidate_and_wait();
     }
 
     fn start_over(&mut self) -> Result<(), FailureReason> {

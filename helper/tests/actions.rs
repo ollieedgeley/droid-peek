@@ -122,8 +122,11 @@ impl CommandRunner for FakeActionRunner {
     fn run(
         &mut self,
         request: CommandRequest,
-        _cancellation: &CancellationToken,
+        cancellation: &CancellationToken,
     ) -> Result<CommandOutput, CommandFailure> {
+        if cancellation.is_cancelled() {
+            return Err(CommandFailure::Cancelled);
+        }
         self.requests.push(request);
         self.outputs
             .pop_front()
@@ -241,4 +244,23 @@ fn target_adapter_preserves_process_failure_as_an_action_outcome() {
         adapter.execute("device.local:38100", &PhoneTarget::NavigateHome),
         Err(ActionExecutionFailure::Cancelled)
     );
+}
+
+#[test]
+fn cancelled_action_runner_does_not_report_queued_success() {
+    let mut runner = FakeActionRunner {
+        outputs: VecDeque::from([Ok(CommandOutput { succeeded: true })]),
+        ..FakeActionRunner::default()
+    };
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    assert_eq!(
+        runner.run(
+            CommandRequest::new("adb", vec!["version".to_owned()]),
+            &cancellation,
+        ),
+        Err(CommandFailure::Cancelled)
+    );
+    assert!(runner.requests.is_empty());
 }

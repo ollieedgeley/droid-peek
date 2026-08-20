@@ -73,11 +73,11 @@ TestCase {
 
     function test_ensurePanel_returns_identical_instance() {
         var seen = null
-        var first = SessionRegistry.ensurePanel(panelUrl(), sharedBar,
+        var first = SessionRegistry.ensurePanel(panelUrl(),
                                                 function (created) {
                                                     seen = created
                                                 })
-        var second = SessionRegistry.ensurePanel(panelUrl(), sharedBar)
+        var second = SessionRegistry.ensurePanel(panelUrl())
         verify(first !== null)
         compare(first, seen)
         compare(first, second)
@@ -87,7 +87,7 @@ TestCase {
     function test_ensurePanel_missing_file_returns_null() {
         var seen = "unset"
         var created = SessionRegistry.ensurePanel(
-                    Qt.resolvedUrl("../../missing-panel.qml"), sharedBar,
+                    Qt.resolvedUrl("../../missing-panel.qml"),
                     function (panel) {
                         seen = panel
                     })

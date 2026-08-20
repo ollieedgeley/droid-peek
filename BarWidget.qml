@@ -11,15 +11,13 @@ BarWidget {
                                    && panel.hostWidget === root
 
     function bindSharedPanel() {
-        SessionRegistry.ensurePanel(Qt.resolvedUrl("Panel.qml"),
-                                    root.bar || root, function (created) {
+        SessionRegistry.ensurePanel(Qt.resolvedUrl("Panel.qml"), function (created) {
             root.panel = created
         })
     }
 
     function open() {
-        SessionRegistry.ensurePanel(Qt.resolvedUrl("Panel.qml"),
-                                    root.bar || root, function (created) {
+        SessionRegistry.ensurePanel(Qt.resolvedUrl("Panel.qml"), function (created) {
             root.panel = created
             if (!root.panel)
                 return

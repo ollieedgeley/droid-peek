@@ -115,7 +115,9 @@ TestCase {
     function test_capture_is_off_until_requested() {
         compare(preview.active, false)
         compare(preview.firstValidFrameReceived, false)
-        compare(preview.interactionReady, false)
+        compare(preview.captureAvailable, false)
+        compare(preview.displayWidth, 0)
+        compare(preview.displayHeight, 0)
     }
 
     function test_generation_change_recreates_capture_pipeline_and_clears_facts() {
@@ -137,7 +139,10 @@ TestCase {
         compare(preview.capturePipeline.epoch, preview.captureEpoch)
         compare(preview.capturePipeline.helperEpochSnapshot, "17")
         compare(preview.capturePipeline.sessionGenerationSnapshot, "2")
-        compare(preview.interactionReady, false)
+        compare(preview.captureAvailable, false)
+        compare(preview.active, false)
+        compare(preview.displayWidth, 0)
+        compare(preview.displayHeight, 0)
     }
 
     function test_old_capture_callbacks_cannot_adopt_the_new_identity() {
@@ -187,7 +192,10 @@ TestCase {
                    preview.deviceId, preview.deviceDescription))
 
         compare(preview.firstValidFrameReceived, false)
-        compare(preview.interactionReady, false)
+        compare(preview.captureAvailable, false)
+        compare(preview.active, false)
+        compare(preview.displayWidth, 0)
+        compare(preview.displayHeight, 0)
         verify(preview.acceptRenderedFrame(
                    currentCaptureEpoch, "17", "1", 1080, 2392))
         compare(preview.firstValidFrameReceived, true)
@@ -219,7 +227,10 @@ TestCase {
         preview.captureRequested = false
 
         compare(preview.firstValidFrameReceived, false)
-        compare(preview.interactionReady, false)
+        compare(preview.captureAvailable, false)
+        compare(preview.active, false)
+        compare(preview.displayWidth, 0)
+        compare(preview.displayHeight, 0)
     }
 
     function test_pointer_mapping_excludes_letterbox_and_normalizes_content() {

@@ -311,7 +311,6 @@ Panel {
     ApplicationState {
         id: applicationStateModel
         objectName: "applicationStateModel"
-        factsExternallyManaged: true
         panelOpen: root.opened
         managementOpen: root.managementOpen
         helperReady: pairingState.helperReady

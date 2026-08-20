@@ -10,7 +10,22 @@ TestCase {
     }
 
     function init() {
-        state.reset()
+        state.panelOpen = false
+        state.managementOpen = false
+        state.helperReady = false
+        state.hasTrustedDevice = false
+        state.helperEpoch = ""
+        state.sessionGeneration = ""
+        state.sessionStarted = false
+        state.connectionPresentationActive = false
+        state.captureAvailable = false
+        state.captureActive = false
+        state.firstValidFrameReceived = false
+        state.displayWidth = 0
+        state.displayHeight = 0
+        state.previewInputEnabled = false
+        state.helperActivity = ""
+        state.helperReason = ""
     }
 
     function makeInteractive() {

@@ -9,7 +9,7 @@ var hostCount = 0
 var StatusReady = 1
 var StatusError = 3
 
-function ensurePanel(componentUrl, parent, onReady) {
+function ensurePanel(componentUrl, onReady) {
     if (typeof onReady === "function")
         waiters.push(onReady)
     if (panel !== null) {
@@ -17,14 +17,14 @@ function ensurePanel(componentUrl, parent, onReady) {
         return panel
     }
     if (inflight === null)
-        startLoad(componentUrl, parent)
+        startLoad(componentUrl)
     return panel
 }
 
-function startLoad(componentUrl, parent) {
+function startLoad(componentUrl) {
     var component = Qt.createComponent(componentUrl)
     if (component.status === StatusReady) {
-        finish(component, parent)
+        finish(component)
         return
     }
     if (component.status === StatusError) {
@@ -38,7 +38,7 @@ function startLoad(componentUrl, parent) {
             return
         inflight = null
         if (component.status === StatusReady)
-            finish(component, parent)
+            finish(component)
         else if (component.status === StatusError) {
             console.warn("Droid Peek: failed to load panel:",
                          component.errorString())
@@ -47,7 +47,7 @@ function startLoad(componentUrl, parent) {
     })
 }
 
-function finish(component, parent) {
+function finish(component) {
     if (panel === null)
         panel = component.createObject(null)
     if (panel === null)

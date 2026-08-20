@@ -17,7 +17,6 @@ QtObject {
     property int displayWidth: 0
     property int displayHeight: 0
     property bool previewInputEnabled: false
-    property bool factsExternallyManaged: false
     property string helperActivity: ""
     property string helperReason: ""
     readonly property bool captureSurfaceRequired: panelOpen
@@ -51,45 +50,4 @@ QtObject {
                                               ? "starting-preview"
                                               : "")
     readonly property string reason: helperReason
-
-    function clearSessionFacts() {
-        sessionStarted = false;
-        captureAvailable = false;
-        captureActive = false;
-        firstValidFrameReceived = false;
-        displayWidth = 0;
-        displayHeight = 0;
-        previewInputEnabled = false;
-    }
-
-    function reset() {
-        panelOpen = false;
-        managementOpen = false;
-        if (!factsExternallyManaged) {
-            helperReady = false;
-            hasTrustedDevice = false;
-            connectionPresentationActive = false;
-            helperEpoch = "";
-            sessionGeneration = "";
-            helperActivity = "";
-            helperReason = "";
-            clearSessionFacts();
-        }
-    }
-
-    onHelperEpochChanged: {
-        if (!factsExternallyManaged) {
-            helperReady = false;
-            sessionGeneration = helperEpoch === "" ? "" : "0";
-            connectionPresentationActive = false;
-            helperActivity = "";
-            helperReason = "";
-            clearSessionFacts();
-        }
-    }
-
-    onSessionGenerationChanged: {
-        if (!factsExternallyManaged)
-            clearSessionFacts();
-    }
 }

@@ -49,11 +49,6 @@ Item {
                                              : (capturePipeline !== null
                                                 ? Math.round(capturePipeline.sourceRect.height)
                                                 : 0)
-    readonly property bool interactionReady: captureAvailable && active
-                                                && firstValidFrameReceived
-                                                && displayWidth > 0
-                                                && displayHeight > 0
-                                                && previewInputEnabled
 
     signal tapRequested(real x, real y, int displayWidth, int displayHeight,
                         string helperEpoch, string sessionGeneration)

@@ -10,6 +10,7 @@
 /.omp/*
 !/.omp/extensions/
 !/.omp/extensions/**
+!/.omp/lsp.json
 /.pi/*
 !/.pi/extensions/
 !/.pi/extensions/**

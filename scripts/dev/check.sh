@@ -38,7 +38,6 @@ run_check "test phone-binding template" lua tests/hyprland-routing-config.lua in
 run_check "check architecture contracts" scripts/dev/check-architecture.sh
 run_check "lint QML" scripts/dev/lint-qml.sh
 run_check "run QML tests" "$qt6_bin/qmltestrunner" -import "$lint_root" -import "$root_dir/tests/qml/imports" -input tests/qml
-run_check "check Rust formatting" cargo fmt --manifest-path helper/Cargo.toml -- --check
-run_check "lint Rust" cargo clippy --manifest-path helper/Cargo.toml --all-targets --all-features --locked -- -D warnings
+run_check "lint Rust" scripts/dev/lint-rust.sh
 run_check "test Rust helper" cargo nextest run --manifest-path helper/Cargo.toml --locked
 run_check "build Rust documentation" env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path helper/Cargo.toml --no-deps --locked

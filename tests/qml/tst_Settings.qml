@@ -98,6 +98,7 @@ TestCase {
     function test_keep_connected_preserves_other_preferences() {
         var control = findObject("objectName", "keepConnectedControl");
         verify(control !== null);
+        compare(control.label, "Keep device connected");
 
         var expected = currentPreferences();
         expected.keepConnected = true;

@@ -141,7 +141,7 @@ NestedEscapeScope {
             focusable: true
             bordered: true
             iconText: "\uf053"
-            tooltipText: "Back to phone"
+            tooltipText: "Back to device"
             foreground: toolbarRoot.foreground
             onClicked: toolbarRoot.backRequested()
         }

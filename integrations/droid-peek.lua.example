@@ -1,6 +1,6 @@
 -- ~/.config/hypr/droid-peek.lua
 --
--- Droid Peek phone-mode bindings. Edit for your own phone.
+-- Droid Peek Android-mode bindings. Edit for your own Android device.
 
 local android = dofile(
   os.getenv("HOME")
@@ -63,7 +63,7 @@ android.define_submap("droid-peek", function()
   -- })
 
   -- Browsers
-  -- Uncomment the one installed on your phone.
+  -- Uncomment the one installed on your Android device.
 
   -- Chrome
   -- android.bind("SUPER + SHIFT + RETURN", "Chrome", {

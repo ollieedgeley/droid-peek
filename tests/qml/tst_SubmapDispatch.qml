@@ -12,7 +12,7 @@ TestCase {
     readonly property string shortcutsUnavailableTitle:
         "Android keyboard shortcuts unavailable"
     readonly property string shortcutsUnavailableDescription:
-        "Desktop phone shortcuts could not be activated. The phone connection may still be retained."
+        "Desktop Android shortcuts could not be activated. The device connection may still be retained."
 
     Item {
         id: anchorItem

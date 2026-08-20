@@ -462,7 +462,7 @@ TestCase {
         compare(state.reason, "dependency-unavailable")
         compare(state.statusTitle, "Android keyboard shortcuts unavailable")
         compare(state.statusDescription,
-                "Desktop phone shortcuts could not be activated. The phone connection may still be retained.")
+                "Desktop Android shortcuts could not be activated. The device connection may still be retained.")
         compare(state.pairingStage, "local-integration-failed")
 
         state.receiveLine(event("session-ended", {
@@ -636,18 +636,18 @@ TestCase {
         })
         compare(state.statusTitle, "Preview failed")
         compare(state.statusDescription,
-                "The phone connected but the panel never received a picture.")
+                "The Android device connected but the panel never received a picture.")
         compare(state.connectionPresentationActive, false)
         compare(state.sessionState, "disconnected")
         compare(state.sessionStarted, false)
-        verify(state.statusTitle !== "Phone unavailable")
+        verify(state.statusTitle !== "Device unavailable")
         verify(state.statusDescription.indexOf("trusted Wi-Fi") < 0)
 
         state.receiveLine(event("session-stopped", { sessionGeneration: "2" }))
         compare(state.sessionState, "disconnected")
         compare(state.statusTitle, "Preview failed")
         compare(state.statusDescription,
-                "The phone connected but the panel never received a picture.")
+                "The Android device connected but the panel never received a picture.")
         compare(state.connectionPresentationActive, false)
     }
 
@@ -663,7 +663,7 @@ TestCase {
         compare(commandSpy.count, 0)
         compare(state.sessionStarted, true)
         verify(state.statusTitle !== "Preview failed")
-        compare(state.statusTitle, "Phone connected")
+        compare(state.statusTitle, "Device connected")
     }
 
     function test_remount_after_retain_restarts_first_frame_watch() {

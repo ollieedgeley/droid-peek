@@ -1,0 +1,157 @@
+name: Release helper
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release-helper:
+    # Stable hosted label, not ubuntu-latest. JS actions (checkout, attest)
+    # run on the runner. The helper is built in the digest-pinned container.
+    runs-on: ubuntu-22.04
+    env:
+      BUILD_IMAGE: ubuntu:22.04@sha256:79676deb51ebb02885b0b9d33788e78a37cf1045ad79d1bb04c6a222c3556b3d
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Reject lightweight tags and verify tag version
+        id: tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          tag_type="$(git cat-file -t "refs/tags/${TAG}")"
+          if [[ "$tag_type" != tag ]]; then
+            printf 'refs/tags/%s is %s, not an annotated tag\n' "$TAG" "$tag_type" >&2
+            exit 1
+          fi
+
+          TAG_OBJECT_SHA="$(git rev-parse "refs/tags/${TAG}")"
+          PEELED_COMMIT_SHA="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          printf 'annotated tag object SHA: %s\n' "$TAG_OBJECT_SHA"
+          printf 'peeled commit SHA: %s\n' "$PEELED_COMMIT_SHA"
+          git checkout --detach "$PEELED_COMMIT_SHA"
+
+          manifest_version=""
+          while IFS= read -r line; do
+            if [[ -z "$manifest_version" && "$line" =~ \"version\":[[:space:]]*\"([^\"]+)\" ]]; then
+              manifest_version="${BASH_REMATCH[1]}"
+            fi
+          done <manifest.json
+          if [[ -z "$manifest_version" ]]; then
+            printf 'manifest.json version is missing\n' >&2
+            exit 1
+          fi
+          expected_tag="v${manifest_version}"
+          if [[ "$TAG" != "$expected_tag" ]]; then
+            printf 'tag %s is not exactly %s\n' "$TAG" "$expected_tag" >&2
+            exit 1
+          fi
+
+          asset_name="droid-peek-helper-${manifest_version}-x86_64-unknown-linux-gnu"
+          {
+            printf 'tag=%s\n' "$TAG"
+            printf 'version=%s\n' "$manifest_version"
+            printf 'asset_name=%s\n' "$asset_name"
+            printf 'tag_object_sha=%s\n' "$TAG_OBJECT_SHA"
+            printf 'peeled_commit_sha=%s\n' "$PEELED_COMMIT_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: ShellCheck public scripts
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck -- scripts/setup-droid-peek scripts/cleanup-droid-peek scripts/lib/*.sh
+
+      # Host-only (do not run in this workflow): scripts/dev/check.sh,
+      # scripts/dev/check-architecture.sh, and scripts/dev/check-supply-chain.sh.
+      - name: Build helper in pinned container
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          ASSET_NAME: ${{ steps.tag.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --volume "$PWD":/work \
+            --workdir /work \
+            --env VERSION \
+            --env ASSET_NAME \
+            "$BUILD_IMAGE" \
+            bash -euo pipefail -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                ca-certificates curl git build-essential
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
+                -y \
+                --default-toolchain 1.97.1 \
+                --profile minimal \
+                --component rustfmt,clippy \
+                --target x86_64-unknown-linux-gnu
+              . "$HOME/.cargo/env"
+              rustc_version="$(rustc --version)"
+              case "$rustc_version" in
+                "rustc 1.97.1 "*) ;;
+                *)
+                  printf "expected rustc 1.97.1, got %s\n" "$rustc_version" >&2
+                  exit 1
+                  ;;
+              esac
+              scripts/dev/check-release-version
+              cargo fmt --check --manifest-path helper/Cargo.toml
+              cargo clippy --manifest-path helper/Cargo.toml -- -D warnings
+              cargo test --locked --manifest-path helper/Cargo.toml
+              cargo build --locked --release --manifest-path helper/Cargo.toml \
+                --target x86_64-unknown-linux-gnu
+              mkdir -p dist
+              cp -- helper/target/x86_64-unknown-linux-gnu/release/droid-peek-helper \
+                "dist/${ASSET_NAME}"
+              chmod 0755 "dist/${ASSET_NAME}"
+              got="$("dist/${ASSET_NAME}" --version)"
+              if [[ "$got" != "$VERSION" ]]; then
+                printf "helper --version reported %s, expected %s\n" "$got" "$VERSION" >&2
+                exit 1
+              fi
+              (cd dist && sha256sum -- "$ASSET_NAME" > SHA256SUMS)
+            '
+          mapfile -t sums_lines < dist/SHA256SUMS
+          if [[ "${#sums_lines[@]}" -ne 1 ]]; then
+            printf 'SHA256SUMS must contain exactly one line, found %s\n' "${#sums_lines[@]}" >&2
+            exit 1
+          fi
+          sums_line="${sums_lines[0]}"
+          if [[ "$sums_line" =~ ^([0-9a-fA-F]{64})[[:space:]]+\*?([^[:space:]]+)$ ]]; then
+            sums_name="${BASH_REMATCH[2]}"
+          else
+            printf 'SHA256SUMS line is malformed: %s\n' "$sums_line" >&2
+            exit 1
+          fi
+          if [[ "$sums_name" != "$ASSET_NAME" ]]; then
+            printf 'SHA256SUMS names %s, expected %s\n' "$sums_name" "$ASSET_NAME" >&2
+            exit 1
+          fi
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          ASSET_NAME: ${{ steps.tag.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          gh release create --draft --verify-tag "$TAG" \
+            "dist/${ASSET_NAME}" \
+            dist/SHA256SUMS
+
+      - name: Attest helper binary
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: ${{ github.workspace }}/dist/${{ steps.tag.outputs.asset_name }}

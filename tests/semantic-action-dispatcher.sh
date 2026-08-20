@@ -2,7 +2,10 @@
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-configurator="$root_dir/scripts/configure-droid-peek"
+# shellcheck source=../scripts/lib/common.sh
+source "$root_dir/scripts/lib/common.sh"
+# shellcheck source=../scripts/lib/hyprland.sh
+source "$root_dir/scripts/lib/hyprland.sh"
 template="$root_dir/integrations/droid-peek.lua.example"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/droid-peek-config-test.XXXXXX")"
 
@@ -57,7 +60,7 @@ require("hypr.user-lookalike")
 EOF
 cp "$xdg_home/hypr/bindings.lua" "$test_root/original-bindings.lua"
 
-HOME="$fake_home" XDG_CONFIG_HOME="$xdg_home" "$configurator" install
+HOME="$fake_home" XDG_CONFIG_HOME="$xdg_home" install_user_config
 
 [[ -f "$xdg_home/hypr/droid-peek.lua" ]] ||
   fail "install did not copy the user phone-binding template"
@@ -71,7 +74,7 @@ cp "$xdg_home/hypr/bindings.lua" "$test_root/installed-bindings.lua"
 printf '\n-- user-owned edit after installation\n' >>"$xdg_home/hypr/droid-peek.lua"
 cp "$xdg_home/hypr/droid-peek.lua" "$test_root/user-edited-phone-bindings.lua"
 
-HOME="$fake_home" XDG_CONFIG_HOME="$xdg_home" "$configurator" install
+HOME="$fake_home" XDG_CONFIG_HOME="$xdg_home" install_user_config
 cmp -s "$test_root/installed-bindings.lua" "$xdg_home/hypr/bindings.lua" ||
   fail "repeat install changed bindings.lua or duplicated the loader"
 cmp -s "$test_root/user-edited-phone-bindings.lua" "$xdg_home/hypr/droid-peek.lua" ||
@@ -83,7 +86,7 @@ HOME="$fake_home" \
   XDG_CONFIG_HOME="$xdg_home" \
   CHOWN_LOG="$chown_log" \
   PATH="$shim_bin:$PATH" \
-  "$configurator" uninstall
+  remove_managed_loader
 cmp -s "$test_root/original-bindings.lua" "$xdg_home/hypr/bindings.lua" ||
   fail "uninstall changed user bindings or failed to remove only the managed block"
 cmp -s "$test_root/user-edited-phone-bindings.lua" "$xdg_home/hypr/droid-peek.lua" ||
@@ -98,7 +101,7 @@ read -r chown_arguments <"$chown_log"
 [[ "$chown_arguments" == "--reference=$xdg_home/hypr/bindings.lua "* ]] ||
   fail "uninstall must copy owner and group from bindings.lua"
 
-HOME="$fake_home" XDG_CONFIG_HOME="$xdg_home" "$configurator" uninstall
+HOME="$fake_home" XDG_CONFIG_HOME="$xdg_home" remove_managed_loader
 cmp -s "$test_root/original-bindings.lua" "$xdg_home/hypr/bindings.lua" ||
   fail "repeat uninstall must be idempotent"
 
@@ -110,9 +113,9 @@ cat >"$symlink_target" <<'EOF'
 require("hypr.symlink-user")
 EOF
 ln -s "$symlink_target" "$symlink_home/hypr/bindings.lua"
-HOME="$fake_home" XDG_CONFIG_HOME="$symlink_home" "$configurator" install
+HOME="$fake_home" XDG_CONFIG_HOME="$symlink_home" install_user_config
 assert_exact_loader_count "$symlink_home/hypr/bindings.lua" 1
-HOME="$fake_home" XDG_CONFIG_HOME="$symlink_home" "$configurator" uninstall
+HOME="$fake_home" XDG_CONFIG_HOME="$symlink_home" remove_managed_loader
 [[ -L "$symlink_home/hypr/bindings.lua" ]] ||
   fail "uninstall replaced the user bindings.lua symlink"
 cat >"$test_root/expected-symlink-bindings.lua" <<'EOF'
@@ -136,14 +139,15 @@ cp \
   "$home_fallback/.config/hypr/droid-peek.lua" \
   "$test_root/existing-phone-bindings.lua"
 
-env -u XDG_CONFIG_HOME HOME="$home_fallback" "$configurator" install
+unset XDG_CONFIG_HOME
+HOME="$home_fallback" install_user_config
 cmp -s \
   "$test_root/existing-phone-bindings.lua" \
   "$home_fallback/.config/hypr/droid-peek.lua" ||
   fail "install overwrote an existing HOME-based user configuration"
 assert_exact_loader_count "$home_fallback/.config/hypr/bindings.lua" 1
 
-env -u XDG_CONFIG_HOME HOME="$home_fallback" "$configurator" uninstall
+HOME="$home_fallback" remove_managed_loader
 cat >"$test_root/expected-home-bindings.lua" <<'EOF'
 -- independent HOME fixture
 require("hypr.home-user")
@@ -156,3 +160,14 @@ cmp -s \
   "$test_root/existing-phone-bindings.lua" \
   "$home_fallback/.config/hypr/droid-peek.lua" ||
   fail "HOME-based uninstall removed the user-owned phone configuration"
+
+broken_home="$test_root/broken-symlink"
+mkdir -p "$broken_home/hypr"
+ln -s "$test_root/missing-bindings.lua" "$broken_home/hypr/bindings.lua"
+if (
+  HOME="$fake_home"
+  XDG_CONFIG_HOME="$broken_home"
+  install_user_config
+) 2>/dev/null; then
+  fail "broken bindings.lua symlink must be refused"
+fi

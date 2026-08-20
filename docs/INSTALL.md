@@ -14,8 +14,8 @@ The running kernel must come from Arch's `linux` package. A non-stock kernel
 is unsupported: setup fails before changing the host and tells you to install
 matching headers yourself.
 
-Setup preflights these packages and installs only the missing ones through
-`omarchy pkg add`. Droid Peek never invokes `pacman` directly.
+Install these packages first with `omarchy pkg add`. Setup never installs
+packages, never invokes `pacman`, and never enables a system service.
 
 - `android-tools`, providing `adb`
 - `avahi`, providing `avahi-browse` and the Avahi daemon
@@ -71,46 +71,48 @@ scripts/setup-droid-peek
 ```
 
 `--dry-run` and a normal run both print the complete planned operation before
-any host mutation: missing packages, helper asset, version, and install path,
-persistent V4L2 files, Avahi service action, and user Lua configuration action.
-A normal run requires explicit confirmation before the first privileged step.
+any host mutation: helper asset, version, and install path, persistent V4L2
+files, Avahi prerequisite status, and user Lua configuration action. A normal
+interactive run asks once with `gum` before the first host mutation. Pass
+`--yes` for non-interactive use. `--dry-run` and `--yes` never call `gum`.
 
 Setup then:
 
 1. Validates the release identity and version, then confirms the supported
-   x86_64 platform and stock `linux` kernel.
-2. Installs only missing supported packages through `omarchy pkg add`.
+   x86_64 platform, stock `linux` kernel, matching
+   `/usr/lib/modules/$(uname -r)/build` headers, and a ready `v4l2loopback`
+   DKMS build for that kernel.
+2. Confirms `avahi-daemon.service` is already active. Setup does not enable
+   Avahi.
 3. Downloads the version-matched helper from
    `https://github.com/ollieedgeley/droid-peek/releases/download/v<version>/`,
    verifies the strict `SHA256SUMS` entry and `droid-peek-helper --version`,
    and installs the binary mode `0755` at `~/.local/bin/droid-peek-helper`.
-4. Explains and, after confirmation, enables and starts
-   `avahi-daemon.service`.
-5. Provisions the dedicated V4L2 device described below.
-6. Invokes `scripts/configure-droid-peek install`. That copies
-   `integrations/droid-peek.lua.example` to `~/.config/hypr/droid-peek.lua`
-   only when that file is absent, and appends the managed
-   `require("hypr.droid-peek")` loader block to `~/.config/hypr/bindings.lua`
-   only when that block is absent.
-7. Verifies helper version, V4L2 path and label, Avahi availability, plugin
+4. Provisions the dedicated V4L2 device described below.
+5. Copies `integrations/droid-peek.lua.example` to
+   `~/.config/hypr/droid-peek.lua` only when that file is absent, and appends
+   the managed `require("hypr.droid-peek")` loader block to
+   `~/.config/hypr/bindings.lua` only when that block is absent.
+6. Verifies helper version, V4L2 path and label, Avahi availability, plugin
    discovery, and the user-module and loader result.
 
 Setup fails closed when the checked-out versions disagree, the matching
-release or asset is unavailable, or the checksum, architecture, or helper
-version is invalid. It never substitutes an arbitrary executable from `PATH`.
+release or asset is unavailable, or the checksum, architecture, headers, DKMS
+build, or helper version is invalid. It never substitutes an arbitrary
+executable from `PATH`.
 
-If a later stage fails after the loader is installed, setup reports that
-partial user-configuration state and offers
-`scripts/configure-droid-peek uninstall`. It never silently rewrites the user
-module or bindings file.
+If a later stage fails after the helper, V4L2 files, or loader are installed,
+setup reports that partial state and the matching
+`scripts/cleanup-droid-peek --yes` recovery command. It never silently
+rewrites the user module or bindings file.
 
-Only after verification succeeds may setup offer:
+Setup never enables the plugin. After verification succeeds it prints:
 
 ```bash
 omarchy plugin enable ollieedgeley.droidpeek
 ```
 
-It must not enable a half-configured plugin.
+Run that command yourself. Setup must not enable a half-configured plugin.
 
 ## Persistent V4L2 device
 
@@ -184,8 +186,8 @@ preferences by default.
    omarchy plugin enable ollieedgeley.droidpeek
    ```
 
-Re-running setup on an already configured host must not duplicate package,
-helper, V4L2, Lua-module, or loader changes. Opening newly updated QML against
+Re-running setup on an already configured host must not duplicate helper,
+V4L2, Lua-module, or loader changes. Opening newly updated QML against
 a stale helper outside this flow fails closed at the runtime version handshake.
 
 ## Cleanup and uninstall
@@ -207,13 +209,17 @@ Cleanup presents separate, unchecked-by-default choices to remove:
 4. Droid Peek trusted-device state and preferences
 
 Before any cleanup mutation, the script verifies that Droid Peek is disabled,
-its panel is closed, no Droid Peek helper, scrcpy, or guardian process is
-running, and `/dev/video42` has no users. If any check fails, cleanup makes no
-change.
+its panel is closed, no Droid Peek helper process is running, no scrcpy
+descendant of that helper is running, and `/dev/video42` has no users. If any
+check fails, cleanup makes no change. An unrelated scrcpy process is not a
+Droid Peek process.
 
-Cleanup always runs `scripts/configure-droid-peek uninstall` before the plugin
-checkout is removed, so it removes only its exact managed loader block whether
-or not the user retains `~/.config/hypr/droid-peek.lua`.
+Cleanup always removes only its exact managed loader block whether or not the
+user retains `~/.config/hypr/droid-peek.lua`. Bare
+`scripts/cleanup-droid-peek --yes` is non-interactive loader-only cleanup; it
+does not select optional removals. Add `--remove-helper`, `--remove-v4l2`,
+`--remove-user-config`, and `--remove-state` explicitly when those files
+should go too.
 
 Cleanup never removes shared packages, the Avahi package or service, or
 unrelated V4L2 configuration. It does not unload the shared V4L2 module or
@@ -224,11 +230,5 @@ Private device identity and preferences live under
 `${XDG_STATE_HOME:-$HOME/.local/state}/droid-peek`. Remove that directory
 only when intentionally forgetting the phone and every setting.
 
-To remove the managed Hyprland loader without deleting the user-owned module:
-
-```bash
-scripts/configure-droid-peek uninstall
-```
-
-Install and uninstall of that loader are idempotent. Uninstall removes only
-the exact managed block and preserves all other Hyprland configuration bytes.
+Loader addition and removal are idempotent. Removal deletes only the exact
+managed block and preserves all other Hyprland configuration bytes.

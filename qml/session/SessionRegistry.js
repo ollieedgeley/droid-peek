@@ -3,6 +3,7 @@
 var panel = null
 var inflight = null
 var waiters = []
+var hostCount = 0
 
 // QQmlComponent::Status. The JS library has no Component import.
 var StatusReady = 1
@@ -63,9 +64,33 @@ function flushWaiters() {
     }
 }
 
+function registerHost() {
+    hostCount += 1
+}
+
+function unregisterHost() {
+    if (hostCount <= 0)
+        return
+    hostCount -= 1
+    if (hostCount === 0)
+        teardownPanel()
+}
+
+function teardownPanel() {
+    waiters = []
+    inflight = null
+    if (!panel)
+        return
+    if (typeof panel.teardownSession === "function")
+        panel.teardownSession()
+    panel.destroy()
+    panel = null
+}
+
 function resetForTests() {
     waiters = []
     inflight = null
+    hostCount = 0
     if (panel) {
         panel.destroy()
         panel = null

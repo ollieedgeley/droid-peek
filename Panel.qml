@@ -182,8 +182,48 @@ Panel {
         return pairingState.setScrcpyConfiguration(revision, arguments);
     }
 
+    function decodeEnvelope(encodedEnvelope, maximumLength) {
+        if (typeof encodedEnvelope !== "string" || encodedEnvelope.length === 0
+                || encodedEnvelope.length > maximumLength
+                || !/^[A-Za-z0-9_-]+$/.test(encodedEnvelope))
+            return null;
+        var base64 = encodedEnvelope.replace(/-/g, "+").replace(/_/g, "/");
+        while (base64.length % 4 !== 0)
+            base64 += "=";
+        try {
+            var binary = Qt.atob(base64);
+            var escaped = "";
+            for (var index = 0; index < binary.length; ++index)
+                escaped += "%" + ("0" + binary.charCodeAt(index).toString(16)).slice(-2);
+            return JSON.parse(decodeURIComponent(escaped));
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function phoneTarget(encodedEnvelope) {
+        var request = decodeEnvelope(encodedEnvelope, 4096);
+        if (request === null)
+            return false;
+        return acceptPhoneTarget(request);
+    }
+
+    function configureScrcpy(revision, encodedConfiguration) {
+        var scrcpyArguments = decodeEnvelope(encodedConfiguration, 24000);
+        if (scrcpyArguments === null)
+            return false;
+        return setScrcpyConfiguration(revision, scrcpyArguments);
+    }
+
     function requestClose() {
         submapController.closePanel();
+    }
+
+    function teardownSession() {
+        helperShutdownPending = true;
+        if (opened)
+            requestClose();
+        finishHelperShutdown();
     }
 
     function activatePrimary() {
@@ -198,7 +238,7 @@ Panel {
         if (helperProcess.running || helperVersionProcess.running)
             return;
         if (helperExecutable === "") {
-            pairingState.localIntegrationFailure();
+            pairingState.protocolFailure();
             return;
         }
         helperVersionProcess.observedVersion = "";
@@ -460,7 +500,7 @@ Panel {
             if (!root.opened)
                 return;
             if (exitCode !== 0 || version !== buildInfo.releaseVersion) {
-                pairingState.localIntegrationFailure();
+                pairingState.protocolFailure();
                 return;
             }
             root.startHelperAfterVersionCheck();
@@ -492,6 +532,18 @@ Panel {
             }
             if (root.opened)
                 root.launchHelper();
+        }
+    }
+
+    IpcHandler {
+        target: "ollieedgeley.droidpeek"
+
+        function phoneTarget(encodedEnvelope: string): bool {
+            return root.phoneTarget(encodedEnvelope);
+        }
+        function configureScrcpy(revision: string,
+                                 encodedConfiguration: string): bool {
+            return root.configureScrcpy(revision, encodedConfiguration);
         }
     }
 

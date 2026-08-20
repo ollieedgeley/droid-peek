@@ -218,11 +218,13 @@ TestCase {
         establishLiveSession()
 
         state.receiveLine(event("preferences-updated", {
-            keepConnected: true,
-            previewScale: 125,
-            videoQuality: "medium",
-            quickActions: ["home", "back", "recent-apps"],
-            androidModeShortcuts: false,
+            preferences: {
+                keepConnected: true,
+                previewScale: 125,
+                videoQuality: "medium",
+                quickActions: ["home", "back", "recent-apps"],
+                androidModeShortcuts: false
+            },
             sessionRestarted: true,
             sessionGeneration: "2"
         }))
@@ -279,11 +281,13 @@ TestCase {
         establishLiveSession()
 
         state.receiveLine(event("preferences-updated", {
-            keepConnected: true,
-            previewScale: 125,
-            videoQuality: "medium",
-            quickActions: ["home", "back", "recent-apps"],
-            androidModeShortcuts: false,
+            preferences: {
+                keepConnected: true,
+                previewScale: 125,
+                videoQuality: "medium",
+                quickActions: ["home", "back", "recent-apps"],
+                androidModeShortcuts: false
+            },
             sessionRestarted: false,
             sessionGeneration: "1"
         }))
@@ -312,13 +316,6 @@ TestCase {
             outcome: "stale-session",
             sessionGeneration: "1"
         }))
-
-        state.receiveLine(event("action-result", {
-            requestId: "legacy-request",
-            outcome: "action-failed",
-            notificationCode: "target-failed",
-            sessionGeneration: "1"
-        }))
         compare(state.sessionGeneration, "1")
         compare(state.sessionStarted, true)
         compare(state.hasTrustedDevice, true)
@@ -333,6 +330,18 @@ TestCase {
         compare(phoneTargetCompletedSpy.signalArguments[2][0], "request-3")
         compare(phoneTargetCompletedSpy.signalArguments[2][1], "stale-session")
         compare(phoneTargetCompletedSpy.signalArguments[2][2], "")
+
+        commandSpy.clear()
+        state.receiveLine(event("action-result", {
+            requestId: "legacy-request",
+            outcome: "action-failed",
+            notificationCode: "target-failed",
+            sessionGeneration: "1"
+        }))
+        compare(state.sessionState, "dependency-unavailable")
+        compare(state.pairingStage, "protocol-error")
+        compare(commandSpy.count, 0)
+        compare(phoneTargetCompletedSpy.count, 3)
     }
 
     function test_stale_and_missing_epoch_events_are_ignored_before_any_fact_change() {
@@ -438,33 +447,36 @@ TestCase {
         compare(state.reason, "")
     }
 
-    function test_local_integration_failure_fails_closed_until_helper_restart() {
+    function test_local_integration_failure_keeps_session_and_receiveLine() {
         establishLiveSession()
+        compare(state.sessionGeneration, "1")
+        compare(state.sessionStarted, true)
+        var generation = state.sessionGeneration
+        var previewGeneration = state.previewReadyGeneration
 
         state.localIntegrationFailure()
         compare(state.helperReady, true)
         compare(state.hasTrustedDevice, true)
-        compare(state.sessionStarted, false)
+        compare(state.sessionStarted, true)
+        compare(state.sessionGeneration, generation)
+        compare(state.previewReadyGeneration, previewGeneration)
         compare(state.localIntegrationAvailable, false)
         compare(state.reason, "dependency-unavailable")
         compare(state.statusTitle, "Android keyboard shortcuts unavailable")
         compare(state.statusDescription,
                 "Desktop phone shortcuts could not be activated. The phone connection may still be retained.")
+        compare(state.pairingStage, "local-integration-failed")
 
-        state.receiveLine(event("session-started", {
-            sessionGeneration: "1"
+        state.receiveLine(event("session-ended", {
+            sessionGeneration: "2"
         }))
+        compare(state.sessionGeneration, "2")
         compare(state.sessionStarted, false)
         compare(state.localIntegrationAvailable, false)
 
         state.retryLocalIntegration()
         compare(state.localIntegrationAvailable, true)
         compare(state.helperReady, true)
-
-        state.receiveLine(event("session-started", {
-            sessionGeneration: "1"
-        }))
-        compare(state.sessionStarted, false)
 
         state.localIntegrationFailure()
         compare(state.localIntegrationAvailable, false)
@@ -778,6 +790,47 @@ TestCase {
             helperEpoch: "17",
             sessionGeneration: "2"
         })
+    }
+
+
+    function readyThen(line) {
+        state.receiveLine(event("ready", { hasTrustedDevice: false }))
+        commandSpy.clear()
+        state.receiveLine(line)
+    }
+
+    function test_receiveLine_malformed_text_is_fail_closed() {
+        readyThen("not-json")
+        compare(state.sessionState, "dependency-unavailable")
+        compare(state.pairingStage, "protocol-error")
+        compare(commandSpy.count, 0)
+    }
+
+    function test_receiveLine_version_ten_is_fail_closed() {
+        readyThen(JSON.stringify({
+            version: 10,
+            type: "qr-waiting",
+            helperEpoch: "17",
+            artifact: "/tmp/qr.svg",
+            expiresInSeconds: 120
+        }))
+        compare(state.sessionState, "dependency-unavailable")
+        compare(state.pairingStage, "protocol-error")
+        compare(commandSpy.count, 0)
+    }
+
+    function test_receiveLine_unknown_type_is_fail_closed() {
+        readyThen(event("unknown"))
+        compare(state.sessionState, "dependency-unavailable")
+        compare(state.pairingStage, "protocol-error")
+        compare(commandSpy.count, 0)
+    }
+
+    function test_receiveLine_protocol_error_is_fail_closed() {
+        readyThen(event("protocol-error"))
+        compare(state.sessionState, "dependency-unavailable")
+        compare(state.pairingStage, "protocol-error")
+        compare(commandSpy.count, 0)
     }
 
 }

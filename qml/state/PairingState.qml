@@ -387,17 +387,11 @@ QtObject {
         return typeof value === "number" && value >= 50 && value <= 150
                 && Math.floor(value) === value;
     }
-    function hasOnlyPreferenceKeys(preferences, eventEnvelope) {
+    function hasOnlyPreferenceKeys(preferences) {
         var allowed = [
             "keepConnected", "previewScale", "videoQuality",
             "quickActions", "androidModeShortcuts"
         ];
-        if (eventEnvelope) {
-            allowed = allowed.concat([
-                "version", "type", "helperEpoch", "sessionGeneration",
-                "sessionRestarted"
-            ]);
-        }
         var keys = Object.keys(preferences);
         for (var index = 0; index < keys.length; ++index) {
             if (allowed.indexOf(keys[index]) < 0)
@@ -407,8 +401,8 @@ QtObject {
     }
 
 
-    function validPreferences(preferences, eventEnvelope) {
-        if (!preferences || !hasOnlyPreferenceKeys(preferences, eventEnvelope)
+    function validPreferences(preferences) {
+        if (!preferences || !hasOnlyPreferenceKeys(preferences)
                 || typeof preferences.keepConnected !== "boolean"
                 || typeof preferences.androidModeShortcuts !== "boolean"
                 || !validPreviewScale(preferences.previewScale)
@@ -425,8 +419,8 @@ QtObject {
         return true;
     }
 
-    function applyPreferences(preferences, eventEnvelope) {
-        if (!validPreferences(preferences, eventEnvelope))
+    function applyPreferences(preferences) {
+        if (!validPreferences(preferences))
             return false;
         keepConnected = preferences.keepConnected;
         previewScale = preferences.previewScale;
@@ -476,14 +470,7 @@ QtObject {
     }
 
     function localIntegrationFailure() {
-        connectionPresentationActive = false;
-        previewReadyGeneration = "";
-        sessionGeneration = "";
-        startOverPending = false;
-        startOverGeneration = "";
         localIntegrationAvailable = false;
-        clearQrPresentation();
-        clearSessionFacts();
         sessionState = "dependency-unavailable";
         pairingStage = "local-integration-failed";
         activity = "";
@@ -602,8 +589,6 @@ QtObject {
             protocolFailure();
             return;
         }
-        if (!localIntegrationAvailable)
-            return;
         if (startOverPending
                 && ["session-ended", "session-stopped",
                     "start-over-complete", "lifecycle-failure", "failure",
@@ -659,13 +644,13 @@ QtObject {
                 return;
             }
             if (typeof event.sessionRestarted !== "boolean"
-                    || !validPreferences(event, true)) {
+                    || !validPreferences(event.preferences)) {
                 protocolFailure();
                 return;
             }
             if (event.sessionRestarted)
                 advanceGeneration(event.sessionGeneration);
-            applyPreferences(event, true);
+            applyPreferences(event.preferences);
             if (event.sessionRestarted) {
                 connectionPresentationActive = true;
                 sessionState = "connecting";
@@ -676,10 +661,13 @@ QtObject {
             }
             return;
         case "scrcpy-args-stale":
-            if (!isDecimalIdentity(event.sessionGeneration)
-                    || typeof event.revision !== "string"
-                    || !/^[0-9a-f]{16}$/.test(event.revision))
+            if (!isDecimalIdentity(event.sessionGeneration))
                 return;
+            if (typeof event.revision !== "string"
+                    || !/^[0-9a-f]{16}$/.test(event.revision)) {
+                protocolFailure();
+                return;
+            }
             if (event.sessionGeneration !== sessionGeneration) {
                 if (!isDecimalIdentity(sessionGeneration)
                         || event.sessionGeneration !== nextDecimal(sessionGeneration))
@@ -694,11 +682,15 @@ QtObject {
             sendDesiredScrcpyConfiguration();
             return;
         case "scrcpy-args-updated":
-            if (!isDecimalIdentity(event.sessionGeneration)
-                    || typeof event.sessionRestarted !== "boolean"
+            if (!isDecimalIdentity(event.sessionGeneration))
+                return;
+            if (typeof event.sessionRestarted !== "boolean"
                     || typeof event.revision !== "string"
-                    || event.revision !== desiredScrcpyRevision
-                    || typeof event.screenOffEnabled !== "boolean")
+                    || typeof event.screenOffEnabled !== "boolean") {
+                protocolFailure();
+                return;
+            }
+            if (event.revision !== desiredScrcpyRevision)
                 return;
             if (event.sessionRestarted === true) {
                 if (!isDecimalIdentity(sessionGeneration)
@@ -844,23 +836,28 @@ QtObject {
                 startQrPairing();
             return;
         case "action-result":
-            if (!admitCurrentGeneration(event, false)
-                    || !validActionRequestId(event.requestId)
+            if (!admitCurrentGeneration(event, false))
+                return;
+            if (!validActionRequestId(event.requestId)
                     || ["completed", "failed",
                         "stale-session"].indexOf(event.outcome) < 0
                     || (event.notificationCode !== undefined
                         && ["invalid-target", "target-failed",
                             "target-timed-out",
                             "invalid-deadline"].indexOf(
-                                event.notificationCode) < 0))
+                                event.notificationCode) < 0)) {
+                protocolFailure();
                 return;
+            }
             phoneTargetCompleted(event.requestId, event.outcome,
                                  event.notificationCode || "");
             return;
         case "failure":
             if (event.sessionGeneration !== undefined
-                    || !validFailureReason(event.reason))
+                    || !validFailureReason(event.reason)) {
+                protocolFailure();
                 return;
+            }
             if (startOverPending) {
                 connectionPresentationActive = false;
                 startOverPending = false;
@@ -892,8 +889,11 @@ QtObject {
             }
             return;
         case "lifecycle-failure":
-            if (!validFailureReason(event.reason)
-                    || !admitInvalidatingGeneration(event))
+            if (!validFailureReason(event.reason)) {
+                protocolFailure();
+                return;
+            }
+            if (!admitInvalidatingGeneration(event))
                 return;
             applyLifecycleFailure(event.reason);
             return;

@@ -52,11 +52,6 @@ impl FileTrustedDeviceStore {
     }
 
     #[must_use]
-    pub fn directory(&self) -> &Path {
-        &self.directory
-    }
-
-    #[must_use]
     pub fn path(&self) -> PathBuf {
         self.directory.join(STATE_FILE_NAME)
     }

@@ -86,7 +86,7 @@ fn missing_or_malformed_state_is_safely_unpaired() {
     let store = FileTrustedDeviceStore::new(directory.path().join("droid-peek"));
     assert!(store.load().expect("load missing state").is_none());
 
-    fs::create_dir_all(store.directory()).expect("create state directory");
+    fs::create_dir_all(directory.path().join("droid-peek")).expect("create state directory");
     fs::write(
         store.path(),
         b"{\"version\":1,\"serviceName\":\"10.0.0.2:37123\"}\n",

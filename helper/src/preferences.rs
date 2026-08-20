@@ -110,11 +110,6 @@ impl FilePreferenceStore {
     }
 
     #[must_use]
-    pub fn directory(&self) -> &Path {
-        &self.directory
-    }
-
-    #[must_use]
     pub fn path(&self) -> PathBuf {
         self.directory.join(PREFERENCES_FILE_NAME)
     }

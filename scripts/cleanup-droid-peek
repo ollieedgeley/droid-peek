@@ -187,6 +187,7 @@ report_remaining() {
 
 droid_peek_set_stage parse
 droid_peek_refresh_paths
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/droid-peek"
 require_cmd jq
 require_cmd pgrep
 

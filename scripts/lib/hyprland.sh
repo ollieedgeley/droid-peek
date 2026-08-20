@@ -46,19 +46,6 @@ commit_bindings_temp() {
   mv -- "$temporary" "$destination"
 }
 
-inspect_user_config() {
-  if [[ -e "$user_module" ]]; then
-    lua_action="preserve"
-  else
-    lua_action="copy"
-  fi
-  if has_loader; then
-    loader_action="present"
-  else
-    loader_action="append"
-  fi
-}
-
 install_user_config() {
   local temporary
   droid_peek_refresh_paths

@@ -26,13 +26,11 @@ tmp_dir=""
 droid_peek_temps=()
 
 host_root=""
-asset_dir=""
 config_home=""
 hypr_dir=""
 user_module=""
 bindings_file=""
 helper_path=""
-state_dir=""
 modules_load_file=""
 modprobe_file=""
 video_dev=""
@@ -113,13 +111,11 @@ run_privileged() {
 
 droid_peek_refresh_paths() {
   host_root="${DROID_PEEK_HOST_ROOT:-}"
-  asset_dir="${DROID_PEEK_HELPER_ASSET_DIR:-}"
   config_home="${XDG_CONFIG_HOME:-${HOME:?HOME is required}/.config}"
   hypr_dir="$config_home/hypr"
   user_module="$hypr_dir/droid-peek.lua"
   bindings_file="$hypr_dir/bindings.lua"
   helper_path="$HOME/.local/bin/$HELPER_INSTALL_NAME"
-  state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/droid-peek"
   modules_load_file="$(host_path /etc/modules-load.d/droid-peek.conf)"
   modprobe_file="$(host_path /etc/modprobe.d/droid-peek.conf)"
   video_dev="$(host_path /dev/video${VIDEO_NR})"

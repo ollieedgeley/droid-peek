@@ -65,8 +65,11 @@ $follow_sources && $script_source_path ||
 expected_scripts=(
   scripts/setup-droid-peek
   scripts/cleanup-droid-peek
-  'scripts/lib/*.sh'
 )
 actual_scripts=("${command_parts[@]:separator_index + 1}")
+for script in "${actual_scripts[@]}"; do
+  [[ "$script" != scripts/lib/* ]] ||
+    fail "release workflow must not pass sourced libraries as standalone ShellCheck inputs: shared variables are defined and consumed across source boundaries, so declared source directives must cover libraries transitively from the public entry points"
+done
 [[ "${actual_scripts[*]}" == "${expected_scripts[*]}" ]] ||
   fail "release workflow ShellCheck must cover exactly: ${expected_scripts[*]}"

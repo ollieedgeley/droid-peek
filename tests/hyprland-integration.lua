@@ -207,11 +207,12 @@ android.define_submap("droid-peek", function()
     package = "com.example.files",
   })
   android.bind("SUPER + U", "Unsupported target", "android.unsupported")
+  android.bind("SUPER + ALT + SHIFT + A", "Close by documented name", "android.close_panel")
 end)
 
 assert(#submaps == 1, "the API must define exactly one submap")
 assert(submaps[1] == "droid-peek")
-assert(#bindings == 4, "only declared phone bindings may be registered")
+assert(#bindings == 5, "only declared phone bindings may be registered")
 for _, binding in ipairs(bindings) do
   assert(binding.submap == "droid-peek", "phone bindings must stay inside their submap")
   assert(type(binding.dispatcher) == "function", "deadlines must be created at dispatch time")
@@ -310,3 +311,17 @@ assert(json_integer(fallback_json, "expiresAtUnixMs") == 1700000100000 + 2000)
 io.popen = original_date_popen
 os.time = original_time
 io.popen = original_popen
+
+local events_before_named_close = #execution_events
+bindings[5].dispatcher()
+assert(
+  #execution_events == events_before_named_close + 2,
+  "documented close name must close like close_panel"
+)
+assert(execution_events[events_before_named_close + 1].kind == "submap")
+assert(execution_events[events_before_named_close + 1].name == "reset")
+assert(execution_events[events_before_named_close + 2].kind == "command")
+assert(
+  execution_events[events_before_named_close + 2].command
+    == "omarchy-shell shell hide ollieedgeley.droidpeek"
+)

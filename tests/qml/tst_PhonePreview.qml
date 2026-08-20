@@ -311,7 +311,7 @@ TestCase {
                    preview.deviceId, preview.deviceDescription))
 
         compare(preview.firstValidFrameReceived, false)
-        compare(preview.captureAvailable, true)
+        compare(preview.captureAvailable, false)
         compare(preview.active, false)
         compare(preview.displayWidth, 0)
         compare(preview.displayHeight, 0)

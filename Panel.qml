@@ -912,7 +912,7 @@ Panel {
                 objectName: "startOverDialog"
                 anchors.fill: parent
                 z: 10
-                message: "Start over with a new phone?\n\n" + "This stops the current session and forgets this phone " + "on this computer. It does not remove this computer " + "from Android’s Paired devices list."
+                message: "Start over with a new device?\n\n" + "This stops the current session and forgets this device " + "on this computer. It does not remove this computer " + "from Android’s Paired devices list."
                 cancelText: "Cancel"
                 confirmText: "Start over"
                 background: root.contentBackground

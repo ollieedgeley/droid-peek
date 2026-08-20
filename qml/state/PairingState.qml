@@ -20,7 +20,7 @@ QtObject {
     property string activity: ""
     property string reason: ""
     property string statusTitle: "Preparing QR code"
-    property string statusDescription: "Open Wireless debugging on your phone."
+    property string statusDescription: "Open Wireless debugging on your Android device."
     property string qrArtifact: ""
     property int qrExpiresInSeconds: 0
     property bool keepConnected: false
@@ -70,8 +70,8 @@ QtObject {
         pairingStage = "idle";
         activity = "";
         reason = "";
-        statusTitle = hasTrustedDevice ? "Reconnecting phone" : "Preparing QR code";
-        statusDescription = hasTrustedDevice ? "Restarting the local helper for the trusted phone." : "Open Wireless debugging on your phone.";
+        statusTitle = hasTrustedDevice ? "Reconnecting device" : "Preparing QR code";
+        statusDescription = hasTrustedDevice ? "Restarting the local helper for the trusted device." : "Open Wireless debugging on your Android device.";
         clearQrPresentation();
         cancelFirstFrameWatch();
         previewFailed = false;
@@ -124,7 +124,7 @@ QtObject {
         activity = "";
         reason = "";
         statusTitle = "Preview failed";
-        statusDescription = "The phone connected but the panel never received a picture.";
+        statusDescription = "The Android device connected but the panel never received a picture.";
     }
 
     function handleFirstFrameTimeout() {
@@ -325,7 +325,7 @@ QtObject {
         pairingStage = "starting-over";
         activity = "stopping";
         statusTitle = "Starting over";
-        statusDescription = "Stopping this session and forgetting the trusted phone.";
+        statusDescription = "Stopping this session and forgetting the trusted device.";
         return sendGenerationCommand({
             type: "start-over"
         });
@@ -467,7 +467,7 @@ QtObject {
         activity = "";
         reason = "dependency-unavailable";
         statusTitle = "Android keyboard shortcuts unavailable";
-        statusDescription = "Desktop phone shortcuts could not be activated. The phone connection may still be retained.";
+        statusDescription = "Desktop Android shortcuts could not be activated. The device connection may still be retained.";
         lifecycleFailure(reason);
     }
 
@@ -542,12 +542,12 @@ QtObject {
         if (failureReason === "unauthorized") {
             sessionState = "unauthorized";
             statusTitle = "Authorization required";
-            statusDescription = "Approve Wireless debugging on the phone, then retry.";
+            statusDescription = "Approve Wireless debugging on the Android device, then retry.";
         } else if (failureReason === "disconnected" || failureReason === "network-unavailable") {
             sessionState = "disconnected";
             if (!previewFailed) {
-                statusTitle = "Phone unavailable";
-                statusDescription = "Check that the phone is on the same trusted Wi-Fi network, then reconnect.";
+                statusTitle = "Device unavailable";
+                statusDescription = "Check that the device is on the same trusted Wi-Fi network, then reconnect.";
             }
         } else {
             sessionState = "dependency-unavailable";
@@ -627,7 +627,7 @@ QtObject {
                 pairingStage = "session-starting";
                 activity = "starting-preview";
                 statusTitle = "Updating video quality";
-                statusDescription = "Restarting the private phone stream.";
+                statusDescription = "Restarting the private device stream.";
             }
             return;
         case "scrcpy-args-stale":
@@ -665,8 +665,8 @@ QtObject {
                 sessionState = "connecting";
                 pairingStage = "session-starting";
                 activity = "starting-preview";
-                statusTitle = "Applying phone settings";
-                statusDescription = "Restarting the private phone stream.";
+                statusTitle = "Applying device settings";
+                statusDescription = "Restarting the private device stream.";
             } else if (event.sessionGeneration !== sessionGeneration) {
                 return;
             }
@@ -685,7 +685,7 @@ QtObject {
             pairingStage = "qr-waiting";
             activity = "qr-waiting";
             reason = "";
-            statusTitle = "Scan with your phone";
+            statusTitle = "Scan with your Android device";
             statusDescription = "Open Wireless debugging and scan the pairing QR code.";
             return;
         case "qr-timed-out":
@@ -702,7 +702,7 @@ QtObject {
             pairingStage = "pairing";
             activity = "pairing";
             reason = "";
-            statusTitle = "Pairing phone";
+            statusTitle = "Pairing Android device";
             statusDescription = "Keep Wireless debugging open while the secure pairing completes.";
             return;
         case "manual-code-required":
@@ -719,7 +719,7 @@ QtObject {
             activity = "pairing-cancelled";
             pairingCancellationConfirmed();
             statusTitle = "Pairing cancelled";
-            statusDescription = "Start again when the phone is ready.";
+            statusDescription = "Start again when the device is ready.";
             return;
         case "paired":
         case "connecting":
@@ -729,11 +729,11 @@ QtObject {
                 return;
             hasTrustedDevice = true;
             if (event.type === "connecting")
-                setConnectionPresentation("connecting", "connecting", "Connecting phone", "Finding the trusted phone on this Wi-Fi network.");
+                setConnectionPresentation("connecting", "connecting", "Connecting device", "Finding the trusted device on this Wi-Fi network.");
             else if (event.type === "session-starting")
-                setConnectionPresentation("session-starting", "starting-preview", "Starting phone view", "Preparing the private scrcpy video session.");
+                setConnectionPresentation("session-starting", "starting-preview", "Starting device view", "Preparing the private scrcpy video session.");
             else
-                setConnectionPresentation("connected", event.type === "paired" ? "connecting" : "connected", "Starting phone view", "The trusted phone is connected. Starting the private mirror.");
+                setConnectionPresentation("connected", event.type === "paired" ? "connecting" : "connected", "Starting device view", "The trusted device is connected. Starting the private mirror.");
             return;
         case "session-started":
             if (startOverPending || !admitCurrentGeneration(event, false))
@@ -751,8 +751,8 @@ QtObject {
             pairingStage = "session-started";
             activity = "";
             reason = "";
-            statusTitle = "Phone connected";
-            statusDescription = "The trusted phone session is active.";
+            statusTitle = "Device connected";
+            statusDescription = "The trusted device session is active.";
             startFirstFrameWatch();
             return;
         case "session-ended":
@@ -792,7 +792,7 @@ QtObject {
             activity = "";
             reason = "";
             statusTitle = "Preparing QR code";
-            statusDescription = "Open Wireless debugging on the phone you want to pair.";
+            statusDescription = "Open Wireless debugging on the device you want to pair.";
             if (automaticPairingEnabled)
                 startQrPairing();
             return;
@@ -820,7 +820,7 @@ QtObject {
                 activity = "";
                 reason = event.reason;
                 statusTitle = "Start over failed";
-                statusDescription = "The trusted phone was not forgotten. Retry Start over.";
+                statusDescription = "The trusted device was not forgotten. Retry Start over.";
                 return;
             }
             if (sessionStarted || sessionGeneration !== "0") {

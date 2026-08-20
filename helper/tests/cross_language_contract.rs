@@ -149,14 +149,25 @@ fn installer_and_template_share_the_exact_user_config_contract() {
 
 #[test]
 fn public_docs_state_the_live_scrcpy_control_rule() {
-    let architecture = source("docs/ARCHITECTURE.md");
+    let explanation = source("docs/explanation.md");
+    let use_and_configure = source("docs/how-to-use-and-configure.md");
     let public_docs = [
         ("README.md", source("README.md")),
-        ("docs/ARCHITECTURE.md", architecture.clone()),
-        ("docs/CONFIGURATION.md", source("docs/CONFIGURATION.md")),
-        ("docs/INSTALL.md", source("docs/INSTALL.md")),
-        ("docs/TROUBLESHOOTING.md", source("docs/TROUBLESHOOTING.md")),
-        ("docs/VERIFICATION.md", source("docs/VERIFICATION.md")),
+        ("docs/explanation.md", explanation.clone()),
+        (
+            "docs/how-to-fix-problems.md",
+            source("docs/how-to-fix-problems.md"),
+        ),
+        (
+            "docs/how-to-install-update-remove.md",
+            source("docs/how-to-install-update-remove.md"),
+        ),
+        (
+            "docs/how-to-use-and-configure.md",
+            use_and_configure.clone(),
+        ),
+        ("docs/how-to-verify.md", source("docs/how-to-verify.md")),
+        ("docs/reference.md", source("docs/reference.md")),
     ];
 
     for (path, text) in &public_docs {
@@ -177,23 +188,26 @@ fn public_docs_state_the_live_scrcpy_control_rule() {
         "the shipped template must keep the device-awake flags that require control and the UHID keyboard default"
     );
     assert!(
-        architecture.contains("`scrcpyArgs`")
-            && architecture.contains("--keep-active")
-            && architecture.contains("--stay-awake")
-            && architecture.contains("--turn-screen-off")
-            && architecture.contains("default session has control"),
-        "ARCHITECTURE.md must state the live control rule and that the default session has control"
+        use_and_configure.contains("`scrcpyArgs`")
+            && use_and_configure.contains("--keep-active")
+            && use_and_configure.contains("--stay-awake")
+            && use_and_configure.contains("--turn-screen-off")
+            && use_and_configure
+                .contains("The shipped configuration includes these arguments by default."),
+        "the use-and-configure guide must state the live control arguments and that the shipped configuration enables them by default"
     );
     assert!(
-        architecture.contains("QML-originated input uses a separate validated ADB adapter"),
-        "ARCHITECTURE.md must keep the true QML ADB-adapter sentence"
+        explanation.contains(
+            "Only validated pointer, keyboard, quick-action, and Lua-binding inputs return"
+        ) && explanation.contains("Bindings cannot become arbitrary `adb shell` commands."),
+        "the explanation guide must keep the validated input boundary"
     );
 }
 
 #[test]
 fn public_docs_and_template_cover_component_launch() {
     let template = source("integrations/droid-peek.lua.example");
-    let docs = source("docs/CONFIGURATION.md");
+    let docs = source("docs/how-to-use-and-configure.md");
 
     for needle in [
         "android.component.launch",
@@ -214,10 +228,11 @@ fn public_docs_and_template_cover_component_launch() {
 
     assert!(
         docs.contains("android.component.launch")
-            && docs.contains("Couldn't open OnePlus Global Search.")
-            && docs.contains("Couldn't open Samsung")
+            && docs.contains("Couldn't open")
+            && docs.contains("Termux.")
+            && docs.contains("Samsung Finder")
             && docs.contains("--keyboard=uhid")
-            && docs.contains("never rewritten"),
-        "CONFIGURATION.md must document component launch, friendly failures, UHID default, and that existing lua is not rewritten"
+            && docs.contains("Later setup runs preserve that user-owned file."),
+        "the use-and-configure guide must document component launch, friendly failures, the UHID default, and preservation of existing user Lua"
     );
 }

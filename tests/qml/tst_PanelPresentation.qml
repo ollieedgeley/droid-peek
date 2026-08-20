@@ -503,7 +503,7 @@ TestCase {
         tryCompare(model, "captureSurfaceRequired", false)
         tryCompare(card, "visible", false)
         tryCompare(setupHero, "visible", true)
-        tryCompare(title, "text", "Phone unavailable")
+        tryCompare(title, "text", "Device unavailable")
         verify(reconnect !== null)
         tryCompare(reconnect, "visible", true)
         tryVerify(function () {

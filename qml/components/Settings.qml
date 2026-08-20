@@ -102,7 +102,7 @@ NestedEscapeScope {
                 id: keepConnectedControl
                 objectName: "keepConnectedControl"
                 width: parent.width
-                label: "Keep phone connected"
+                label: "Keep device connected"
                 checked: root.keepConnected
                 foreground: root.foreground
                 onClicked: root.request(!root.keepConnected, root.previewScale, root.videoQuality, root.quickActions, root.androidModeShortcuts)
@@ -114,7 +114,7 @@ NestedEscapeScope {
 
                 PanelToolTip {
                     visible: keepConnectedControl.pointerHovered || keepConnectedControl.activeFocus
-                    text: "Keep the phone session running when this panel closes."
+                    text: "Keep the device session running when this panel closes."
                 }
             }
 
@@ -134,7 +134,7 @@ NestedEscapeScope {
 
                 PanelToolTip {
                     visible: androidModeShortcutsControl.pointerHovered || androidModeShortcutsControl.activeFocus
-                    text: "Use your configured Android shortcuts while the phone is interactive."
+                    text: "Use your configured Android shortcuts while the device is interactive."
                 }
             }
 
@@ -233,7 +233,7 @@ NestedEscapeScope {
 
                     PanelToolTip {
                         visible: previewScaleHover.hovered || previewScaleControl.activeFocus
-                        text: "Changes the embedded phone preview size."
+                        text: "Changes the embedded device preview size."
                     }
                 }
             }
@@ -318,7 +318,7 @@ NestedEscapeScope {
 
             PanelSectionHeader {
                 width: parent.width
-                text: "PHONE"
+                text: "DEVICE"
                 foreground: root.foreground
             }
 
@@ -328,7 +328,7 @@ NestedEscapeScope {
 
                 Text {
                     width: parent.width
-                    text: "Pair a different phone"
+                    text: "Pair a different device"
                     color: root.foreground
                     font.family: Style.fontFamily
                     font.pixelSize: Style.fontBaseSize
@@ -342,7 +342,7 @@ NestedEscapeScope {
                     bordered: true
                     focusable: true
                     foreground: root.foreground
-                    tooltipText: "Stops this session and forgets this phone on this computer."
+                    tooltipText: "Stops this session and forgets this device on this computer."
                     onClicked: root.startOverRequested()
                 }
             }

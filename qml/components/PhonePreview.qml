@@ -451,7 +451,7 @@ Item {
         anchors.centerIn: parent
         width: parent.width * 0.8
         color: root.foreground
-        text: "Phone video device unavailable"
+        text: "Android device video unavailable"
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
     }

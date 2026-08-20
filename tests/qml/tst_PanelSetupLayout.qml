@@ -193,7 +193,7 @@ TestCase {
         verify(tag !== null)
         verify(meta !== null)
         verify(description !== null)
-        compare(title.text, "Scan with your phone")
+        compare(title.text, "Scan with your Android device")
         compare(tag.text, "unpaired")
         compare(meta.text, "DROID PEEK")
 
@@ -213,7 +213,7 @@ TestCase {
         compare(state.sessionState, "dependency-unavailable")
         compare(state.statusTitle, "Android keyboard shortcuts unavailable")
         compare(state.statusDescription,
-                "Desktop phone shortcuts could not be activated. The phone connection may still be retained.")
+                "Desktop Android shortcuts could not be activated. The device connection may still be retained.")
 
         var title = objectNamed("setupHeadingTitle")
         var tag = objectNamed("setupHeadingTag")

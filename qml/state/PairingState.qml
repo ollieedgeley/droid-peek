@@ -47,8 +47,8 @@ QtObject {
     }
 
     signal commandRequested(string command)
-    signal pairingCancellationConfirmed()
-    signal sessionStopConfirmed()
+    signal pairingCancellationConfirmed
+    signal sessionStopConfirmed
     signal phoneTargetCompleted(string requestId, string outcome, string notificationCode)
     signal lifecycleFailure(string reason)
     signal preferenceUpdateFailed(string reason)
@@ -71,9 +71,7 @@ QtObject {
         activity = "";
         reason = "";
         statusTitle = hasTrustedDevice ? "Reconnecting phone" : "Preparing QR code";
-        statusDescription = hasTrustedDevice
-                ? "Restarting the local helper for the trusted phone."
-                : "Open Wireless debugging on your phone.";
+        statusDescription = hasTrustedDevice ? "Restarting the local helper for the trusted phone." : "Open Wireless debugging on your phone.";
         clearQrPresentation();
         cancelFirstFrameWatch();
         previewFailed = false;
@@ -193,21 +191,12 @@ QtObject {
     }
 
     function validScrcpyConfiguration(revision, scrcpyArguments) {
-        if (typeof revision !== "string" || !/^[0-9a-f]{16}$/.test(revision)
-                || !Array.isArray(scrcpyArguments) || scrcpyArguments.length > 32)
+        if (typeof revision !== "string" || !/^[0-9a-f]{16}$/.test(revision) || !Array.isArray(scrcpyArguments) || scrcpyArguments.length > 32)
             return false;
-        var reserved = [
-            "--serial", "--select-usb", "--select-tcpip", "--tcpip",
-            "--video-source", "--new-display", "--display", "--v4l2-sink",
-            "--no-video", "--no-window", "--window", "--control",
-            "--no-control", "--no-cleanup", "--no-power-on", "--max-size",
-            "--video-bit-rate", "--max-fps"
-        ];
+        var reserved = ["--serial", "--select-usb", "--select-tcpip", "--tcpip", "--video-source", "--new-display", "--display", "--v4l2-sink", "--no-video", "--no-window", "--window", "--control", "--no-control", "--no-cleanup", "--no-power-on", "--max-size", "--video-bit-rate", "--max-fps"];
         for (var index = 0; index < scrcpyArguments.length; ++index) {
             var argument = scrcpyArguments[index];
-            if (typeof argument !== "string"
-                    || unescape(encodeURIComponent(argument)).length > 512
-                    || !/^--[^\r\n\u0000]+$/.test(argument))
+            if (typeof argument !== "string" || unescape(encodeURIComponent(argument)).length > 512 || !/^--[^\r\n\u0000]+$/.test(argument))
                 return false;
             var separator = argument.indexOf("=");
             var name = separator < 0 ? argument : argument.slice(0, separator);
@@ -234,8 +223,7 @@ QtObject {
     }
 
     function sendDesiredScrcpyConfiguration() {
-        if (!helperReady || desiredScrcpyRevision === ""
-                || desiredScrcpyRevision === appliedScrcpyRevision)
+        if (!helperReady || desiredScrcpyRevision === "" || desiredScrcpyRevision === appliedScrcpyRevision)
             return desiredScrcpyRevision === appliedScrcpyRevision;
         return sendScrcpyConfiguration(false);
     }
@@ -245,18 +233,14 @@ QtObject {
             return false;
         desiredScrcpyArguments = scrcpyArguments.slice();
         desiredScrcpyArgumentsKnown = true;
-        desiredScreenOffRequested =
-                desiredScrcpyArguments.indexOf("--turn-screen-off") >= 0;
+        desiredScreenOffRequested = desiredScrcpyArguments.indexOf("--turn-screen-off") >= 0;
         desiredScrcpyRevision = revision;
         scrcpyRetryRevision = "";
         return !helperReady || sendDesiredScrcpyConfiguration();
     }
 
     function requestScreenOffAfterPreview(epoch, generation) {
-        if (!helperReady || !sessionStarted || !desiredScreenOff()
-                || effectiveScreenOff || appliedScrcpyRevision !== desiredScrcpyRevision
-                || epoch !== helperEpoch || generation !== sessionGeneration
-                || screenOffTransitionGeneration === generation)
+        if (!helperReady || !sessionStarted || !desiredScreenOff() || effectiveScreenOff || appliedScrcpyRevision !== desiredScrcpyRevision || epoch !== helperEpoch || generation !== sessionGeneration || screenOffTransitionGeneration === generation)
             return false;
         screenOffTransitionGeneration = generation;
         if (sendScrcpyConfiguration(true))
@@ -266,13 +250,12 @@ QtObject {
     }
 
     function acknowledgePreviewReady(epoch, generation) {
-        if (!helperReady || !sessionStarted
-                || epoch !== helperEpoch || generation !== sessionGeneration
-                || generation === "0" || !isDecimalIdentity(generation)
-                || previewReadyGeneration === generation)
+        if (!helperReady || !sessionStarted || epoch !== helperEpoch || generation !== sessionGeneration || generation === "0" || !isDecimalIdentity(generation) || previewReadyGeneration === generation)
             return false;
         previewReadyGeneration = generation;
-        if (!sendGenerationCommand({ type: "preview-ready" })) {
+        if (!sendGenerationCommand({
+            type: "preview-ready"
+        })) {
             previewReadyGeneration = "";
             return false;
         }
@@ -284,19 +267,25 @@ QtObject {
 
     function startQrPairing() {
         clearQrPresentation();
-        return sendCommand({ type: "start-qr-pairing" });
+        return sendCommand({
+            type: "start-qr-pairing"
+        });
     }
     function reconnectTrustedDevice() {
         clearQrPresentation();
         if (!helperReady || !hasTrustedDevice)
             return false;
         connectionPresentationActive = true;
-        return sendCommand({ type: "reconnect-trusted-device" });
+        return sendCommand({
+            type: "reconnect-trusted-device"
+        });
     }
 
     function useManualCode() {
         clearQrPresentation();
-        return sendCommand({ type: "use-manual-code" });
+        return sendCommand({
+            type: "use-manual-code"
+        });
     }
 
     function submitManualCode(code) {
@@ -305,21 +294,26 @@ QtObject {
             statusDescription = "Enter the six-digit pairing code shown by Android.";
             return false;
         }
-        return sendCommand({ type: "submit-manual-code", code: submittedCode });
+        return sendCommand({
+            type: "submit-manual-code",
+            code: submittedCode
+        });
     }
 
     function cancelPairing() {
-        return sendCommand({ type: "cancel-pairing" });
+        return sendCommand({
+            type: "cancel-pairing"
+        });
     }
 
     function stopSession() {
-        return sendSessionCommand({ type: "stop-session" });
+        return sendSessionCommand({
+            type: "stop-session"
+        });
     }
 
     function startOver() {
-        if (!helperReady || !hasTrustedDevice || startOverPending
-                || !isDecimalIdentity(helperEpoch)
-                || !isDecimalIdentity(sessionGeneration))
+        if (!helperReady || !hasTrustedDevice || startOverPending || !isDecimalIdentity(helperEpoch) || !isDecimalIdentity(sessionGeneration))
             return false;
         startOverPending = true;
         startOverGeneration = sessionGeneration;
@@ -332,49 +326,60 @@ QtObject {
         activity = "stopping";
         statusTitle = "Starting over";
         statusDescription = "Stopping this session and forgetting the trusted phone.";
-        return sendGenerationCommand({ type: "start-over" });
+        return sendGenerationCommand({
+            type: "start-over"
+        });
     }
 
     function sendPointerTap(x, y, displayWidth, displayHeight) {
         return sendSessionCommand({
-            type: "pointer-tap", x: x, y: y,
-            displayWidth: displayWidth, displayHeight: displayHeight
+            type: "pointer-tap",
+            x: x,
+            y: y,
+            displayWidth: displayWidth,
+            displayHeight: displayHeight
         });
     }
 
-    function sendPointerSwipe(startX, startY, endX, endY,
-                              displayWidth, displayHeight, durationMs) {
+    function sendPointerSwipe(startX, startY, endX, endY, displayWidth, displayHeight, durationMs) {
         return sendSessionCommand({
-            type: "pointer-swipe", startX: startX, startY: startY,
-            endX: endX, endY: endY, displayWidth: displayWidth,
-            displayHeight: displayHeight, durationMs: durationMs
+            type: "pointer-swipe",
+            startX: startX,
+            startY: startY,
+            endX: endX,
+            endY: endY,
+            displayWidth: displayWidth,
+            displayHeight: displayHeight,
+            durationMs: durationMs
         });
     }
 
     function sendKeyInput(key) {
-        return sendSessionCommand({ type: "key-input", key: key });
+        return sendSessionCommand({
+            type: "key-input",
+            key: key
+        });
     }
 
     function sendTextInput(text) {
-        return sendSessionCommand({ type: "text-input", text: text });
+        return sendSessionCommand({
+            type: "text-input",
+            text: text
+        });
     }
 
     function validActionRequestId(requestId) {
-        return typeof requestId === "string"
-                && /^[A-Za-z0-9-]{1,64}$/.test(requestId);
+        return typeof requestId === "string" && /^[A-Za-z0-9-]{1,64}$/.test(requestId);
     }
 
     function sendPhoneTarget(requestId, target, expiresAtUnixMs) {
-        var targetHasSafeShape = typeof target === "string"
-                || (target !== null && typeof target === "object"
-                    && !Array.isArray(target));
-        if (!validActionRequestId(requestId)
-                || !targetHasSafeShape
-                || typeof expiresAtUnixMs !== "number"
-                || !isFinite(expiresAtUnixMs))
+        var targetHasSafeShape = typeof target === "string" || (target !== null && typeof target === "object" && !Array.isArray(target));
+        if (!validActionRequestId(requestId) || !targetHasSafeShape || typeof expiresAtUnixMs !== "number" || !isFinite(expiresAtUnixMs))
             return false;
         return sendSessionCommand({
-            type: "phone-target", requestId: requestId, target: target,
+            type: "phone-target",
+            requestId: requestId,
+            target: target,
             expiresAtUnixMs: expiresAtUnixMs
         });
     }
@@ -384,14 +389,10 @@ QtObject {
     }
 
     function validPreviewScale(value) {
-        return typeof value === "number" && value >= 50 && value <= 150
-                && Math.floor(value) === value;
+        return typeof value === "number" && value >= 50 && value <= 150 && Math.floor(value) === value;
     }
     function hasOnlyPreferenceKeys(preferences) {
-        var allowed = [
-            "keepConnected", "previewScale", "videoQuality",
-            "quickActions", "androidModeShortcuts"
-        ];
+        var allowed = ["keepConnected", "previewScale", "videoQuality", "quickActions", "androidModeShortcuts"];
         var keys = Object.keys(preferences);
         for (var index = 0; index < keys.length; ++index) {
             if (allowed.indexOf(keys[index]) < 0)
@@ -400,20 +401,11 @@ QtObject {
         return true;
     }
 
-
     function validPreferences(preferences) {
-        if (!preferences || !hasOnlyPreferenceKeys(preferences)
-                || typeof preferences.keepConnected !== "boolean"
-                || typeof preferences.androidModeShortcuts !== "boolean"
-                || !validPreviewScale(preferences.previewScale)
-                || !validPreference(preferences.videoQuality,
-                                    ["low", "medium", "high"])
-                || !Array.isArray(preferences.quickActions)
-                || preferences.quickActions.length !== 3)
+        if (!preferences || !hasOnlyPreferenceKeys(preferences) || typeof preferences.keepConnected !== "boolean" || typeof preferences.androidModeShortcuts !== "boolean" || !validPreviewScale(preferences.previewScale) || !validPreference(preferences.videoQuality, ["low", "medium", "high"]) || !Array.isArray(preferences.quickActions) || preferences.quickActions.length !== 3)
             return false;
         for (var index = 0; index < preferences.quickActions.length; ++index) {
-            if (!validPreference(preferences.quickActions[index],
-                                 ["back", "home", "recent-apps"]))
+            if (!validPreference(preferences.quickActions[index], ["back", "home", "recent-apps"]))
                 return false;
         }
         return true;
@@ -430,8 +422,7 @@ QtObject {
         return true;
     }
 
-    function setPreferences(keepConnectedValue, scale, quality, actions,
-                            androidModeShortcutsValue) {
+    function setPreferences(keepConnectedValue, scale, quality, actions, androidModeShortcutsValue) {
         var preferences = {
             keepConnected: keepConnectedValue,
             previewScale: scale,
@@ -486,8 +477,7 @@ QtObject {
     }
 
     function advanceGeneration(generation) {
-        if (!isDecimalIdentity(sessionGeneration)
-                || generation !== nextDecimal(sessionGeneration))
+        if (!isDecimalIdentity(sessionGeneration) || generation !== nextDecimal(sessionGeneration))
             return false;
         sessionGeneration = generation;
         previewReadyGeneration = "";
@@ -506,8 +496,7 @@ QtObject {
     }
 
     function admitInvalidatingGeneration(event) {
-        return isDecimalIdentity(event.sessionGeneration)
-                && advanceGeneration(event.sessionGeneration);
+        return isDecimalIdentity(event.sessionGeneration) && advanceGeneration(event.sessionGeneration);
     }
 
     function admitSessionStopped(event) {
@@ -519,15 +508,11 @@ QtObject {
     }
 
     function validFailureReason(failureReason) {
-        return typeof failureReason === "string"
-                && ["dependency-unavailable", "unauthorized", "disconnected",
-                    "network-unavailable", "pairing-rejected"].indexOf(
-                        failureReason) >= 0;
+        return typeof failureReason === "string" && ["dependency-unavailable", "unauthorized", "disconnected", "network-unavailable", "pairing-rejected"].indexOf(failureReason) >= 0;
     }
 
     function admitStartOverComplete(event) {
-        if (!isDecimalIdentity(startOverGeneration)
-                || event.sessionGeneration !== nextDecimal(startOverGeneration))
+        if (!isDecimalIdentity(startOverGeneration) || event.sessionGeneration !== nextDecimal(startOverGeneration))
             return false;
         if (event.sessionGeneration === sessionGeneration)
             return !sessionStarted;
@@ -535,8 +520,7 @@ QtObject {
     }
 
     function setConnectionPresentation(stage, nextActivity, title, description) {
-        connectionPresentationActive =
-                previewReadyGeneration !== sessionGeneration;
+        connectionPresentationActive = previewReadyGeneration !== sessionGeneration;
         clearQrPresentation();
         sessionState = "connecting";
         pairingStage = stage;
@@ -559,8 +543,7 @@ QtObject {
             sessionState = "unauthorized";
             statusTitle = "Authorization required";
             statusDescription = "Approve Wireless debugging on the phone, then retry.";
-        } else if (failureReason === "disconnected"
-                   || failureReason === "network-unavailable") {
+        } else if (failureReason === "disconnected" || failureReason === "network-unavailable") {
             sessionState = "disconnected";
             if (!previewFailed) {
                 statusTitle = "Phone unavailable";
@@ -582,29 +565,20 @@ QtObject {
             protocolFailure();
             return;
         }
-        if (!event || !isDecimalIdentity(event.helperEpoch)
-                || event.helperEpoch !== helperEpoch)
+        if (!event || !isDecimalIdentity(event.helperEpoch) || event.helperEpoch !== helperEpoch)
             return;
         if (event.version !== protocolVersion || typeof event.type !== "string") {
             protocolFailure();
             return;
         }
-        if (startOverPending
-                && ["session-ended", "session-stopped",
-                    "start-over-complete", "lifecycle-failure", "failure",
-                    "action-result", "protocol-error"].indexOf(event.type) < 0)
+        if (startOverPending && ["session-ended", "session-stopped", "start-over-complete", "lifecycle-failure", "failure", "action-result", "protocol-error"].indexOf(event.type) < 0)
             return;
 
         switch (event.type) {
         case "ready":
-            if (event.sessionGeneration !== "0" || helperReady
-                    || sessionGeneration !== "")
+            if (event.sessionGeneration !== "0" || helperReady || sessionGeneration !== "")
                 return;
-            if (typeof event.hasTrustedDevice !== "boolean"
-                    || typeof event.scrcpyRevision !== "string"
-                    || !/^[0-9a-f]{16}$/.test(event.scrcpyRevision)
-                    || typeof event.screenOffRequested !== "boolean"
-                    || !applyPreferences(event.preferences)) {
+            if (typeof event.hasTrustedDevice !== "boolean" || typeof event.scrcpyRevision !== "string" || !/^[0-9a-f]{16}$/.test(event.scrcpyRevision) || typeof event.screenOffRequested !== "boolean" || !applyPreferences(event.preferences)) {
                 protocolFailure();
                 return;
             }
@@ -632,19 +606,15 @@ QtObject {
             if (!isDecimalIdentity(event.sessionGeneration))
                 return;
             if (event.sessionRestarted === true) {
-                if (!isDecimalIdentity(sessionGeneration)
-                        || event.sessionGeneration !== nextDecimal(sessionGeneration))
+                if (!isDecimalIdentity(sessionGeneration) || event.sessionGeneration !== nextDecimal(sessionGeneration))
                     return;
             } else if (event.sessionRestarted === false) {
                 if (event.sessionGeneration !== sessionGeneration)
                     return;
-            } else if (event.sessionGeneration !== sessionGeneration
-                       && (!isDecimalIdentity(sessionGeneration)
-                           || event.sessionGeneration !== nextDecimal(sessionGeneration))) {
+            } else if (event.sessionGeneration !== sessionGeneration && (!isDecimalIdentity(sessionGeneration) || event.sessionGeneration !== nextDecimal(sessionGeneration))) {
                 return;
             }
-            if (typeof event.sessionRestarted !== "boolean"
-                    || !validPreferences(event.preferences)) {
+            if (typeof event.sessionRestarted !== "boolean" || !validPreferences(event.preferences)) {
                 protocolFailure();
                 return;
             }
@@ -663,20 +633,17 @@ QtObject {
         case "scrcpy-args-stale":
             if (!isDecimalIdentity(event.sessionGeneration))
                 return;
-            if (typeof event.revision !== "string"
-                    || !/^[0-9a-f]{16}$/.test(event.revision)) {
+            if (typeof event.revision !== "string" || !/^[0-9a-f]{16}$/.test(event.revision)) {
                 protocolFailure();
                 return;
             }
             if (event.sessionGeneration !== sessionGeneration) {
-                if (!isDecimalIdentity(sessionGeneration)
-                        || event.sessionGeneration !== nextDecimal(sessionGeneration))
+                if (!isDecimalIdentity(sessionGeneration) || event.sessionGeneration !== nextDecimal(sessionGeneration))
                     return;
                 advanceGeneration(event.sessionGeneration);
             }
             appliedScrcpyRevision = event.revision;
-            if (desiredScrcpyRevision === appliedScrcpyRevision
-                    || scrcpyRetryRevision === desiredScrcpyRevision)
+            if (desiredScrcpyRevision === appliedScrcpyRevision || scrcpyRetryRevision === desiredScrcpyRevision)
                 return;
             scrcpyRetryRevision = desiredScrcpyRevision;
             sendDesiredScrcpyConfiguration();
@@ -684,17 +651,14 @@ QtObject {
         case "scrcpy-args-updated":
             if (!isDecimalIdentity(event.sessionGeneration))
                 return;
-            if (typeof event.sessionRestarted !== "boolean"
-                    || typeof event.revision !== "string"
-                    || typeof event.screenOffEnabled !== "boolean") {
+            if (typeof event.sessionRestarted !== "boolean" || typeof event.revision !== "string" || typeof event.screenOffEnabled !== "boolean") {
                 protocolFailure();
                 return;
             }
             if (event.revision !== desiredScrcpyRevision)
                 return;
             if (event.sessionRestarted === true) {
-                if (!isDecimalIdentity(sessionGeneration)
-                        || event.sessionGeneration !== nextDecimal(sessionGeneration))
+                if (!isDecimalIdentity(sessionGeneration) || event.sessionGeneration !== nextDecimal(sessionGeneration))
                     return;
                 connectionPresentationActive = true;
                 advanceGeneration(event.sessionGeneration);
@@ -711,9 +675,7 @@ QtObject {
             effectiveScreenOff = event.screenOffEnabled;
             return;
         case "qr-waiting":
-            if (typeof event.artifact !== "string" || event.artifact.charAt(0) !== "/"
-                    || typeof event.expiresInSeconds !== "number"
-                    || event.expiresInSeconds <= 0) {
+            if (typeof event.artifact !== "string" || event.artifact.charAt(0) !== "/" || typeof event.expiresInSeconds !== "number" || event.expiresInSeconds <= 0) {
                 protocolFailure();
                 return;
             }
@@ -781,8 +743,7 @@ QtObject {
                 return;
             }
             hasTrustedDevice = true;
-            connectionPresentationActive =
-                    previewReadyGeneration !== sessionGeneration;
+            connectionPresentationActive = previewReadyGeneration !== sessionGeneration;
             effectiveScreenOff = event.screenOffEnabled;
             sessionStarted = true;
             previewFailed = false;
@@ -838,23 +799,14 @@ QtObject {
         case "action-result":
             if (!admitCurrentGeneration(event, false))
                 return;
-            if (!validActionRequestId(event.requestId)
-                    || ["completed", "failed",
-                        "stale-session"].indexOf(event.outcome) < 0
-                    || (event.notificationCode !== undefined
-                        && ["invalid-target", "target-failed",
-                            "target-timed-out",
-                            "invalid-deadline"].indexOf(
-                                event.notificationCode) < 0)) {
+            if (!validActionRequestId(event.requestId) || ["completed", "failed", "stale-session"].indexOf(event.outcome) < 0 || (event.notificationCode !== undefined && ["invalid-target", "target-failed", "target-timed-out", "invalid-deadline"].indexOf(event.notificationCode) < 0)) {
                 protocolFailure();
                 return;
             }
-            phoneTargetCompleted(event.requestId, event.outcome,
-                                 event.notificationCode || "");
+            phoneTargetCompleted(event.requestId, event.outcome, event.notificationCode || "");
             return;
         case "failure":
-            if (event.sessionGeneration !== undefined
-                    || !validFailureReason(event.reason)) {
+            if (event.sessionGeneration !== undefined || !validFailureReason(event.reason)) {
                 protocolFailure();
                 return;
             }

@@ -138,7 +138,6 @@ NestedEscapeScope {
                 }
             }
 
-
             PanelSeparator {
                 foreground: root.foreground
             }

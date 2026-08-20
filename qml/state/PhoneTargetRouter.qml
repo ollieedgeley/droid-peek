@@ -18,29 +18,20 @@ QtObject {
     }
 
     function validRequestId(requestId) {
-        return typeof requestId === "string"
-                && /^[A-Za-z0-9-]{1,64}$/.test(requestId);
+        return typeof requestId === "string" && /^[A-Za-z0-9-]{1,64}$/.test(requestId);
     }
 
     function validNamedTarget(target) {
-        return typeof target === "string"
-                && /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/.test(target);
+        return typeof target === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/.test(target);
     }
 
     function validDeadline(expiresAtUnixMs) {
         var now = Date.now();
-        return typeof expiresAtUnixMs === "number"
-                && isFinite(expiresAtUnixMs)
-                && Math.floor(expiresAtUnixMs) === expiresAtUnixMs
-                && expiresAtUnixMs > now
-                && expiresAtUnixMs <= now + 2000;
+        return typeof expiresAtUnixMs === "number" && isFinite(expiresAtUnixMs) && Math.floor(expiresAtUnixMs) === expiresAtUnixMs && expiresAtUnixMs > now && expiresAtUnixMs <= now + 2000;
     }
 
     function validPackage(packageName) {
-        return typeof packageName === "string"
-                && packageName.length > 0 && packageName.length <= 255
-                && /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(
-                    packageName);
+        return typeof packageName === "string" && packageName.length > 0 && packageName.length <= 255 && /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(packageName);
     }
 
     function validComponentField(value) {
@@ -65,24 +56,18 @@ QtObject {
             return false;
         var keys = Object.keys(target);
         if (target.type === "android.component.launch")
-            return keys.length === 3 && keys.indexOf("type") >= 0
-                    && keys.indexOf("package") >= 0
-                    && keys.indexOf("activity") >= 0
-                    && validComponentField(target.package)
-                    && validComponentField(target.activity);
+            return keys.length === 3 && keys.indexOf("type") >= 0 && keys.indexOf("package") >= 0 && keys.indexOf("activity") >= 0 && validComponentField(target.package) && validComponentField(target.activity);
         if (keys.length !== 2 || keys.indexOf("type") < 0)
             return false;
         if (target.type === "android.app.launch")
-            return keys.indexOf("package") >= 0
-                    && validPackage(target.package);
+            return keys.indexOf("package") >= 0 && validPackage(target.package);
         if (target.type === "android.keyevent")
             return keys.indexOf("key") >= 0 && validKeyName(target.key);
         return false;
     }
 
     function consumePhoneTargetResult(requestId, outcome, notificationCode) {
-        var pending = typeof requestId === "string"
-                ? pendingLabels[requestId] : undefined;
+        var pending = typeof requestId === "string" ? pendingLabels[requestId] : undefined;
         if (typeof requestId === "string")
             delete pendingLabels[requestId];
         if (outcome !== "failed")
@@ -109,8 +94,7 @@ QtObject {
             message = "Couldn't open " + label + ".";
         var now = Date.now();
         var previous = failureNotificationTimes[notificationCode];
-        if (typeof previous === "number" && now >= previous
-                && now - previous < failureCoalesceWindowMs)
+        if (typeof previous === "number" && now >= previous && now - previous < failureCoalesceWindowMs)
             return true;
         failureNotificationTimes[notificationCode] = now;
         phoneTargetFailureNotificationRequested(message);
@@ -118,37 +102,22 @@ QtObject {
     }
 
     function acceptPhoneTarget(request) {
-        if (applicationState !== "interactive"
-                || !validIdentity(helperEpoch)
-                || !validIdentity(sessionGeneration)
-                || !request || Array.isArray(request)
-                || !validRequestId(request.requestId)
-                || !validDeadline(request.expiresAtUnixMs))
+        if (applicationState !== "interactive" || !validIdentity(helperEpoch) || !validIdentity(sessionGeneration) || !request || Array.isArray(request) || !validRequestId(request.requestId) || !validDeadline(request.expiresAtUnixMs))
             return false;
         var keys = Object.keys(request);
-        if ((keys.length !== 3 && keys.length !== 4)
-                || keys.indexOf("requestId") < 0
-                || keys.indexOf("target") < 0
-                || keys.indexOf("expiresAtUnixMs") < 0)
+        if ((keys.length !== 3 && keys.length !== 4) || keys.indexOf("requestId") < 0 || keys.indexOf("target") < 0 || keys.indexOf("expiresAtUnixMs") < 0)
             return false;
-        if (keys.length === 4
-                && (keys.indexOf("description") < 0
-                    || !validDescription(request.description)))
+        if (keys.length === 4 && (keys.indexOf("description") < 0 || !validDescription(request.description)))
             return false;
         if (!validTarget(request.target)) {
-            if (request.target && typeof request.target === "object"
-                    && !Array.isArray(request.target)
-                    && request.target.type === "android.component.launch")
-                consumePhoneTargetResult(request.requestId, "failed",
-                                         "invalid-target");
+            if (request.target && typeof request.target === "object" && !Array.isArray(request.target) && request.target.type === "android.component.launch")
+                consumePhoneTargetResult(request.requestId, "failed", "invalid-target");
             return false;
         }
         if (validDescription(request.description))
             pendingLabels[request.requestId] = {
                 text: request.description,
-                openTarget: typeof request.target === "object"
-                        && (request.target.type === "android.app.launch"
-                            || request.target.type === "android.component.launch")
+                openTarget: typeof request.target === "object" && (request.target.type === "android.app.launch" || request.target.type === "android.component.launch")
             };
         phoneTargetRequested({
             requestId: request.requestId,

@@ -8,20 +8,16 @@ QtObject {
     property string lastDispatchedSubmap: ""
     property int requestGeneration: 0
 
-    readonly property string desiredSubmap: applicationState === "interactive"
-                                                    && androidModeShortcuts
-                                                ? "droid-peek"
-                                                : "reset"
+    readonly property string desiredSubmap: applicationState === "interactive" && androidModeShortcuts ? "droid-peek" : "reset"
 
     signal submapCommandRequested(var command, string submap, int requestId)
-    signal panelCloseRequested()
+    signal panelCloseRequested
 
     function commandForSubmap(submap) {
         if (submap === "reset")
             return ["hyprctl", "dispatch", 'hl.dsp.submap("reset")'];
         if (submap === "droid-peek")
-            return ["hyprctl", "dispatch",
-                    'hl.dsp.submap("droid-peek")'];
+            return ["hyprctl", "dispatch", 'hl.dsp.submap("droid-peek")'];
         return null;
     }
 

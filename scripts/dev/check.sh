@@ -37,7 +37,9 @@ run_check "test phone-binding API" lua tests/hyprland-integration.lua integratio
 run_check "test phone-binding template" lua tests/hyprland-routing-config.lua integrations/phone-bindings.lua
 run_check "check architecture contracts" scripts/dev/check-architecture.sh
 run_check "lint QML" scripts/dev/lint-qml.sh
+run_check "check QML format" scripts/dev/check-qml-format.sh
 run_check "run QML tests" "$qt6_bin/qmltestrunner" -import "$lint_root" -import "$root_dir/tests/qml/imports" -input tests/qml
 run_check "lint Rust" scripts/dev/lint-rust.sh
+run_check "check unused Rust dependencies" cargo machete --with-metadata --skip-target-dir helper
 run_check "test Rust helper" cargo nextest run --manifest-path helper/Cargo.toml --locked
 run_check "build Rust documentation" env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path helper/Cargo.toml --no-deps --locked

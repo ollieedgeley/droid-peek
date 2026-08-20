@@ -4,6 +4,10 @@ QtObject {
     property var command: []
     property bool stdinEnabled: false
     property bool running: false
+    property string versionReply: "1.0.0"
+    property bool autoCompleteVersion: true
+    property int versionExitCode: 0
+    property int startCount: 0
     property QtObject stdout: null
     property string written: ""
     readonly property var writtenLines: {
@@ -19,15 +23,25 @@ QtObject {
     onRunningChanged: {
         if (!running || !Array.isArray(command))
             return
-        if (command.indexOf("--version") >= 0) {
-            Qt.callLater(function () {
-                if (stdout)
-                    stdout.read("1.0.0")
-                running = false
-                exited(0)
-            })
+        startCount += 1
+        if (command.indexOf("--version") >= 0 && autoCompleteVersion)
+            Qt.callLater(completeVersionCheck)
+    }
+
+    function completeVersionCheck() {
+        if (!running || !Array.isArray(command)
+                || command.indexOf("--version") < 0)
             return
-        }
+        if (stdout)
+            stdout.read(versionReply)
+        exitProcess(versionExitCode)
+    }
+
+    function exitProcess(exitCode) {
+        if (!running)
+            return
+        running = false
+        exited(exitCode)
     }
 
     function write(data) {

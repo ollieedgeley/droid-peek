@@ -22,11 +22,16 @@ Panel {
         var home = Quickshell.env("HOME");
         return home ? home + "/.local/bin/droid-peek-helper" : "";
     }
-    readonly property var helperCommand: helperExecutable === ""
-                                         ? []
-                                         : [helperExecutable, "--acceptance-log"]
+    readonly property var helperCommand: helperExecutable === "" ? [] : [helperExecutable, "--acceptance-log"]
     property bool helperShutdownPending: false
     property bool helperIntentionalStop: false
+    property bool retainedClosePending: false
+    property var retainedClosePreview: null
+    property int retainedCloseCaptureEpoch: -1
+    property string retainedCloseHelperEpoch: ""
+    property string retainedCloseSessionGeneration: ""
+    property int presentationClaimSerial: 0
+    property int retainedClosePresentationSerial: -1
     property bool settingsOpen: false
     property bool managementOpen: false
     property int helperEpochCounter: 0
@@ -38,33 +43,14 @@ Panel {
     readonly property color contentBackground: popupPalette.background
     readonly property PhonePreview phonePreview: phonePreviewLoader.item as PhonePreview
     readonly property var fontTokens: Style.font
-    readonly property bool retainMountedPreview: pairingState.keepConnected
-                                                 && pairingState.sessionStarted
-                                                 && pairingState.previewReadyGeneration !== ""
-                                                 && pairingState.previewReadyGeneration
-                                                    === pairingState.sessionGeneration
-    readonly property bool previewCaptureWanted: pairingState.sessionStarted
-                                                 && (root.opened
-                                                     || root.retainMountedPreview)
+    readonly property bool retainMountedPreview: pairingState.keepConnected && pairingState.sessionStarted && pairingState.previewReadyGeneration !== "" && pairingState.previewReadyGeneration === pairingState.sessionGeneration
+    readonly property bool previewCaptureWanted: pairingState.sessionStarted && (root.opened || root.retainMountedPreview)
     readonly property int setupSpacing: Style.space(12)
     readonly property int minimumQrSize: Style.space(180)
     readonly property int maximumQrSize: Style.space(240)
-    readonly property real maximumContentHeight: Math.max(
-                                                     1,
-                                                     panel.availableCardHeight
-                                                     - panel.verticalContentInset)
-    readonly property real setupReservedHeight: setupHero.implicitHeight
-                                                + setupDescription.implicitHeight
-                                                + qrExpiry.implicitHeight
-                                                + pairingActions.implicitHeight
-                                                + setupSpacing * 4
-    readonly property real setupQrSize: Math.min(
-                                            content.width,
-                                            maximumQrSize,
-                                            Math.max(
-                                                minimumQrSize,
-                                                maximumContentHeight
-                                                - setupReservedHeight))
+    readonly property real maximumContentHeight: Math.max(1, panel.availableCardHeight - panel.verticalContentInset)
+    readonly property real setupReservedHeight: setupHero.implicitHeight + setupDescription.implicitHeight + qrExpiry.implicitHeight + pairingActions.implicitHeight + setupSpacing * 4
+    readonly property real setupQrSize: Math.min(content.width, maximumQrSize, Math.max(minimumQrSize, maximumContentHeight - setupReservedHeight))
 
     implicitWidth: 320
     implicitHeight: 480
@@ -72,39 +58,22 @@ Panel {
     function horizontalPanelInset() {
         return panel.padding * 2 + Border.left(panel.borderSpec) + Border.right(panel.borderSpec);
     }
-    readonly property int previewSourceWidth: phonePreview !== null
-                                              && phonePreview.framedWidth > 0
-                                              ? phonePreview.framedWidth
-                                              : (phonePreview !== null
-                                                 && phonePreview.displayWidth > 0
-                                                 ? phonePreview.displayWidth : 9)
-    readonly property int previewSourceHeight: phonePreview !== null
-                                               && phonePreview.framedHeight > 0
-                                               ? phonePreview.framedHeight
-                                               : (phonePreview !== null
-                                                  && phonePreview.displayHeight > 0
-                                                  ? phonePreview.displayHeight : 16)
-
+    readonly property int previewSourceWidth: phonePreview !== null && phonePreview.framedWidth > 0 ? phonePreview.framedWidth : (phonePreview !== null && phonePreview.displayWidth > 0 ? phonePreview.displayWidth : 9)
+    readonly property int previewSourceHeight: phonePreview !== null && phonePreview.framedHeight > 0 ? phonePreview.framedHeight : (phonePreview !== null && phonePreview.displayHeight > 0 ? phonePreview.displayHeight : 16)
 
     function desiredViewportSize(availableHeight) {
         var horizontalInset = horizontalPanelInset();
         var maxWidth = panel.availableCardWidth > 0 ? Math.max(1, panel.availableCardWidth - horizontalInset) : Style.space(288);
         var maxHeight = availableHeight > 0 ? Math.max(1, availableHeight - panel.verticalContentInset - phoneToolbar.implicitHeight) : Style.space(640);
         var baseWidth = Math.max(1, Style.space(320) - horizontalInset);
-        return PreviewGeometry.scaledAspectSize(root.previewSourceWidth,
-                                               root.previewSourceHeight,
-                                               baseWidth, maxWidth, maxHeight,
-                                               pairingState.previewScale);
+        return PreviewGeometry.scaledAspectSize(root.previewSourceWidth, root.previewSourceHeight, baseWidth, maxWidth, maxHeight, pairingState.previewScale);
     }
 
     function desiredPanelWidth() {
-        if (root.applicationState === "interactive"
-                || root.applicationState === "management"
-                || applicationStateModel.captureSurfaceRequired) {
+        if (root.applicationState === "interactive" || root.applicationState === "management" || applicationStateModel.captureSurfaceRequired) {
             if (root.managementOpen)
                 return Style.space(400);
-            return horizontalPanelInset()
-                    + desiredViewportSize(panel.availableCardHeight).width;
+            return horizontalPanelInset() + desiredViewportSize(panel.availableCardHeight).width;
         }
         return Style.space(320);
     }
@@ -128,10 +97,14 @@ Panel {
 
     function quickActionKey(action) {
         switch (action) {
-        case "back": return "back";
-        case "home": return "home";
-        case "recent-apps": return "app-switch";
-        default: return "";
+        case "back":
+            return "back";
+        case "home":
+            return "home";
+        case "recent-apps":
+            return "app-switch";
+        default:
+            return "";
         }
     }
 
@@ -150,24 +123,17 @@ Panel {
         }
     }
 
-    function updatePreferences(keepConnected, scale, quality, actions,
-                               androidModeShortcuts) {
-        pairingState.setPreferences(keepConnected, scale, quality, actions,
-                                    androidModeShortcuts);
+    function updatePreferences(keepConnected, scale, quality, actions, androidModeShortcuts) {
+        pairingState.setPreferences(keepConnected, scale, quality, actions, androidModeShortcuts);
     }
 
     function helperCloseAction() {
-        var sessionMayExist = pairingState.sessionStarted
-                || pairingState.pairingStage === "connected"
-                || pairingState.pairingStage === "session-starting"
-                || pairingState.pairingStage === "session-started";
-        return PanelLifecycle.closeAction(helperProcess.running, sessionMayExist,
-                                          pairingState.keepConnected);
+        var sessionMayExist = pairingState.sessionStarted || pairingState.pairingStage === "connected" || pairingState.pairingStage === "session-starting" || pairingState.pairingStage === "session-started";
+        return PanelLifecycle.closeAction(helperProcess.running, sessionMayExist, pairingState.keepConnected);
     }
 
     function requestStartOver() {
-        if (!pairingState.helperReady || !pairingState.hasTrustedDevice
-                || pairingState.startOverPending)
+        if (!pairingState.helperReady || !pairingState.hasTrustedDevice || pairingState.startOverPending)
             return;
         managementOpen = true;
         startOverDialog.selectedIndex = 0;
@@ -184,9 +150,7 @@ Panel {
     }
 
     function decodeEnvelope(encodedEnvelope, maximumLength) {
-        if (typeof encodedEnvelope !== "string" || encodedEnvelope.length === 0
-                || encodedEnvelope.length > maximumLength
-                || !/^[A-Za-z0-9_-]+$/.test(encodedEnvelope))
+        if (typeof encodedEnvelope !== "string" || encodedEnvelope.length === 0 || encodedEnvelope.length > maximumLength || !/^[A-Za-z0-9_-]+$/.test(encodedEnvelope))
             return null;
         var base64 = encodedEnvelope.replace(/-/g, "+").replace(/_/g, "/");
         while (base64.length % 4 !== 0)
@@ -216,8 +180,68 @@ Panel {
         return setScrcpyConfiguration(revision, scrcpyArguments);
     }
 
-    function requestClose() {
+    function claimHost(widget, anchor, panelBar) {
+        if (retainedClosePending)
+            cancelRetainedCloseRequest();
+        ++presentationClaimSerial;
+        hostWidget = widget;
+        anchorItem = anchor;
+        root.bar = panelBar;
+    }
+
+    function clearRetainedCloseRequest() {
+        retainedClosePending = false;
+        retainedClosePreview = null;
+        retainedCloseCaptureEpoch = -1;
+        retainedCloseHelperEpoch = "";
+        retainedCloseSessionGeneration = "";
+        retainedClosePresentationSerial = -1;
+    }
+
+    function cancelRetainedCloseRequest() {
+        var preview = retainedClosePreview;
+        clearRetainedCloseRequest();
+        if (preview !== null)
+            preview.cancelPendingRetainedImageCapture();
+    }
+
+    function completeRetainedClose(retained, captureEpoch, helperEpoch, sessionGeneration) {
+        var preview = retainedClosePreview;
+        if (!retainedClosePending || preview === null || captureEpoch !== retainedCloseCaptureEpoch || helperEpoch !== retainedCloseHelperEpoch || sessionGeneration !== retainedCloseSessionGeneration)
+            return;
+        var pendingPresentationSerial = retainedClosePresentationSerial;
+        clearRetainedCloseRequest();
+        if (!root.opened || root.helperShutdownPending || root.presentationClaimSerial !== pendingPresentationSerial || root.phonePreview !== preview || preview.captureEpoch !== captureEpoch || preview.helperEpoch !== helperEpoch || preview.sessionGeneration !== sessionGeneration || root.acceptedHelperEpoch !== helperEpoch || pairingState.sessionGeneration !== sessionGeneration || !root.retainMountedPreview)
+            return;
         submapController.closePanel();
+    }
+
+    function requestClose() {
+        if (!root.opened)
+            return;
+        if (helperShutdownPending) {
+            clearRetainedCloseRequest();
+            submapController.closePanel();
+            return;
+        }
+        if (retainedClosePending)
+            return;
+        var preview = phonePreview;
+        if (!root.retainMountedPreview || preview === null || preview.retainedImageAvailable) {
+            submapController.closePanel();
+            return;
+        }
+
+        retainedClosePending = true;
+        retainedClosePreview = preview;
+        retainedCloseCaptureEpoch = preview.captureEpoch;
+        retainedCloseHelperEpoch = preview.helperEpoch;
+        retainedCloseSessionGeneration = preview.sessionGeneration;
+        retainedClosePresentationSerial = root.presentationClaimSerial;
+        if (!preview.captureRetainedImage()) {
+            clearRetainedCloseRequest();
+            submapController.closePanel();
+        }
     }
 
     function teardownSession() {
@@ -253,14 +277,14 @@ Panel {
         acceptedHelperEpoch = String(helperEpochCounter);
         submapController.helperRestarted();
         helperIntentionalStop = false;
-        helperProcess.command = root.helperCommand.concat(
-                    ["--helper-epoch", acceptedHelperEpoch]);
+        helperProcess.command = root.helperCommand.concat(["--helper-epoch", acceptedHelperEpoch]);
         helperProcess.running = true;
     }
 
     function finishHelperShutdown() {
         if (!helperShutdownPending)
             return;
+        clearRetainedCloseRequest();
         helperShutdownPending = false;
         helperStopTimer.stop();
         if (helperVersionProcess.running)
@@ -279,10 +303,11 @@ Panel {
             helperStopTimer.stop();
             launchHelper();
             pairingState.automaticPairingEnabled = true;
-            if (pairingState.helperReady
-                    && pairingState.sessionState === "unpaired")
+            if (pairingState.helperReady && pairingState.sessionState === "unpaired")
                 pairingState.startQrPairing();
         } else {
+            if (retainedClosePending)
+                cancelRetainedCloseRequest();
             if (helperVersionProcess.running)
                 helperVersionProcess.running = false;
             helperVersionProcess.observedVersion = "";
@@ -291,8 +316,7 @@ Panel {
             startOverDialog.opened = false;
             pairingState.automaticPairingEnabled = false;
             var closeAction = helperCloseAction();
-            if (closeAction === "stop-session"
-                    || closeAction === "cancel-pairing") {
+            if (closeAction === "stop-session" || closeAction === "cancel-pairing") {
                 helperShutdownPending = true;
                 if (closeAction === "stop-session")
                     pairingState.stopSession();
@@ -319,24 +343,17 @@ Panel {
         helperEpoch: root.acceptedHelperEpoch
         sessionGeneration: pairingState.sessionGeneration
         sessionStarted: pairingState.sessionStarted
-        connectionPresentationActive:
-            pairingState.connectionPresentationActive
-        captureAvailable: root.phonePreview !== null
-                              && root.phonePreview.captureAvailable
+        connectionPresentationActive: pairingState.connectionPresentationActive
+        captureAvailable: root.phonePreview !== null && root.phonePreview.captureAvailable
         captureActive: root.phonePreview !== null && root.phonePreview.active
-        firstValidFrameReceived: root.phonePreview !== null
-                                   && root.phonePreview.firstValidFrameReceived
-        displayWidth: root.phonePreview !== null
-                      ? root.phonePreview.displayWidth : 0
-        displayHeight: root.phonePreview !== null
-                       ? root.phonePreview.displayHeight : 0
-        previewInputEnabled: root.phonePreview !== null
-                             && root.phonePreview.previewInputEnabled
+        retainedImageAvailable: root.phonePreview !== null && root.phonePreview.retainedImageAvailable
+        firstValidFrameReceived: root.phonePreview !== null && root.phonePreview.firstValidFrameReceived
+        displayWidth: root.phonePreview !== null ? root.phonePreview.displayWidth : 0
+        displayHeight: root.phonePreview !== null ? root.phonePreview.displayHeight : 0
+        previewInputEnabled: root.phonePreview !== null && root.phonePreview.previewInputEnabled
         helperActivity: pairingState.activity
         helperReason: pairingState.reason
     }
-
-
 
     PairingState {
         id: pairingState
@@ -352,8 +369,7 @@ Panel {
         onPairingCancellationConfirmed: {
             if (root.helperShutdownPending) {
                 root.finishHelperShutdown();
-            } else if (root.opened && pairingState.helperReady
-                       && pairingState.sessionState === "unpaired") {
+            } else if (root.opened && pairingState.helperReady && pairingState.sessionState === "unpaired") {
                 pairingState.startQrPairing();
             }
         }
@@ -361,19 +377,11 @@ Panel {
             if (root.helperShutdownPending)
                 root.finishHelperShutdown();
         }
-        onPhoneTargetCompleted: function (requestId, outcome,
-                                          notificationCode) {
-            phoneTargetRouter.consumePhoneTargetResult(requestId, outcome,
-                                                       notificationCode);
+        onPhoneTargetCompleted: function (requestId, outcome, notificationCode) {
+            phoneTargetRouter.consumePhoneTargetResult(requestId, outcome, notificationCode);
         }
         onPreferenceUpdateFailed: function (reason) {
-            Quickshell.execDetached([
-                "omarchy-notification-send",
-                "-g", "󰄜",
-                "-u", "low",
-                "Droid Peek",
-                "Android settings could not be saved."
-            ]);
+            Quickshell.execDetached(["omarchy-notification-send", "-g", "󰄜", "-u", "low", "Droid Peek", "Android settings could not be saved."]);
         }
         onLifecycleFailure: function (reason) {
             startOverDialog.opened = false;
@@ -394,17 +402,10 @@ Panel {
         helperEpoch: root.acceptedHelperEpoch
         sessionGeneration: pairingState.sessionGeneration
         onPhoneTargetRequested: function (request) {
-            pairingState.sendPhoneTarget(request.requestId, request.target,
-                                         request.expiresAtUnixMs);
+            pairingState.sendPhoneTarget(request.requestId, request.target, request.expiresAtUnixMs);
         }
         onPhoneTargetFailureNotificationRequested: function (message) {
-            Quickshell.execDetached([
-                "omarchy-notification-send",
-                "-g", "󰄜",
-                "-u", "low",
-                "Droid Peek",
-                message
-            ]);
+            Quickshell.execDetached(["omarchy-notification-send", "-g", "󰄜", "-u", "low", "Droid Peek", message]);
         }
     }
 
@@ -421,9 +422,9 @@ Panel {
             submapProcess.command = command;
             var started = submapProcess.startedRequests.slice();
             started.push({
-                             requestId: requestId,
-                             submap: submap
-                         });
+                requestId: requestId,
+                submap: submap
+            });
             submapProcess.startedRequests = started;
             submapProcess.running = true;
         }
@@ -466,7 +467,6 @@ Panel {
         onTriggered: submapController.forceReset()
     }
 
-
     Timer {
         id: helperStopTimer
         interval: 2000
@@ -484,9 +484,7 @@ Panel {
     Process {
         id: helperVersionProcess
         property string observedVersion: ""
-        command: root.helperExecutable === ""
-                 ? []
-                 : [root.helperExecutable, "--version"]
+        command: root.helperExecutable === "" ? [] : [root.helperExecutable, "--version"]
         running: false
         stdout: SplitParser {
             onRead: function (data) {
@@ -543,8 +541,7 @@ Panel {
         function phoneTarget(encodedEnvelope: string): bool {
             return root.phoneTarget(encodedEnvelope);
         }
-        function configureScrcpy(revision: string,
-                                 encodedConfiguration: string): bool {
+        function configureScrcpy(revision: string, encodedConfiguration: string): bool {
             return root.configureScrcpy(revision, encodedConfiguration);
         }
     }
@@ -562,12 +559,9 @@ Panel {
         PanelKeyCatcher {
             id: keyCatcher
             anchors.fill: parent
-            blocked: root.settingsOpen || startOverDialog.opened
-                     || manualCode.activeFocus
-                     || (root.phonePreview !== null
-                         && root.phonePreview.inputFocused)
+            blocked: root.settingsOpen || startOverDialog.opened || manualCode.activeFocus || (root.phonePreview !== null && root.phonePreview.inputFocused)
             onActivateRequested: root.activatePrimary()
-            onCloseRequested: submapController.closePanel()
+            onCloseRequested: root.requestClose()
             onTextKey: function (text) {
                 if (root.applicationState === "interactive")
                     pairingState.sendTextInput(text);
@@ -585,9 +579,7 @@ Panel {
                     objectName: "setupHero"
                     width: parent.width
                     implicitHeight: setupHeadingLabels.implicitHeight
-                    visible: (root.applicationState === "setup"
-                              || root.applicationState === "recovering")
-                             && !applicationStateModel.captureSurfaceRequired
+                    visible: (root.applicationState === "setup" || root.applicationState === "recovering") && !applicationStateModel.captureSurfaceRequired
 
                     Column {
                         id: setupHeadingLabels
@@ -596,16 +588,14 @@ Panel {
 
                         Item {
                             width: parent.width
-                            height: Math.max(setupHeadingTitle.implicitHeight,
-                                             setupHeadingTagSurface.implicitHeight)
+                            height: Math.max(setupHeadingTitle.implicitHeight, setupHeadingTagSurface.implicitHeight)
 
                             Text {
                                 id: setupHeadingTitle
                                 objectName: "setupHeadingTitle"
                                 anchors.left: parent.left
                                 anchors.right: setupHeadingTagSurface.left
-                                anchors.rightMargin: setupHeadingTagSurface.visible
-                                                     ? Style.space(8) : 0
+                                anchors.rightMargin: setupHeadingTagSurface.visible ? Style.space(8) : 0
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: pairingState.statusTitle
                                 color: root.contentForeground
@@ -619,30 +609,18 @@ Panel {
                                 id: setupHeadingTagSurface
                                 anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
-                                implicitWidth: setupHeadingTag.implicitWidth
-                                               + Style.space(10)
-                                implicitHeight: setupHeadingTag.implicitHeight
-                                                + Style.space(4)
+                                implicitWidth: setupHeadingTag.implicitWidth + Style.space(10)
+                                implicitHeight: setupHeadingTag.implicitHeight + Style.space(4)
                                 color: "transparent"
-                                borderSpec: Border.controlSpec(
-                                                "normal",
-                                                root.contentForeground,
-                                                Color.accent)
+                                borderSpec: Border.controlSpec("normal", root.contentForeground, Color.accent)
                                 radius: Style.cornerRadius
 
                                 Text {
                                     id: setupHeadingTag
                                     objectName: "setupHeadingTag"
                                     anchors.centerIn: parent
-                                    text: pairingState.pairingStage
-                                          === "local-integration-failed"
-                                          ? "Shortcuts"
-                                          : pairingState.sessionState
-                                            === "dependency-unavailable"
-                                            ? "Unavailable"
-                                            : pairingState.sessionState
-                                    color: Qt.darker(root.contentForeground,
-                                                     1.4)
+                                    text: pairingState.pairingStage === "local-integration-failed" ? "Shortcuts" : pairingState.sessionState === "dependency-unavailable" ? "Unavailable" : pairingState.sessionState
+                                    color: Qt.darker(root.contentForeground, 1.4)
                                     font.family: Style.fontFamily
                                     font.pixelSize: root.fontTokens.body
                                     font.bold: true
@@ -668,10 +646,7 @@ Panel {
                 Text {
                     id: setupDescription
                     objectName: "setupDescription"
-                    visible: (root.applicationState === "setup"
-                              || root.applicationState === "recovering")
-                             && !root.settingsOpen
-                             && !applicationStateModel.captureSurfaceRequired
+                    visible: (root.applicationState === "setup" || root.applicationState === "recovering") && !root.settingsOpen && !applicationStateModel.captureSurfaceRequired
                     width: parent.width
                     text: pairingState.statusDescription
                     color: root.contentForeground
@@ -683,17 +658,10 @@ Panel {
                 Column {
                     id: interactivePhoneUnit
                     objectName: "interactivePhoneUnit"
-                    width: root.settingsOpen
-                           ? parent.width
-                           : root.desiredViewportSize(
-                                 panel.availableCardHeight).width
-                    x: root.settingsOpen || parent === null
-                       ? 0
-                       : Math.round((parent.width - width) / 2)
+                    width: root.settingsOpen ? parent.width : root.desiredViewportSize(panel.availableCardHeight).width
+                    x: root.settingsOpen || parent === null ? 0 : Math.round((parent.width - width) / 2)
                     spacing: 0
-                    visible: root.applicationState === "interactive"
-                             || root.settingsOpen
-                             || applicationStateModel.captureSurfaceRequired
+                    visible: root.applicationState === "interactive" || root.settingsOpen || applicationStateModel.captureSurfaceRequired
 
                     Item {
                         objectName: "loadingToolbarSpacer"
@@ -707,9 +675,8 @@ Panel {
                         objectName: "phoneToolbar"
                         width: parent.width
                         height: visible ? implicitHeight : 0
-                        visible: root.applicationState === "interactive"
-                                 || root.settingsOpen
-                        bar: root.bar
+                        visible: root.applicationState === "interactive" || root.settingsOpen || (applicationStateModel.captureSurfaceRequired && applicationStateModel.retainedImageAvailable)
+                        enabled: root.applicationState === "interactive" || root.settingsOpen
                         foreground: root.contentForeground
                         actions: pairingState.quickActions
                         keepConnected: pairingState.keepConnected
@@ -721,12 +688,7 @@ Panel {
                         onSettingsRequested: root.openSettings()
                         onBackRequested: root.closeSettings()
                         onKeepConnectedRequested: function (keepConnected) {
-                            root.updatePreferences(
-                                        keepConnected,
-                                        pairingState.previewScale,
-                                        pairingState.videoQuality,
-                                        pairingState.quickActions,
-                                        pairingState.androidModeShortcuts);
+                            root.updatePreferences(keepConnected, pairingState.previewScale, pairingState.videoQuality, pairingState.quickActions, pairingState.androidModeShortcuts);
                         }
                     }
 
@@ -735,8 +697,7 @@ Panel {
                         objectName: "previewCard"
                         visible: applicationStateModel.captureSurfaceRequired
                         width: parent.width
-                        height: root.desiredPreviewHeight(
-                                    panel.availableCardHeight)
+                        height: root.desiredPreviewHeight(panel.availableCardHeight)
                         clip: true
 
                         Rectangle {
@@ -786,8 +747,7 @@ Panel {
                             anchors.centerIn: parent
                             implicitWidth: loadingGlyph.implicitWidth
                             implicitHeight: loadingGlyph.implicitHeight
-                            visible: applicationStateModel.captureSurfaceRequired
-                                     && !applicationStateModel.previewUsable
+                            visible: applicationStateModel.captureSurfaceRequired && !applicationStateModel.previewPresentationUsable
                             property bool running: visible
                             property color foreground: root.contentForeground
 
@@ -815,48 +775,27 @@ Panel {
 
                             function onFirstValidFrameReceivedChanged() {
                                 var preview = root.phonePreview;
-                                if (!preview
-                                        || !preview.firstValidFrameReceived)
+                                if (!preview || !preview.firstValidFrameReceived)
                                     return;
-                                pairingState.acknowledgePreviewReady(
-                                            preview.helperEpoch,
-                                            preview.sessionGeneration);
+                                pairingState.acknowledgePreviewReady(preview.helperEpoch, preview.sessionGeneration);
                             }
-                            function onTapRequested(x, y, displayWidth,
-                                                    displayHeight, helperEpoch,
-                                                    sessionGeneration) {
-                                if (helperEpoch === root.acceptedHelperEpoch
-                                        && sessionGeneration
-                                           === pairingState.sessionGeneration)
-                                    pairingState.sendPointerTap(
-                                                x, y, displayWidth,
-                                                displayHeight);
+                            function onRetainedImageCaptureCompleted(retained, captureEpoch, helperEpoch, sessionGeneration) {
+                                root.completeRetainedClose(retained, captureEpoch, helperEpoch, sessionGeneration);
                             }
-                            function onSwipeRequested(startX, startY, endX,
-                                                      endY, displayWidth,
-                                                      displayHeight,
-                                                      durationMs, helperEpoch,
-                                                      sessionGeneration) {
-                                if (helperEpoch === root.acceptedHelperEpoch
-                                        && sessionGeneration
-                                           === pairingState.sessionGeneration)
-                                    pairingState.sendPointerSwipe(
-                                                startX, startY, endX, endY,
-                                                displayWidth, displayHeight,
-                                                durationMs);
+                            function onTapRequested(x, y, displayWidth, displayHeight, helperEpoch, sessionGeneration) {
+                                if (helperEpoch === root.acceptedHelperEpoch && sessionGeneration === pairingState.sessionGeneration)
+                                    pairingState.sendPointerTap(x, y, displayWidth, displayHeight);
                             }
-                            function onKeyRequested(key, helperEpoch,
-                                                    sessionGeneration) {
-                                if (helperEpoch === root.acceptedHelperEpoch
-                                        && sessionGeneration
-                                           === pairingState.sessionGeneration)
+                            function onSwipeRequested(startX, startY, endX, endY, displayWidth, displayHeight, durationMs, helperEpoch, sessionGeneration) {
+                                if (helperEpoch === root.acceptedHelperEpoch && sessionGeneration === pairingState.sessionGeneration)
+                                    pairingState.sendPointerSwipe(startX, startY, endX, endY, displayWidth, displayHeight, durationMs);
+                            }
+                            function onKeyRequested(key, helperEpoch, sessionGeneration) {
+                                if (helperEpoch === root.acceptedHelperEpoch && sessionGeneration === pairingState.sessionGeneration)
                                     pairingState.sendKeyInput(key);
                             }
-                            function onTextRequested(text, helperEpoch,
-                                                     sessionGeneration) {
-                                if (helperEpoch === root.acceptedHelperEpoch
-                                        && sessionGeneration
-                                           === pairingState.sessionGeneration)
+                            function onTextRequested(text, helperEpoch, sessionGeneration) {
+                                if (helperEpoch === root.acceptedHelperEpoch && sessionGeneration === pairingState.sessionGeneration)
                                     pairingState.sendTextInput(text);
                             }
                         }
@@ -866,13 +805,8 @@ Panel {
                 Settings {
                     id: settingsView
                     width: parent.width
-                    maximumHeight: Math.max(
-                                       1, panel.availableCardHeight
-                                       - panel.verticalContentInset
-                                       - phoneToolbar.implicitHeight
-                                       - content.spacing)
-                    visible: root.applicationState === "management"
-                             && root.settingsOpen
+                    maximumHeight: Math.max(1, panel.availableCardHeight - panel.verticalContentInset - phoneToolbar.implicitHeight - content.spacing)
+                    visible: root.applicationState === "management" && root.settingsOpen
                     keepConnected: pairingState.keepConnected
                     previewScale: pairingState.previewScale
                     videoQuality: pairingState.videoQuality
@@ -880,12 +814,8 @@ Panel {
                     androidModeShortcuts: pairingState.androidModeShortcuts
                     foreground: root.contentForeground
                     onBackRequested: root.closeSettings()
-                    onPreferencesRequested: function (keepConnected, scale,
-                                                       quality, actions,
-                                                       androidModeShortcuts) {
-                        root.updatePreferences(keepConnected, scale, quality,
-                                               actions,
-                                               androidModeShortcuts);
+                    onPreferencesRequested: function (keepConnected, scale, quality, actions, androidModeShortcuts) {
+                        root.updatePreferences(keepConnected, scale, quality, actions, androidModeShortcuts);
                     }
                     onStartOverRequested: root.requestStartOver()
                 }
@@ -959,10 +889,7 @@ Panel {
 
                     Button {
                         objectName: "reconnectButton"
-                        visible: (pairingState.sessionState === "disconnected"
-                                  || pairingState.pairingStage
-                                     === "local-integration-failed")
-                                 && !applicationStateModel.captureSurfaceRequired
+                        visible: (pairingState.sessionState === "disconnected" || pairingState.pairingStage === "local-integration-failed") && !applicationStateModel.captureSurfaceRequired
                         text: "Reconnect"
                         foreground: root.contentForeground
                         onClicked: {
@@ -972,12 +899,7 @@ Panel {
                     }
                     Button {
                         objectName: "fallbackStartOverButton"
-                        visible: pairingState.helperReady
-                                 && pairingState.hasTrustedDevice
-                                 && root.applicationState !== "interactive"
-                                 && !applicationStateModel.captureSurfaceRequired
-                                 && !root.settingsOpen
-                                 && !pairingState.startOverPending
+                        visible: pairingState.helperReady && root.opened && pairingState.hasTrustedDevice && root.applicationState !== "interactive" && !applicationStateModel.captureSurfaceRequired && !root.settingsOpen && !pairingState.startOverPending
                         text: pairingState.pairingStage === "start-over-failed" ? "Retry start over" : "Start over"
                         foreground: root.contentForeground
                         onClicked: root.requestStartOver()

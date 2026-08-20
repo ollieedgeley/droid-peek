@@ -69,8 +69,7 @@ NestedEscapeScope {
         activeFocusOnTab: true
         PanelToolTip {
             objectName: toolbarButton.objectName + "-tooltip"
-            visible: toolbarButton.tooltipHovered
-                     && toolbarButton.tooltipText !== ""
+            visible: toolbarButton.tooltipHovered && toolbarButton.tooltipText !== ""
             text: toolbarButton.tooltipText
         }
 

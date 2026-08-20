@@ -1,4 +1,5 @@
 import QtQuick
+import QtMultimedia
 import QtTest
 
 TestCase {
@@ -8,6 +9,10 @@ TestCase {
     visible: true
     width: 720
     height: 450
+    property var pendingGrabCallback: null
+    property size lastGrabSize: Qt.size(0, 0)
+    property int grabCount: 0
+
 
     Item {
         id: anchorItem
@@ -146,6 +151,7 @@ TestCase {
         var root = panelLoader.item
         root.settingsOpen = false
         root.managementOpen = false
+        root.hostWidget = null
         var dialog = objectNamed("startOverDialog")
         if (dialog !== null)
             dialog.opened = false
@@ -156,6 +162,14 @@ TestCase {
     }
 
     function cleanup() {
+        var preview = panelLoader.item !== null ? panelLoader.item.phonePreview : null
+        if (preview !== null)
+            preview.retainedImageGrabber = null
+        pendingGrabCallback = null
+        lastGrabSize = Qt.size(0, 0)
+        grabCount = 0
+        if (panelLoader.item !== null)
+            panelLoader.item.hostWidget = null
         var state = objectNamed("pairingState")
         if (state !== null) {
             state.keepConnected = true
@@ -234,42 +248,270 @@ TestCase {
         tryCompare(state, "previewReadyGeneration", generation)
         return preview
     }
+    function installGrabber(preview, starts) {
+        pendingGrabCallback = null
+        lastGrabSize = Qt.size(0, 0)
+        grabCount = 0
+        preview.retainedImageGrabber = function (callback, targetSize) {
+            testCase.grabCount += 1
+            testCase.lastGrabSize = targetSize
+            if (!starts)
+                return false
+            testCase.pendingGrabCallback = callback
+            return true
+        }
+    }
 
-    function test_retain_after_first_frame_reopens_ready() {
+    function completeGrab(result) {
+        verify(pendingGrabCallback !== null)
+        var callback = pendingGrabCallback
+        pendingGrabCallback = null
+        callback(result)
+    }
+
+
+    function test_retain_close_waits_for_one_grab_and_reopens_same_framed_session() {
         var root = panelLoader.item
         var state = beginStartedSession(true)
         var preview = acknowledgeFirstFrame(root, state, "1")
+        var helperEpoch = root.acceptedHelperEpoch
+        var sessionGeneration = state.sessionGeneration
+        var captureEpoch = preview.captureEpoch
+        var fallback = objectNamed("fallbackStartOverButton")
+        var model = objectNamed("applicationStateModel")
+        var loading = objectNamed("previewLoadingTreatment")
+        var videoOutput = objectNamed("phoneVideoOutput")
+        var retainedImage = objectNamed("retainedPreviewImage")
+        var toolbar = objectNamed("phoneToolbar")
+        var quickAction = objectNamed("quickActionButton-back")
+        verify(fallback !== null)
+        verify(model !== null)
+        verify(loading !== null)
+        verify(videoOutput !== null)
+        verify(retainedImage !== null)
+        verify(toolbar !== null)
+        verify(quickAction !== null)
+        installGrabber(preview, true)
         commandSpy.clear()
 
-        root.close()
+        root.requestClose()
+        compare(root.opened, true)
+        compare(root.retainedClosePending, true)
+        compare(grabCount, 1)
+        compare(lastGrabSize.width, Math.round(videoOutput.width))
+        compare(lastGrabSize.height, Math.round(videoOutput.height))
+
+        root.requestClose()
+        compare(root.opened, true)
+        compare(grabCount, 1)
+
+        completeGrab({ url: "" })
         compare(root.opened, false)
+        compare(root.retainedClosePending, false)
         verify(root.phonePreview !== null)
         compare(root.phonePreview, preview)
+        compare(root.acceptedHelperEpoch, helperEpoch)
+        compare(preview.helperEpoch, helperEpoch)
+        compare(preview.sessionGeneration, sessionGeneration)
+        compare(state.sessionGeneration, sessionGeneration)
+        compare(preview.captureEpoch, captureEpoch)
         compare(root.previewCaptureWanted, true)
         compare(preview.captureRequested, true)
+        compare(preview.retainedImageAvailable, true)
+        verify(retainedImage.z > videoOutput.z)
         compare(preview.firstValidFrameReceived, true)
+        compare(preview.captureAvailable, true)
         compare(state.sessionStarted, true)
-        compare(stopSessionCount(), 0)
+        compare(commandSpy.count, 0)
+        compare(fallback.visible, false)
+        // Sink frames continue while the panel is closed. They must not
+        // discard the only presentation that survives QQuickWindow teardown.
+        verify(preview.acceptRenderedFrame(
+                   captureEpoch, helperEpoch, sessionGeneration,
+                   1080, 2400, true))
+        compare(preview.retainedImageAvailable, true)
+        compare(preview.retainedImageReleasePending, false)
 
         root.open()
         compare(root.opened, true)
         compare(root.phonePreview, preview)
+        compare(root.acceptedHelperEpoch, helperEpoch)
+        compare(state.sessionGeneration, sessionGeneration)
+        compare(preview.captureEpoch, captureEpoch)
+        compare(preview.helperEpoch, helperEpoch)
+        compare(preview.sessionGeneration, sessionGeneration)
+        tryCompare(model, "previewPresentationUsable", true)
+        retainedImage = objectNamed("retainedPreviewImage")
+        videoOutput = objectNamed("phoneVideoOutput")
+        verify(retainedImage !== null)
+        verify(videoOutput !== null)
+        compare(retainedImage.visible, true)
+        verify(retainedImage.z > videoOutput.z)
+        compare(loading.visible, false)
+        compare(toolbar.visible, true)
+        compare(toolbar.enabled, false)
+        compare(quickAction.enabled, false)
+        compare(preview.inputActive, false)
+        compare(preview.retainedImageAvailable, true)
+        compare(commandSpy.count, 0)
+        root.requestClose()
+        compare(root.opened, false)
+        compare(grabCount, 1)
+        compare(root.retainedClosePending, false)
+        root.open()
+        compare(root.opened, true)
+        compare(preview.retainedImageAvailable, true)
+
+        verify(preview.acceptRenderedFrame(
+                   captureEpoch, helperEpoch, sessionGeneration,
+                   1080, 2400, true))
+        compare(preview.retainedImageAvailable, true)
+        compare(preview.retainedImageReleasePending, true)
+        compare(toolbar.enabled, false)
+        verify(preview.completeRetainedImageRelease())
+        compare(preview.retainedImageAvailable, false)
+        compare(retainedImage.visible, false)
         tryCompare(root, "applicationState", "interactive")
-        compare(preview.firstValidFrameReceived, true)
-        compare(stopSessionCount(), 0)
+        compare(toolbar.enabled, true)
         verify(state.statusTitle !== "Preview failed")
     }
 
-    function test_keep_connected_off_close_stops_immediately() {
+    function test_capture_error_clears_successful_retained_image() {
+        var root = panelLoader.item
+        var state = beginStartedSession(true)
+        var preview = acknowledgeFirstFrame(root, state, "1")
+        var captureEpoch = preview.captureEpoch
+        installGrabber(preview, true)
+
+        verify(preview.captureRetainedImage())
+        completeGrab({ url: "" })
+        compare(preview.retainedImageAvailable, true)
+
+        preview.handleCaptureFailure(captureEpoch)
+        compare(preview.retainedImageAvailable, false)
+        compare(preview.firstValidFrameReceived, false)
+        compare(preview.captureAvailable, false)
+        compare(preview.displayWidth, 0)
+        compare(preview.displayHeight, 0)
+    }
+
+    function test_stale_capture_completion_cannot_close_current_identity_data() {
+        return [
+            { tag: "capture epoch", identity: "capture" },
+            { tag: "helper epoch", identity: "helper" },
+            { tag: "session generation", identity: "session" }
+        ]
+    }
+
+    function test_stale_capture_completion_cannot_close_current_identity(data) {
+        var root = panelLoader.item
+        var state = beginStartedSession(true)
+        var preview = acknowledgeFirstFrame(root, state, "1")
+        commandSpy.clear()
+        installGrabber(preview, true)
+
+        root.requestClose()
+        compare(root.retainedClosePending, true)
+        compare(root.opened, true)
+        var staleCallback = pendingGrabCallback
+        verify(staleCallback !== null)
+
+        if (data.identity === "capture")
+            preview.recreateCapturePipeline()
+        else if (data.identity === "helper")
+            preview.helperEpoch = String(Number(preview.helperEpoch) + 1)
+        else
+            preview.sessionGeneration = String(Number(preview.sessionGeneration) + 1)
+
+        compare(root.retainedClosePending, false)
+        compare(root.opened, true)
+        compare(preview.retainedImageAvailable, false)
+        staleCallback({ url: "" })
+        compare(root.opened, true)
+        compare(preview.retainedImageAvailable, false)
+        compare(commandSpy.count, 0)
+    }
+
+    function test_pending_capture_cannot_close_reclaimed_host() {
+        var root = panelLoader.item
+        var state = beginStartedSession(true)
+        var preview = acknowledgeFirstFrame(root, state, "1")
+        var originalHost = { name: "original" }
+        var replacementHost = { name: "replacement" }
+        root.claimHost(originalHost, anchorItem, topBar)
+        commandSpy.clear()
+        installGrabber(preview, true)
+
+        root.requestClose()
+        compare(root.retainedClosePending, true)
+        var staleCallback = pendingGrabCallback
+        verify(staleCallback !== null)
+
+        root.claimHost(replacementHost, anchorItem, topBar)
+        compare(root.retainedClosePending, false)
+        compare(preview.retainedImageCapturePending, false)
+        compare(root.opened, true)
+
+        root.requestClose()
+        compare(root.retainedClosePending, true)
+        var replacementCallback = pendingGrabCallback
+        verify(replacementCallback !== null)
+        verify(replacementCallback !== staleCallback)
+
+        staleCallback({ url: "" })
+        compare(root.retainedClosePending, true)
+        compare(root.opened, true)
+        replacementCallback({ url: "" })
+        compare(root.retainedClosePending, false)
+        compare(root.opened, false)
+        compare(root.hostWidget, replacementHost)
+        compare(preview.retainedImageAvailable, true)
+        compare(commandSpy.count, 0)
+    }
+
+    function test_unframed_preview_rejects_image_capture() {
+        var root = panelLoader.item
+        beginStartedSession(true)
+        tryVerify(function () {
+            return root.phonePreview !== null
+        })
+        var preview = root.phonePreview
+        installGrabber(preview, true)
+
+        compare(preview.firstValidFrameReceived, false)
+        compare(preview.captureRetainedImage(), false)
+        compare(preview.retainedImageAvailable, false)
+        compare(grabCount, 0)
+    }
+
+    function test_synchronous_grab_rejection_closes_immediately() {
+        var root = panelLoader.item
+        var state = beginStartedSession(true)
+        var preview = acknowledgeFirstFrame(root, state, "1")
+        installGrabber(preview, false)
+        commandSpy.clear()
+
+        root.requestClose()
+        compare(grabCount, 1)
+        compare(root.retainedClosePending, false)
+        compare(root.opened, false)
+        compare(preview.retainedImageAvailable, false)
+        compare(commandSpy.count, 0)
+    }
+
+    function test_keep_connected_off_close_stops_immediately_without_grab() {
         var root = panelLoader.item
         var state = beginStartedSession(false)
         tryVerify(function () {
             return root.phonePreview !== null
         })
+        var preview = root.phonePreview
+        installGrabber(preview, true)
         commandSpy.clear()
 
-        root.close()
+        root.requestClose()
         compare(root.opened, false)
+        compare(grabCount, 0)
         compare(commandSpy.count, 1)
         compare(commandAt(0).type, "stop-session")
         compare(state.sessionStarted, true)

@@ -20,6 +20,7 @@ TestCase {
         state.connectionPresentationActive = false
         state.captureAvailable = false
         state.captureActive = false
+        state.retainedImageAvailable = false
         state.firstValidFrameReceived = false
         state.displayWidth = 0
         state.displayHeight = 0
@@ -119,6 +120,28 @@ TestCase {
 
         state.firstValidFrameReceived = false
         compare(state.applicationState, "recovering")
+    }
+
+    function test_successful_retained_image_bridges_only_preview_presentation() {
+        makeInteractive()
+
+        state.captureActive = false
+        compare(state.previewUsable, false)
+        compare(state.previewPresentationUsable, false)
+        compare(state.applicationState, "recovering")
+
+        state.retainedImageAvailable = true
+        compare(state.previewUsable, false)
+        compare(state.previewPresentationUsable, true)
+        compare(state.applicationState, "recovering")
+
+        state.captureActive = true
+        compare(state.previewUsable, false)
+        compare(state.previewPresentationUsable, true)
+        compare(state.applicationState, "recovering")
+
+        state.firstValidFrameReceived = false
+        compare(state.previewPresentationUsable, false)
     }
 
     function test_generation_change_clears_transport_and_preview_facts() {

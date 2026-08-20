@@ -11,8 +11,7 @@ QtObject {
     property var pendingLabels: ({})
 
     signal phoneTargetRequested(var request)
-    signal phoneTargetFailureNotificationRequested(string message,
-                                                   string coalesceKey)
+    signal phoneTargetFailureNotificationRequested(string message)
 
     function validIdentity(value) {
         return typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value);
@@ -104,9 +103,7 @@ QtObject {
                 && now - previous < failureCoalesceWindowMs)
             return true;
         failureNotificationTimes[notificationCode] = now;
-        phoneTargetFailureNotificationRequested(
-                    message,
-                    "droid-peek-phone-target-" + notificationCode);
+        phoneTargetFailureNotificationRequested(message);
         return true;
     }
 

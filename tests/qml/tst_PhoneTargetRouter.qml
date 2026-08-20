@@ -253,8 +253,7 @@ TestCase {
 
         compare(failureNotificationSpy.count, 1)
         compare(failureNotificationSpy.signalArguments[0][0], data.message)
-        compare(failureNotificationSpy.signalArguments[0][1],
-                "droid-peek-phone-target-" + data.code)
+        compare(failureNotificationSpy.signalArguments[0].length, 1)
         verify(failureNotificationSpy.signalArguments[0][0]
                .indexOf("android.") < 0)
         verify(failureNotificationSpy.signalArguments[0][0]
@@ -268,8 +267,9 @@ TestCase {
                                                "target-failed"))
 
         compare(failureNotificationSpy.count, 1)
-        compare(failureNotificationSpy.signalArguments[0][1],
-                "droid-peek-phone-target-target-failed")
+        compare(failureNotificationSpy.signalArguments[0].length, 1)
+        compare(failureNotificationSpy.signalArguments[0][0],
+                "Android shortcut failed.")
     }
 
     function test_distinct_failures_are_not_coalesced() {

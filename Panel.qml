@@ -397,8 +397,7 @@ Panel {
             pairingState.sendPhoneTarget(request.requestId, request.target,
                                          request.expiresAtUnixMs);
         }
-        onPhoneTargetFailureNotificationRequested: function (message,
-                                                               coalesceKey) {
+        onPhoneTargetFailureNotificationRequested: function (message) {
             Quickshell.execDetached([
                 "omarchy-notification-send",
                 "-g", "󰄜",

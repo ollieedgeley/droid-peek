@@ -91,10 +91,11 @@ Check `hyprctl configerrors`. Confirm the managed loader block and
 shortcuts**, close Settings, and wait for the phone state to become
 interactive. Target failures are consumed and never invoke a desktop action.
 
-The desktop hotkey must run
-`omarchy-shell shell toggle ollieedgeley.droidpeek`. The raw IPC form
-`omarchy-shell ollieedgeley.droidpeek toggle` can reach the wrong bar
-instance.
+The bar icon opens or closes the panel. Super+Alt+A closes it only while
+phone mode is active. Do not use
+`omarchy-shell ollieedgeley.droidpeek toggle`; that can reach the wrong bar
+instance. Use `omarchy-shell shell toggle ollieedgeley.droidpeek` so Omarchy
+picks the focused monitor's copy.
 
 ## Cleanup refuses to run
 

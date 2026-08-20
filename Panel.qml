@@ -36,7 +36,8 @@ Panel {
     readonly property var popupPalette: Color.popups
     readonly property color contentForeground: popupPalette.text
     readonly property color contentBackground: popupPalette.background
-    readonly property var phonePreview: phonePreviewLoader.item
+    readonly property PhonePreview phonePreview: phonePreviewLoader.item as PhonePreview
+    readonly property var fontTokens: Style.font
     readonly property bool retainMountedPreview: pairingState.keepConnected
                                                  && pairingState.sessionStarted
                                                  && pairingState.previewReadyGeneration !== ""
@@ -492,7 +493,10 @@ Panel {
                 helperVersionProcess.observedVersion = data;
             }
         }
-        onExited: function (exitCode) {
+    }
+    Connections {
+        target: helperVersionProcess
+        function onExited(exitCode) {
             var version = helperVersionProcess.observedVersion;
             helperVersionProcess.observedVersion = "";
             if (!root.opened)
@@ -606,7 +610,7 @@ Panel {
                                 text: pairingState.statusTitle
                                 color: root.contentForeground
                                 font.family: Style.fontFamily
-                                font.pixelSize: Style.font.title
+                                font.pixelSize: root.fontTokens.title
                                 font.bold: true
                                 elide: Text.ElideRight
                             }
@@ -640,7 +644,7 @@ Panel {
                                     color: Qt.darker(root.contentForeground,
                                                      1.4)
                                     font.family: Style.fontFamily
-                                    font.pixelSize: Style.font.body
+                                    font.pixelSize: root.fontTokens.body
                                     font.bold: true
                                 }
                             }
@@ -653,7 +657,7 @@ Panel {
                             text: "DROID PEEK"
                             color: Qt.darker(root.contentForeground, 1.4)
                             font.family: Style.fontFamily
-                            font.pixelSize: Style.font.caption
+                            font.pixelSize: root.fontTokens.caption
                             font.bold: true
                             font.letterSpacing: 1.2
                             elide: Text.ElideRight
@@ -750,8 +754,7 @@ Panel {
                             id: phonePreviewLoader
                             anchors.fill: parent
                             active: root.previewCaptureWanted
-                            source: Qt.resolvedUrl(
-                                        "qml/components/PhonePreview.qml")
+                            sourceComponent: PhonePreview {}
                             onLoaded: {
                                 item.background = Qt.binding(function () {
                                     return root.contentBackground;
@@ -794,7 +797,7 @@ Panel {
                                 text: "󰦖"
                                 color: previewLoadingTreatment.foreground
                                 font.family: Style.fontFamily
-                                font.pixelSize: Style.font.body
+                                font.pixelSize: root.fontTokens.body
 
                                 RotationAnimator on rotation {
                                     running: previewLoadingTreatment.running
@@ -807,11 +810,11 @@ Panel {
                         }
 
                         Connections {
-                            target: phonePreviewLoader.item
+                            target: root.phonePreview
                             enabled: target !== null
 
                             function onFirstValidFrameReceivedChanged() {
-                                var preview = phonePreviewLoader.item;
+                                var preview = root.phonePreview;
                                 if (!preview
                                         || !preview.firstValidFrameReceived)
                                     return;

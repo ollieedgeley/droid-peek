@@ -15,6 +15,8 @@ NestedEscapeScope {
     property string applicationState: "closed"
     readonly property bool controlsEnabled: applicationState === "interactive"
     property color foreground: Color.foreground
+    readonly property var barMetrics: Style.bar
+    readonly property var guiStyleHints: Qt.styleHints
 
     signal actionRequested(string action)
     signal settingsRequested
@@ -62,8 +64,8 @@ NestedEscapeScope {
         signal activated
 
         bar: toolbarRoot.bar
-        fixedWidth: Style.bar.iconSlot
-        fixedHeight: Style.bar.sizeHorizontal
+        fixedWidth: toolbarRoot.barMetrics.iconSlot
+        fixedHeight: toolbarRoot.barMetrics.sizeHorizontal
         activeFocusOnTab: true
         PanelToolTip {
             objectName: toolbarButton.objectName + "-tooltip"
@@ -88,7 +90,7 @@ NestedEscapeScope {
                 return true;
 
             var now = Date.now();
-            if (now - lastPointerActivationAt <= Qt.styleHints.mouseDoubleClickInterval) {
+            if (now - lastPointerActivationAt <= toolbarRoot.guiStyleHints.mouseDoubleClickInterval) {
                 lastPointerActivationAt = 0;
                 return false;
             }
@@ -105,7 +107,7 @@ NestedEscapeScope {
         Keys.onSpacePressed: event => activateFromKeyboard(event)
     }
 
-    implicitHeight: toolbarRoot.settingsOpen ? toolbar.implicitHeight : Style.bar.sizeHorizontal
+    implicitHeight: toolbarRoot.settingsOpen ? toolbar.implicitHeight : toolbarRoot.barMetrics.sizeHorizontal
 
     Rectangle {
         id: toolbarSurface

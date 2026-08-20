@@ -7,8 +7,12 @@
 /.codegraph/
 /.codex/
 /.cursor/
-/.omp/
-/.pi/
+/.omp/*
+!/.omp/extensions/
+!/.omp/extensions/**
+/.pi/*
+!/.pi/extensions/
+!/.pi/extensions/**
 /skills-lock.json
 /AGENTS.md
 /CLAUDE.md
